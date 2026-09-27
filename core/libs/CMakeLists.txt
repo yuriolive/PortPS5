@@ -34,6 +34,8 @@ endfunction()
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL)
 set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+# Vendored single-header TOML parser for the Config module (docs/spec/build-toolchain.md).
+set(TOMLPLUSPLUS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/tomlplusplus)
 add_subdirectory(${LIBC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/prx/libc)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 configure_windows_unwind(libc)
@@ -365,11 +367,16 @@ if(BUILD_TESTING)
         configure_windows_unwind(exception_runtime_tests)
         add_test(NAME exception_runtime COMMAND exception_runtime_tests)
     endif()
-    # application_heap_tests tests ApplicationHeap allocator routines in isolation.
+<    # application_heap_tests tests ApplicationHeap allocator routines in isolation.
     # Note: tests/ApplicationHeap.cpp defines callbacks using APS5_VABI (__attribute__((sysv_abi))).
     # MinGW GCC cannot generate Windows SEH unwind information for sysv_abi functions, requiring
     # -fno-asynchronous-unwind-tables (DWARF unwinding). This in turn references __gxx_personality_v0,
     # which is exported by libc.prx. Hence application_heap_tests links libc and configures Windows unwinding.
+    add_executable(config_tests tests/Config.cpp)
+    target_include_directories(config_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(config_tests PRIVATE libc)
+    configure_windows_unwind(config_tests)
+    portps5_add_test(config config_tests)
     add_executable(application_heap_tests tests/ApplicationHeap.cpp prx/libc/src/ApplicationHeap.cpp)
     target_include_directories(application_heap_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     set_target_properties(application_heap_tests PROPERTIES CXX_EXTENSIONS OFF)
