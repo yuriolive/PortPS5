@@ -145,8 +145,8 @@ void matcherSubstitutions() {
     require(!match({0x66, 0x0F, 0x2B, 0x07}) && !match({0x0F, 0x2B, 0x07}) && !match({0x48, 0x8B, 0x05, 0, 0, 0, 0}), "Ordinary instruction was matched");
     const auto stub = match(kInsertqHighSite);
     require(stub && stub->Lowering == Codegen::Amd64OnlyLowering::Trampoline && stub->StubBody == kInsertqHighBody && stub->ReturnBranchOffset == 15 && stub->InstructionName == "INSERTQ", "INSERTQ was not lowered through a stub");
-    const auto shiftInPlace = match({0x66, 0x0F, 0x78, 0xC3, 0x18, 0x28});
-    require(shiftInPlace && shiftInPlace->Lowering == Codegen::Amd64OnlyLowering::InPlace && shiftInPlace->ReplacementBytes == Bytes{0x66, 0x0F, 0x73, 0xD3, 0x28, 0x90}, "Top-aligned EXTRQ was not lowered in place");
+    const auto fullInPlace = match({0x66, 0x0F, 0x78, 0xC3, 0x00, 0x00});
+    require(fullInPlace && fullInPlace->Lowering == Codegen::Amd64OnlyLowering::InPlace && fullInPlace->ReplacementBytes == Bytes{0xF3, 0x0F, 0x7E, 0xDB, 0x66, 0x90}, "Full-length EXTRQ was not lowered in place to MOVQ");
     const auto lockedExtrq = match({0xF0, 0x66, 0x0F, 0x78, 0xC0, 0x40, 0x00});
     require(!lockedExtrq, "EXTRQ with invalid LOCK prefix was matched instead of preserving #UD");
 }
@@ -171,7 +171,7 @@ void goldenBodies() {
         require(sequence.has_value() && *sequence == expected, "In-place lowering differs from the golden encoding");
     };
     inPlace({0xF2, 0x0F, 0x78, 0xC8, 0x00, 0x00}, {0xF3, 0x0F, 0x7E, 0xC8, 0x66, 0x90});
-    inPlace({0x66, 0x0F, 0x78, 0xC3, 0x18, 0x28}, {0x66, 0x0F, 0x73, 0xD3, 0x28, 0x90});
+    inPlace({0x66, 0x0F, 0x78, 0xC3, 0x00, 0x00}, {0xF3, 0x0F, 0x7E, 0xDB, 0x66, 0x90});
     {
         const Bytes extrq8 = {0x66, 0x0F, 0x78, 0xC3, 0x08, 0x00};
         const auto operands = Codegen::DecodeSse4a(extrq8.data(), extrq8.size());

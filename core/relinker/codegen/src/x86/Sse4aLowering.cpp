@@ -141,6 +141,7 @@ std::optional<std::vector<std::uint8_t>> Sse4aLowering::LowerInPlace(const Sse4a
             return std::nullopt;
         }
     } else {
+        _sse(sequence, kPrefixScalar, {0x0F, 0x7E}, dst, dst);
         if (index == 0 && length == kFieldBits) {
         } else if (index + length == kFieldBits) {
             _shiftImm(sequence, kShiftRight, dst, index);
