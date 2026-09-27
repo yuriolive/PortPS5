@@ -156,16 +156,22 @@ Other facts:
 
 ## Tests
 
-- **Unit** (`recompiler_tests`, hosted):
-  - decoder round-trip per opcode encoding;
-  - `ValidateProgram` negative cases;
-  - SSA with synthetic flags;
-  - tier 1 and tier 2 structurizer on hand-built CFGs (diamond, multi-latch, shared merge, the two irreducible entries, a goto into a loop);
-  - variant index: bound, eviction, concurrent single compile;
-  - key stability: the same request gives the same `SourceKey` and `VariantKey` ([pipeline-cache.md](pipeline-cache.md#target-design)) across processes;
-  - idiom analysis, positive and negative;
-  - emission of BDA V#/SRT loads, user-data-buffer SGPR reads and the heap probe (§Target design 7);
-  - regression tests for saveexec `(vcc, vcc)`, atomic-zero, `v_movrels` and wave-LDS scope.
+- **GoogleTest Unit Suites** (`recompiler_tests`, hosted `unit` job):
+  - Decoder round-trip per opcode encoding with parameterized tests (`TEST_P`).
+  - `ValidateProgram` negative cases.
+  - SSA with synthetic flags.
+  - Tier 1 and tier 2 structurizer on hand-built CFGs (diamond, multi-latch, shared merge, the two irreducible entries, a goto into a loop).
+  - Variant index: bound, eviction, concurrent single compile.
+  - Key stability: the same request gives the same `SourceKey` and `VariantKey` ([pipeline-cache.md](pipeline-cache.md#target-design)) across processes.
+  - Idiom analysis, positive and negative.
+  - Emission of BDA V#/SRT loads, user-data-buffer SGPR reads and the heap probe (§Target design 7).
+  - Regression tests for saveexec `(vcc, vcc)`, atomic-zero, `v_movrels` and wave-LDS scope.
+  - Death tests (`EXPECT_DEATH`): verify that unresolvable opcodes trigger an immediate logging abort via `Unsupported()` without memory corruption.
+- **Ported Ecosystem Test Suites:**
+  - **KytyPS5 `ShaderRecompilerComputeTests`:** comprehensive RDNA2 instruction lowering, resource descriptor bindings, texture sampling modes, and atomic memory operations.
+  - **KytyPS5 `shaderCfgTests`:** advanced control-flow graphs, loop structuring, loop termination conditions, and complex nested branching topologies.
+  - **Mesa ACO GFX10.3 Test Suite (`src/amd/compiler/tests`):** bitfield-exact RDNA2 instruction decoding, DPP swizzles, SDWA packing, 64-bit LDS instructions, and divergent control-flow reconvergence.
+  - **SharpEMU Packed ALU Suites:** packed 16-bit math (`VopcF16`), 3-input XOR (`ThreeInputXor`), and 24-bit signed multiplication (`SignedMultiply24`).
 - **Synthetic golden corpus** (hosted): project-written `.s` sources only, never game bytecode.
   - Coverage gate: every `RdnaOpcode` the decoder accepts appears in at least one request, and CI fails when a decoded class (SOP1/SOP2/SOPK/SOPC/SOPP/SMEM/VOP1/VOP2/VOP3/VOPC/VOP3P/DS/MUBUF/MTBUF/MIMG/FLAT/EXP) has no request.
   - Each variant is replayed with a wave32 and a wave64 target, and with and without subgroup size control.
