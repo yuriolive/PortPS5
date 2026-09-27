@@ -495,5 +495,110 @@ class TestRegexPatterns(unittest.TestCase):
         self.assertIsNone(TEST_RE.match('// TEST(Foo, Bar)'))
 
 
+class TestPreprocessorAndLiterals(unittest.TestCase):
+    """Tests for preprocessor conditional tracking and string/comment literal sanitization."""
+
+    def test_vabi_in_string_literal_ignored(self):
+        lines = [
+            'const char* decl = "int APS5_VABI false_func(int x);";\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_test_in_string_literal_ignored(self):
+        lines = [
+            'void log_event() {\n',
+            '    LOG_INFO("TEST(FakeSuite, FakeCase) executed");\n',
+            '}\n',
+        ]
+        self.assertEqual(check_test_docs('tests/foo.cpp', lines), [])
+
+    def test_vabi_in_multiline_block_comment_ignored(self):
+        lines = [
+            '/*\n',
+            ' * Legacy signature: int APS5_VABI deprecated_func();\n',
+            ' */\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_test_in_multiline_block_comment_ignored(self):
+        lines = [
+            '/*\n',
+            ' * TEST(OldSuite, OldCase) {\n',
+            ' * }\n',
+            ' */\n',
+        ]
+        self.assertEqual(check_test_docs('tests/foo.cpp', lines), [])
+
+    def test_vabi_in_raw_string_literal_ignored(self):
+        lines = [
+            'const char* code = R"(\n',
+            '    int APS5_VABI raw_shader_export();\n',
+            ')";\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_vabi_in_if_0_ignored(self):
+        lines = [
+            '#if 0\n',
+            'int APS5_VABI disabled_func();\n',
+            '#endif\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_test_in_if_0_ignored(self):
+        lines = [
+            '#if 0\n',
+            'TEST(DisabledSuite, DisabledCase) {\n',
+            '}\n',
+            '#endif\n',
+        ]
+        self.assertEqual(check_test_docs('tests/foo.cpp', lines), [])
+
+    def test_vabi_in_if_0_else_active(self):
+        lines = [
+            '#if 0\n',
+            'int APS5_VABI disabled();\n',
+            '#else\n',
+            'int APS5_VABI enabled();\n',
+            '#endif\n',
+        ]
+        violations = check_vabi_docs('core/foo.cpp', lines)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line, 4)
+        self.assertIn('enabled', violations[0].message)
+
+    def test_test_in_if_0_else_active(self):
+        lines = [
+            '#if 0\n',
+            'TEST(Disabled, Case) {}\n',
+            '#else\n',
+            'TEST(Enabled, Case) {}\n',
+            '#endif\n',
+        ]
+        violations = check_test_docs('tests/foo.cpp', lines)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line, 4)
+        self.assertIn('Enabled', violations[0].message)
+
+    def test_nested_if_0_ignored(self):
+        lines = [
+            '#if 0\n',
+            '#if 1\n',
+            'int APS5_VABI nested();\n',
+            '#endif\n',
+            '#endif\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_char_literal_with_quote(self):
+        lines = [
+            'char q = \'"\';\n',
+            'int APS5_VABI foo();\n',
+        ]
+        violations = check_vabi_docs('core/foo.cpp', lines)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line, 2)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -156,6 +156,224 @@ def extract_func_name(line):
     return after.split('APS5_VABI')[-1].strip().split('(')[0].strip()
 
 
+def is_statically_false_condition(cond):
+    """Return True if a preprocessor condition expression is statically disabled (e.g. 0)."""
+    cond = re.sub(r'//.*$', '', cond)
+    cond = re.sub(r'/\*.*?\*/', '', cond)
+    cond = cond.strip()
+    if cond in ('0', '(0)', 'false', 'FALSE', '!1', '(!1)', '!true', '(!true)'):
+        return True
+    if re.match(r'^(?:0|\(0\)|false|FALSE)\b', cond):
+        return True
+    return False
+
+
+@dataclass
+class SanitizedLine:
+    """Sanitized line representation for comment policy checking."""
+    original: str
+    cleaned: str
+    is_active: bool
+    is_pure_comment: bool
+
+
+def sanitize_source_file(lines):
+    """Tokenize and sanitize C++ source lines.
+
+    Replaces string literals, character literals, raw string literals, and comments
+    with spaces (preserving line length and original indices) while tracking active
+    preprocessor conditional blocks (such as #if 0 ... #endif).
+
+    Returns a list of SanitizedLine objects.
+    """
+    sanitized = []
+    pp_stack = []
+
+    in_block_comment = False
+    in_raw_string = False
+    raw_delimiter = ''
+
+    def is_currently_active():
+        return all(frame['branch_active'] for frame in pp_stack)
+
+    raw_string_start_re = re.compile(r'^R"([a-zA-Z0-9_{}\[\]#<>%:;?*+\-/\^&|~!=,\.]*)\(')
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Handle preprocessor directives when outside block comments and raw strings
+        if not in_block_comment and not in_raw_string and stripped.startswith('#'):
+            m = re.match(r'^#\s*([a-zA-Z_]\w*)(.*)$', stripped)
+            if m:
+                directive = m.group(1)
+                remainder = m.group(2).strip()
+
+                if directive == 'if':
+                    parent = is_currently_active()
+                    if not parent:
+                        pp_stack.append({'parent_active': False, 'branch_active': False, 'any_branch_taken': True})
+                    else:
+                        disabled = is_statically_false_condition(remainder)
+                        active = not disabled
+                        pp_stack.append({'parent_active': True, 'branch_active': active, 'any_branch_taken': active})
+                elif directive in ('ifdef', 'ifndef'):
+                    parent = is_currently_active()
+                    if not parent:
+                        pp_stack.append({'parent_active': False, 'branch_active': False, 'any_branch_taken': True})
+                    else:
+                        pp_stack.append({'parent_active': True, 'branch_active': True, 'any_branch_taken': True})
+                elif directive == 'elif':
+                    if pp_stack:
+                        frame = pp_stack[-1]
+                        if not frame['parent_active'] or frame['any_branch_taken']:
+                            frame['branch_active'] = False
+                        else:
+                            disabled = is_statically_false_condition(remainder)
+                            frame['branch_active'] = not disabled
+                            if frame['branch_active']:
+                                frame['any_branch_taken'] = True
+                elif directive == 'else':
+                    if pp_stack:
+                        frame = pp_stack[-1]
+                        if not frame['parent_active'] or frame['any_branch_taken']:
+                            frame['branch_active'] = False
+                        else:
+                            frame['branch_active'] = True
+                            frame['any_branch_taken'] = True
+                elif directive == 'endif':
+                    if pp_stack:
+                        pp_stack.pop()
+
+            sanitized.append(SanitizedLine(
+                original=line,
+                cleaned=' ' * len(line),
+                is_active=is_currently_active(),
+                is_pure_comment=False,
+            ))
+            continue
+
+        active = is_currently_active()
+        chars = list(line)
+        cleaned_chars = []
+        n = len(chars)
+        i = 0
+        in_string = False
+        in_char = False
+        string_escaped = False
+        char_escaped = False
+        has_non_comment_code = False
+
+        while i < n:
+            ch = chars[i]
+
+            if in_block_comment:
+                cleaned_chars.append(' ')
+                if ch == '*' and i + 1 < n and chars[i + 1] == '/':
+                    cleaned_chars.append(' ')
+                    in_block_comment = False
+                    i += 2
+                    continue
+                i += 1
+                continue
+
+            if in_raw_string:
+                cleaned_chars.append(' ')
+                target = ')' + raw_delimiter + '"'
+                if line[i:i + len(target)] == target:
+                    for _ in range(len(target) - 1):
+                        cleaned_chars.append(' ')
+                    in_raw_string = False
+                    raw_delimiter = ''
+                    i += len(target)
+                    continue
+                i += 1
+                continue
+
+            if in_string:
+                cleaned_chars.append(' ')
+                if string_escaped:
+                    string_escaped = False
+                elif ch == '\\':
+                    string_escaped = True
+                elif ch == '"':
+                    in_string = False
+                i += 1
+                continue
+
+            if in_char:
+                cleaned_chars.append(' ')
+                if char_escaped:
+                    char_escaped = False
+                elif ch == '\\':
+                    char_escaped = True
+                elif ch == "'":
+                    in_char = False
+                i += 1
+                continue
+
+            # In active normal code:
+            # Check for line comment //
+            if ch == '/' and i + 1 < n and chars[i + 1] == '/':
+                cleaned_chars.extend([' '] * (n - i))
+                break
+
+            # Check for block comment start /*
+            if ch == '/' and i + 1 < n and chars[i + 1] == '*':
+                in_block_comment = True
+                cleaned_chars.append(' ')
+                cleaned_chars.append(' ')
+                i += 2
+                continue
+
+            # Check for raw string R"..."
+            if ch == 'R' and i + 1 < n and chars[i + 1] == '"':
+                rem = line[i:]
+                m_raw = raw_string_start_re.match(rem)
+                if m_raw:
+                    in_raw_string = True
+                    raw_delimiter = m_raw.group(1)
+                    matched_len = len(m_raw.group(0))
+                    cleaned_chars.extend([' '] * matched_len)
+                    has_non_comment_code = True
+                    i += matched_len
+                    continue
+
+            # Check for normal string "
+            if ch == '"':
+                in_string = True
+                string_escaped = False
+                cleaned_chars.append(' ')
+                has_non_comment_code = True
+                i += 1
+                continue
+
+            # Check for character literal '
+            if ch == "'":
+                in_char = True
+                char_escaped = False
+                cleaned_chars.append(' ')
+                has_non_comment_code = True
+                i += 1
+                continue
+
+            if not ch.isspace():
+                has_non_comment_code = True
+            cleaned_chars.append(ch)
+            i += 1
+
+        cleaned_str = ''.join(cleaned_chars)
+        is_pure_comment = not has_non_comment_code and is_comment_line(stripped)
+
+        sanitized.append(SanitizedLine(
+            original=line,
+            cleaned=cleaned_str,
+            is_active=active,
+            is_pure_comment=is_pure_comment,
+        ))
+
+    return sanitized
+
+
 # ---------------------------------------------------------------------------
 # Rule implementations
 # ---------------------------------------------------------------------------
@@ -204,26 +422,31 @@ def check_file_header(rel_path, lines):
 
 
 def check_vabi_docs(rel_path, lines):
-    """Rule 2 - Verify doc comments on APS5_VABI function declarations/defs."""
+    """Rule 2 - Verify doc comments on APS5_VABI function declarations/defs.
+
+    Uses tokenize/sanitize pass to ignore inactive preprocessor blocks (e.g. #if 0)
+    and string/character literals that mention APS5_VABI.
+    """
     violations = []
-    for i, line in enumerate(lines):
-        stripped = line.strip()
+    sanitized = sanitize_source_file(lines)
 
-        # Skip preprocessor directives (includes the #define APS5_VABI macro).
-        if stripped.startswith('#'):
+    for i, sline in enumerate(sanitized):
+        if not sline.is_active:
             continue
 
-        # Skip pure comment lines — they can't be function declarations.
-        if is_comment_line(stripped):
+        cleaned = sline.cleaned.strip()
+        if not cleaned:
             continue
 
-        # Match APS5_VABI funcname(  — excludes type aliases (APS5_VABI *).
-        match = VABI_FUNC_RE.search(stripped)
+        if cleaned.startswith('#'):
+            continue
+
+        match = VABI_FUNC_RE.search(cleaned)
         if not match:
             continue
 
         if not has_doc_comment_before(lines, i, skip_attrs=True):
-            func_name = extract_func_name(line)
+            func_name = extract_func_name(cleaned)
             violations.append(Violation(
                 rel_path, i + 1, 'vabi-doc',
                 f"Export '{func_name}' with APS5_VABI lacks a preceding doc "
@@ -234,22 +457,28 @@ def check_vabi_docs(rel_path, lines):
 
 
 def check_test_docs(rel_path, lines):
-    """Rule 3 - Verify doc comments on GoogleTest TEST()/TEST_F() cases."""
-    violations = []
-    for i, line in enumerate(lines):
-        stripped = line.strip()
+    """Rule 3 - Verify doc comments on GoogleTest TEST()/TEST_F() cases.
 
-        if is_comment_line(stripped):
+    Uses tokenize/sanitize pass to ignore inactive preprocessor blocks (e.g. #if 0)
+    and string/character literals that mention TEST(...).
+    """
+    violations = []
+    sanitized = sanitize_source_file(lines)
+
+    for i, sline in enumerate(sanitized):
+        if not sline.is_active:
             continue
 
-        match = TEST_RE.match(line)
+        cleaned = sline.cleaned
+        match = TEST_RE.match(cleaned)
         if not match:
             continue
 
         if not has_doc_comment_before(lines, i, skip_attrs=False):
+            stripped_orig = lines[i].strip()
             violations.append(Violation(
                 rel_path, i + 1, 'test-doc',
-                f"{stripped} is missing a doc comment explaining the "
+                f"{stripped_orig} is missing a doc comment explaining the "
                 f"invariant or edge case being tested.",
             ))
 
