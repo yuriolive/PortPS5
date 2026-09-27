@@ -98,12 +98,14 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 
 ## Tests
 
-- **Unit (hosted):**
-  - Mapping merge rules.
-  - Dead-zone math.
-  - Slot assignment and reassignment on plug and unplug sequences, fed as synthetic SDL events.
-  - TOML bindings parse and reject.
-  - The timestamp advances on every read.
+- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
+  - Button OR-merging and stick displacement arbitration rules.
+  - Radial and axial dead-zone mathematics and clamp boundaries.
+  - Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
+  - TOML controller binding parsing and rejection of invalid identifiers.
+  - Monotonic timestamp advancement invariants on sequential `scePadRead` calls.
+- **Ported Ecosystem Test Suites:**
+  - **KytyPS5 `PadHapticsTests`:** DualSense USB report parsing, radial deadzone calculation, motor vibration amplitude translation, and controller orientation telemetry.
 - **Replay determinism:** the same recorded input produces identical `PadData` sequences whatever controller backend is present.
 - **Manual matrix per release:** a small table recorded in the release notes (the device classes only, no personal hardware):
 
