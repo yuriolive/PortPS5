@@ -365,6 +365,11 @@ if(BUILD_TESTING)
         configure_windows_unwind(exception_runtime_tests)
         add_test(NAME exception_runtime COMMAND exception_runtime_tests)
     endif()
+    # application_heap_tests tests ApplicationHeap allocator routines in isolation.
+    # Note: tests/ApplicationHeap.cpp defines callbacks using APS5_VABI (__attribute__((sysv_abi))).
+    # MinGW GCC cannot generate Windows SEH unwind information for sysv_abi functions, requiring
+    # -fno-asynchronous-unwind-tables (DWARF unwinding). This in turn references __gxx_personality_v0,
+    # which is exported by libc.prx. Hence application_heap_tests links libc and configures Windows unwinding.
     add_executable(application_heap_tests tests/ApplicationHeap.cpp prx/libc/src/ApplicationHeap.cpp)
     target_include_directories(application_heap_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     set_target_properties(application_heap_tests PROPERTIES CXX_EXTENSIONS OFF)

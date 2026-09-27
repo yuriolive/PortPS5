@@ -265,21 +265,21 @@ set_target_properties(agc_driver_bda_device_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_bda_device_tests)
 
 if(BUILD_TESTING)
-    set(AGC_UNIT_TESTS agc_driver_pm4_tests agc_shader_memory_tests agc_driver_recompiler_tests)
-    set(AGC_LAVAPIPE_TESTS agc_driver_tests agc_driver_flip_tests agc_driver_graphics_tests agc_driver_bda_device_tests)
+    # libSceAgcDriver tests exercise GPU translation and submission pipelines.
+    # Per docs/spec/verification.md §1, the hosted CI 'unit' job covers host-only
+    # libc, libkernel, and relinker tests. All libSceAgcDriver tests are labeled
+    # 'lavapipe' to run in the driver test suite (Milestone 1 driver-lavapipe job).
+    set(AGC_DRIVER_TESTS
+        agc_driver_tests
+        agc_driver_flip_tests
+        agc_driver_graphics_tests
+        agc_driver_bda_device_tests
+        agc_driver_pm4_tests
+        agc_shader_memory_tests
+        agc_driver_recompiler_tests
+    )
 
-    foreach(agcTest IN LISTS AGC_UNIT_TESTS)
-        string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
-        set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
-        add_test(NAME ${agcTestName} COMMAND ${agcTest})
-        if(WIN32)
-            set_tests_properties(${agcTestName} PROPERTIES ENVIRONMENT_MODIFICATION
-                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-        endif()
-        set_tests_properties(${agcTestName} PROPERTIES LABELS "unit")
-    endforeach()
-
-    foreach(agcTest IN LISTS AGC_LAVAPIPE_TESTS)
+    foreach(agcTest IN LISTS AGC_DRIVER_TESTS)
         string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
         set_target_properties(${agcTest} PROPERTIES EXCLUDE_FROM_ALL OFF)
         add_test(NAME ${agcTestName} COMMAND ${agcTest})
