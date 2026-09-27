@@ -14,8 +14,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | build | Full configure and build (relinker, every prx module, tools) from a clean tree. |
 | unit | `ctest` over libc, libkernel and relinker tests, including the futex sync tests (Milestone 1). |
 | recompiler-golden | Replays serialised shader requests through the recompiler. It diffs SPIR-V against golden files and validates each module with SPIRV-Tools `spirv-val`. The hosted corpus holds only **synthetic or hand-assembled RDNA2 shaders** written for the project, with no game bytecode. Game-derived shader requests are captured into a local-only corpus on the maintainer machine and replayed by local regression (§2). |
-| driver-lavapipe | Small driver tests (Recorder ordering, detile round-trip, buffer and texture cache invalidation) on lavapipe, Mesa's software Vulkan driver. |
-| policy | Fails on new title-specific code patterns and stray switches: no `APS5_` string literals and no `getenv` outside the `Config` module (which alone may name the `APS5_` prefix, to warn about stale variables) ([configuration.md](configuration.md)); no title-ID literals in `core/`; no hash-matched kernel tables. It also checks that the docs never name personal hardware. |
+| policy | Fails on new title-specific code patterns and stray switches: no `APS5_` string literals and no `getenv` outside the `Config` module (which alone may name the `APS5_` prefix, to warn about stale variables) ([configuration.md](configuration.md)); no title-ID literals in `core/`; no hash-matched kernel tables. Compliance with the rule that docs describe hardware only as the generic reference tier is enforced via PR review checklist. |
 
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 

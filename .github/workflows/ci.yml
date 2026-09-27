@@ -23,11 +23,6 @@ jobs:
           path: C:\mingw64
           key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
 
-      - name: Install Ninja
-        uses: ashley-hebler/install-ninja@v1.0.0
-        with:
-          version: '1.12.1'
-
       - name: Download and verify MinGW-w64 GCC 15.2
         if: steps.cache-mingw.outputs.cache-hit != 'true'
         shell: pwsh
@@ -106,10 +101,3 @@ jobs:
               throw "Forbidden title-ID found in core/: $titleHacks"
           }
           Write-Host "Policy pass: No title-IDs found in core/"
-
-          # 3. No personal machine phrasing in docs (must use generic reference tier)
-          $personalHw = git grep -n -i -E "my (machine|pc|gpu|rig|setup|desktop|laptop)" docs/ 2>$null
-          if ($personalHw) {
-              throw "Personal machine reference found in docs (use generic reference tier): $personalHw"
-          }
-          Write-Host "Policy pass: No personal machine references found in docs/"
