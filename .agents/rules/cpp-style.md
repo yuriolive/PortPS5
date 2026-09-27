@@ -4,8 +4,11 @@ These rules come from the AnyPS5 `docs/CONVENTIONS.md`, with PortPS5's changes.
 
 - **Standard:** C++20 today and C++23 from Milestone 0. The only compiler is MinGW-w64 GCC 15.2. Don't use MSVC-only or clang-only features unless they are behind a guard.
 - **Naming:** PascalCase for types and functions, `I`-prefixed interfaces, `T`-prefixed template parameters. Match the surrounding file.
-- **Documentation & Comments:**
-  - Comments must explain *why*, not what. Required on magic constants, hand-assembled bytes, ABI tricks, unwinding constraints (`APS5_VABI` / `sysv_abi` vs Windows SEH, DWARF `.eh_frame -> .ehfram` renaming), build system flags, and synchronization invariants.
+- **Documentation & Comments (Enforced Best Practice):**
+  - **Every new file** must begin with a file-level comment header explaining its purpose, subsystem ownership, lifecycle, and threading invariants.
+  - **Every class, struct, and public function** must have doc-comments documenting parameters, return values, SCE/POSIX error codes, and thread-safety constraints.
+  - **Inline comments** are mandatory for non-obvious logic: magic constants, hand-assembled bytes, ABI tricks, unwinding constraints (`APS5_VABI` / `sysv_abi` vs Windows SEH, DWARF `.eh_frame -> .ehfram` renaming), memory barriers, atomic operations, and synchronization invariants.
+  - **Test cases (`TEST`, `TEST_F`)** must include comments explaining the exact behavioral invariant being verified, test preconditions, and expected failure modes.
   - Undocumented workarounds or silent hacks are forbidden. When working around platform or compiler quirks, document the exact rationale and reference the relevant spec in `docs/spec/`.
   - Maintain standardization: follow consistent naming, explicit types, and zero warnings under `-Werror`.
 - **ABI:**
