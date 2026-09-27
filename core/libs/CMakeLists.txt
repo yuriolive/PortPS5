@@ -410,4 +410,10 @@ if(BUILD_TESTING)
 
     get_property(ALL_LIB_TESTS DIRECTORY PROPERTY TESTS)
     set_property(TEST ${ALL_LIB_TESTS} PROPERTY LABELS "unit")
+# --- slice offline: test registration ---
+    add_executable(offline_stubs_tests tests/OfflineStubs.cpp)
+    target_include_directories(offline_stubs_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(offline_stubs_tests PRIVATE libSceNpManager libSceNpAuth libSceNpWebApi2 libSceNpCommerce libSceNpEntitlementAccess libSceNpSessionSignaling libSceNpGameIntent libSceNpTrophy2 libSceNpUniversalDataSystem libSceUserService libSceSystemService libSceMsgDialog libSceSaveDataDialog.native libSceCommonDialog libScePad libkernel libc)
+    configure_windows_unwind(offline_stubs_tests)
+    portps5_add_test(offline_stubs offline_stubs_tests)
 endif()
