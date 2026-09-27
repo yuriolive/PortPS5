@@ -8,6 +8,19 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
+#include "prx/libc/include/config/Config.hpp"
+
+namespace {
+// Why typed config, not env: APS5_* reads are banned by policy;
+// debug.ignore_host_input keeps measurement and recorded-input replay runs
+// from reacting to stray keys or mouse buttons that reach the window.
+bool IgnoreHostInput() {
+ if (!PortPS5::Config::Loader::IsInitialized()) {
+  return false;
+ }
+ return PortPS5::Config::Loader::Get().debug.ignoreHostInput;
+}
+}
 
 void PadInput::setMouseMode(bool enabled) {
     if (SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE) != 0) throw std::runtime_error(std::string("Pad: relative mouse mode failed: ") + SDL_GetError());
@@ -27,6 +40,9 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         publish();
         return;
     }
+    if (IgnoreHostInput() && event.type == SDL_MOUSEWHEEL) {
+        return;
+    }
     if (event.type == SDL_MOUSEWHEEL) {
         int direction = (event.wheel.y > 0) - (event.wheel.y < 0);
         if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) direction = -direction;
@@ -44,6 +60,9 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     const bool keyboard = event.type == SDL_KEYDOWN || event.type == SDL_KEYUP;
     const bool mouse = event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP;
     if (!keyboard && !mouse) return;
+    if (IgnoreHostInput()) {
+        return;
+    }
     if (keyboard && event.key.repeat != 0) return;
     const bool down = event.type == SDL_KEYDOWN || event.type == SDL_MOUSEBUTTONDOWN;
     for (std::size_t index = 0; index < Pad::InputMapping.size(); ++index) {
@@ -63,6 +82,9 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
 }
 
 void PadInput::Update() {
+    if (IgnoreHostInput()) {
+        return;
+    }
     const auto now = std::chrono::steady_clock::now();
     bool released = false;
     for (std::size_t index = 0; index < Pad::InputMapping.size(); ++index) {
