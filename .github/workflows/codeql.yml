@@ -141,9 +141,27 @@ jobs:
           # are still compiled and analysed — only the SPIRV-Tools library
           # itself is omitted.
           #
-          # BUILD_TESTING=OFF reduces build time further; test binaries contain
-          # the same source as production targets and do not add analysis value.
-          cmake --preset ci -DANYPS5_ENABLE_SPIRV_TOOLS=OFF -DBUILD_TESTING=OFF
+          # BUILD_TESTING=OFF skips test binary compilation; test sources
+          # share the same code paths as production targets and add no
+          # analysis value.
+          #
+          # CMAKE_BUILD_TYPE=Release instead of RelWithDebInfo: CodeQL
+          # extracts semantic data (AST, call graph, dataflow) at compiler
+          # IR level — before code generation and before debug-info emission.
+          # DWARF/PDB generation is wasted time in the CodeQL context and
+          # skipping it noticeably reduces build duration. Release optimisations
+          # also expose more dataflow paths for CodeQL's taint-tracking queries.
+          #
+          # ccache is intentionally NOT used: CodeQL works by intercepting
+          # compiler invocations live. A ccache hit bypasses the real compiler,
+          # so CodeQL sees no AST for that translation unit and its database
+          # entry for the file stays empty. Every file must be compiled fresh.
+          cmake --preset ci `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER_LAUNCHER="" `
+            -DCMAKE_CXX_COMPILER_LAUNCHER="" `
+            -DANYPS5_ENABLE_SPIRV_TOOLS=OFF `
+            -DBUILD_TESTING=OFF
           cmake --build --preset ci
 
       - name: Perform CodeQL Analysis
