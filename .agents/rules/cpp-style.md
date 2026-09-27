@@ -4,7 +4,10 @@ These rules come from the AnyPS5 `docs/CONVENTIONS.md`, with PortPS5's changes.
 
 - **Standard:** C++20 today and C++23 from Milestone 0. The only compiler is MinGW-w64 GCC 15.2. Don't use MSVC-only or clang-only features unless they are behind a guard.
 - **Naming:** PascalCase for types and functions, `I`-prefixed interfaces, `T`-prefixed template parameters. Match the surrounding file.
-- **Comments:** explain *why*, not what. Required on magic constants, hand-assembled bytes, ABI tricks and ordering and synchronization invariants. This replaces AnyPS5's no-comments rule.
+- **Documentation & Comments:**
+  - Comments must explain *why*, not what. Required on magic constants, hand-assembled bytes, ABI tricks, unwinding constraints (`APS5_VABI` / `sysv_abi` vs Windows SEH, DWARF `.eh_frame -> .ehfram` renaming), build system flags, and synchronization invariants.
+  - Undocumented workarounds or silent hacks are forbidden. When working around platform or compiler quirks, document the exact rationale and reference the relevant spec in `docs/spec/`.
+  - Maintain standardization: follow consistent naming, explicit types, and zero warnings under `-Werror`.
 - **ABI:**
   - Every host function reachable from guest code uses `APS5_VABI` (System V calling convention).
   - Guest-visible structs use explicit-width types and `static_assert` on their size and offsets.

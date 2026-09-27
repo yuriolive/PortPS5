@@ -1,12 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "d7fd544574e869ca95ba11f95be7845d4fc063b8",
-    "indexed_at": "2026-09-27T15:37:15Z",
+    "commit": "9189dd97bf7a4cc63bc2a6efe1c46dd386df365c",
+    "indexed_at": "2026-09-27T16:00:42Z",
     "project": "PortPS5",
-    "nodes": 280,
-    "edges": 277,
-    "original_size": 2031616,
-    "compressed_size": 101061,
-    "compression_level": 9,
-    "reconcile_basis": "git-clean-head"
+    "nodes": 163268,
+    "edges": 522898,
+    "original_size": 292814848,
+    "compressed_size": 42968441,
+    "compression_level": 9
 }

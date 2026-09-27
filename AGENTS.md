@@ -38,6 +38,7 @@ Short version:
 4. Real POSIX/SCE errors return codes. Only truly unsupported states abort, through the logging abort path.
 5. A change to a subsystem's behaviour updates its spec in `docs/spec/` in the same PR.
 6. Docs describe hardware only as the generic reference tier. Never name a specific personal machine.
+7. Document non-obvious rationale, ABI invariants, and workarounds inline in the code. Iterate and verify builds and unit tests locally before committing.
 
 ## Skills
 
