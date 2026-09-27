@@ -48,3 +48,30 @@ portps5_add_gtest(kernel_pthread_tests
     LABELS
         unit
 )
+
+# Virtual and direct memory allocation verification (ported from KytyPS5)
+portps5_add_gtest(memory_virtual_allocation_tests
+    SOURCES
+        memory/VirtualMemoryAllocationTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Filesystem sandbox containment & path traversal prevention (ported from SharpEMU)
+portps5_add_gtest(filesystem_sandbox_path_tests
+    SOURCES
+        filesystem/SandboxPathTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)

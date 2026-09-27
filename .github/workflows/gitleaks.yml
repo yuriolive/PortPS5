@@ -1,0 +1,58 @@
+# Gitleaks — Secret & Legal-Boundary Scanning
+#
+# Scans every push and pull request for secrets (private keys, API tokens,
+# high-entropy strings) and any content that would violate the legal boundary
+# defined in .agents/rules/legal-boundary.md.
+#
+# Why Gitleaks and not GitHub Secret Scanning alone?
+#   GitHub's built-in secret scanning covers only the default push event and
+#   a curated list of token patterns from known service providers. Gitleaks
+#   adds: (a) pull-request diff scanning before merge, (b) the custom rule
+#   set below that is tuned to this project's legal boundary (Sony firmware
+#   keys, IDPS patterns, AES-128-CBC key blocks), and (c) a local `gitleaks
+#   detect` command contributors can run before pushing.
+#
+# No external tokens are required. The action uses GITHUB_TOKEN only to
+# post a PR annotation when a leak is detected. On fork PRs the token has
+# limited write permissions; the job will still fail the check on a match
+# (the annotation is best-effort).
+
+name: Gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      # contents:read to checkout; security-events:write for SARIF upload.
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so that Gitleaks can scan all commits in a
+          # push, not just the tip. Without this, a key committed and
+          # immediately amended would not appear in a shallow clone.
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # GITHUB_TOKEN is used only to annotate the PR with a summary
+          # comment when a finding is detected. It is the automatic token,
+          # not a personal or service-account token.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE is required only for private repositories.
+          # This is a public repository; leave it unset.
+        with:
+          # Point to the project-specific config that adds Sony-specific
+          # patterns on top of Gitleaks's built-in ruleset.
+          config-path: .github/gitleaks.toml

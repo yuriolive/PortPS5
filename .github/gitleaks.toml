@@ -1,0 +1,129 @@
+# Gitleaks configuration for PortPS5
+# https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+#
+# This file extends Gitleaks's built-in rules with patterns specific to the
+# legal boundary documented in .agents/rules/legal-boundary.md.
+#
+# Rule anatomy:
+#   id          — unique identifier shown in the alert and SARIF output
+#   description — human-readable explanation shown to the reviewer
+#   regex       — Go RE2 pattern matched against the diff content
+#   tags        — free-form labels (used for filtering and triage)
+#   severity    — informational only; Gitleaks always fails on any match
+#
+# All built-in Gitleaks rules still run. These additions cover Sony-specific
+# patterns that the built-in ruleset does not detect.
+#
+# Allowlist scope: allowlists are attached to individual rules, NOT to the
+# global [allowlist] block. A global [allowlist] exempts ALL rules (including
+# built-in ones), which would prevent detection of real API tokens or private
+# keys committed under tests/ or docs/. Rule-scoped allowlists exempt only
+# the fixture-pattern false-positives for each specific custom rule while
+# leaving built-in rules fully active across the entire repository.
+
+title = "PortPS5 Gitleaks Configuration"
+
+# ── Extend, not replace, the built-in Gitleaks rule set ───────────────────
+[extend]
+useDefault = true
+
+# ── Project-specific rules ─────────────────────────────────────────────────
+
+[[rules]]
+id          = "ps5-idps"
+description = "Possible PS5 IDPS (console identity) key — 32-byte hex string in a context suggesting a device identity. Committing a real IDPS would expose a user's console to Sony's ban system."
+# Matches ini-style (idps = "..."), shell (idps="..."), and JSON-style
+# ("idps": "...") by allowing an optional closing quote between the label
+# and the = / : delimiter.
+# Separators between hex digit pairs (spaces or colons, common in dump-tool
+# output) are allowed: [0-9a-f]([:\s]?[0-9a-f]){63} instead of {64}.
+regex       = '''(?i)(idps|console.?id|device.?id)["']?\s*[=:]\s*["']?[0-9a-f]([:\s]?[0-9a-f]){63}["']?'''
+tags        = ["legal-boundary", "ps5", "identity"]
+severity    = "critical"
+
+    # Synthetic test fixtures use known-safe hex constants that match this
+    # pattern. Only this rule is exempted — built-in rules (generic-api-key,
+    # private-key, etc.) continue to scan tests/ and docs/ in full.
+    [[rules.allowlists]]
+    description = "Test fixtures and docs use known-safe hex constants"
+    paths = [
+        '''tests/''',
+        '''docs/''',
+        '''.github/gitleaks.toml''',
+    ]
+
+[[rules]]
+id          = "sony-rsa-private-key"
+description = "RSA/EC private key that may be a Sony firmware signing key. Private signing keys must never enter the repository."
+regex       = '''-----BEGIN (RSA |EC )?PRIVATE KEY-----'''
+tags        = ["legal-boundary", "ps5", "crypto"]
+severity    = "critical"
+
+    # Docs may quote PEM headers as examples of what is forbidden. This rule
+    # is NOT exempted for tests/ — there is no legitimate reason to commit a
+    # private key PEM block in a test fixture.
+    [[rules.allowlists]]
+    description = "Docs may quote PEM headers as explanatory examples"
+    paths = [
+        '''docs/''',
+        '''.github/gitleaks.toml''',
+    ]
+
+[[rules]]
+id          = "ps5-rap-rif"
+description = "Possible PS5 .rap or .rif licence file content — base64 blocks whose length and surrounding context suggest a content licence. These tie a title to a specific PSN account."
+# Allow an optional closing quote between the label word and the = / :
+# delimiter to catch JSON-style fields: "content_id": "..." as well as
+# ini-style content_id = "...".
+regex       = '''(?i)(\.rap|\.rif|content.?id|license.?key)["']?\s*[=:]\s*["']?[A-Za-z0-9+/]{32,}={0,2}["']?'''
+tags        = ["legal-boundary", "ps5", "drm"]
+severity    = "critical"
+
+    # Test fixtures may use synthetic licence-shaped base64 blobs. Docs may
+    # quote the format. Neither represents a real PSN licence.
+    [[rules.allowlists]]
+    description = "Test fixtures and docs may contain synthetic licence-shaped blobs"
+    paths = [
+        '''tests/''',
+        '''docs/''',
+        '''.github/gitleaks.toml''',
+    ]
+
+[[rules]]
+id          = "ps5-firmware-path"
+description = "Absolute path referencing PS5 firmware directories (/system, /system_ex, /update). Firmware file paths must never be hardcoded or referenced in source."
+# Child path is optional so bare /system, /update, /system_ex are also
+# caught. Previously required at least 4 non-whitespace chars after the
+# trailing slash, missing "/system", "/update", and "/system/a" literals.
+regex       = '''["'`](/system(_ex)?|/update)(/[^"'`\s]+)?["'`]'''
+tags        = ["legal-boundary", "ps5", "firmware"]
+severity    = "warning"
+
+    # Spec and test helpers reference these paths by name to describe what is
+    # forbidden, or as path-validation test inputs.
+    [[rules.allowlists]]
+    description = "Spec docs and path-validation tests reference firmware paths by name"
+    paths = [
+        '''tests/''',
+        '''docs/''',
+        '''.github/gitleaks.toml''',
+    ]
+
+[[rules]]
+id          = "aes-128-key-material"
+description = "Potential AES-128 key (16-byte hex literal). Common format for content encryption keys in decryption tools. Must not appear in source."
+# Allow an optional closing quote between the label word and the = / :
+# delimiter to catch JSON-style: "aes_key": "..." as well as aes_key = "...".
+regex       = '''(?i)(aes.{0,10}key|key.{0,10}aes)["']?\s*[=:]\s*["']?[0-9a-f]{32}["']?'''
+tags        = ["legal-boundary", "crypto"]
+severity    = "warning"
+
+    # Crypto unit tests use known-plaintext / known-key vectors for correctness
+    # checks. Docs explain key formats. Neither is a live encryption key.
+    [[rules.allowlists]]
+    description = "Crypto test vectors and docs use known-safe key literals"
+    paths = [
+        '''tests/''',
+        '''docs/''',
+        '''.github/gitleaks.toml''',
+    ]
