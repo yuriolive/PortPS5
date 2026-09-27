@@ -217,3 +217,10 @@ jobs:
               }
           }
           Write-Host "Policy pass: Workaround registry matches docs/workarounds.md"
+
+      - name: Verify code comments and best practices
+        shell: pwsh
+        run: |
+          Write-Host "Running code comment and docstring policy checks..."
+          git fetch origin main --depth=1 2>$null
+          python tools/check_comments.py --base origin/main

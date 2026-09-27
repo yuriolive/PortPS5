@@ -1,3 +1,7 @@
+// tests/kernel/PthreadCondTests.cpp
+// Verification test suite for POSIX condition variable emulation in PortPS5 libkernel.
+// Verifies wait/signal/broadcast synchronization invariants, spurious wakeup tolerance, and timeout handling.
+
 #include "common/TestHarness.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"

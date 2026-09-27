@@ -1,3 +1,7 @@
+// tests/kernel/PthreadSemTests.cpp
+// Verification test suite for POSIX semaphore synchronization in PortPS5 libkernel.
+// Verifies count initialization, post/wait synchronization, concurrent producer-consumer pacing, and timeouts.
+
 #include "common/TestHarness.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 
