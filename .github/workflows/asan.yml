@@ -1,27 +1,27 @@
-# ASan / UBSan — Runtime Memory Safety
+# ASan / UBSan — Runtime Memory Safety via LLVM/Clang (MSYS2 CLANG64)
 #
-# Compiles and runs all unit tests under AddressSanitizer (heap overflow,
-# stack overflow, use-after-free, use-after-return, use-after-scope) and
-# UndefinedBehaviorSanitizer (signed integer overflow, misaligned pointer
-# access, null pointer dereference, array out-of-bounds).
+# MinGW-w64 GCC does not ship libasan or libubsan — those sanitizer runtimes
+# depend on POSIX signals and /proc/self/maps and are not ported to Windows.
 #
-# Why a separate job and not a flag on the main CI job?
-#   Sanitizer builds are 2–4× slower to compile and 2–5× slower to link
-#   because the compiler instruments every memory access and every integer
-#   operation. Running them in a second parallel job keeps the primary CI
-#   job's feedback loop short while still catching memory bugs on every PR.
+# LLVM's compiler-rt *does* work on Windows. It uses VirtualQuery and
+# structured-exception-handling instead of POSIX signals. The MSYS2 CLANG64
+# environment ships both clang++ and the compiler-rt package that contains
+# clang_rt.asan-x86_64.dll, making it the only reliable path for ASan on
+# Windows without MSVC.
 #
-# Why this matters for PortPS5?
-#   The relinker manipulates raw ELF sections in guest-supplied memory. The
-#   guest-memory subsystem manages GuestArena and GuestHeap via raw pointer
-#   arithmetic. The threading subsystem uses futex words and tid tables.
-#   These are exactly the areas where spatial and temporal memory errors are
-#   most likely and most dangerous. ASan catches them at the test boundary
-#   before they become exploitable in a shipped binary.
+# Clang in CLANG64 targets x86_64-w64-mingw32, so __attribute__((sysv_abi))
+# is fully supported — the ABI invariant required by every host export in
+# core/ is preserved.
 #
-# No external tokens required. The job uses the automatic GITHUB_TOKEN.
-# On fork PRs the job still runs because it builds from the checked-out
-# source tree; it does not read any repository secret.
+# Why we configure cmake directly instead of using --preset asan:
+#   The asan CMakePreset inherits from base, which sets the MinGW-GCC
+#   toolchain file (cmake/toolchains/mingw-gcc15.cmake). That file asserts
+#   GCC 15.2 and rejects any other compiler. Rather than adding a parallel
+#   preset hierarchy for Clang, we pass flags directly here so the workflow
+#   is self-contained and the CMakePresets.json stays clean.
+#
+# No external tokens required. Uses automatic GITHUB_TOKEN (contents: read).
+# Runs safely on fork PRs because it only reads the checked-out source.
 
 name: ASan / UBSan
 
@@ -33,7 +33,7 @@ on:
 
 jobs:
   sanitize:
-    name: AddressSanitizer + UBSan (unit tests)
+    name: ASan + UBSan (LLVM/Clang, MSYS2 CLANG64)
     runs-on: windows-2022
     permissions:
       contents: read
@@ -46,66 +46,101 @@ jobs:
 
       # ── Submodule cache ────────────────────────────────────────────────────
       - name: Cache git submodules
-        id: cache-submodules
         uses: actions/cache@v4
         with:
           path: .git/modules
           key: submodules-${{ hashFiles('.gitmodules') }}
 
-      - name: Update submodules (from cache if possible)
+      - name: Update submodules
         shell: pwsh
         run: git submodule update --init --recursive
 
-      # ── Toolchain ──────────────────────────────────────────────────────────
-      # ASan and UBSan are built into MinGW-w64 GCC 15.2 as libasan and
-      # libubsan. No separate installation step is needed.
-
-      - name: Cache MinGW toolchain
-        id: cache-mingw
-        uses: actions/cache@v4
-        with:
-          path: C:\mingw64
-          key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
-
-      - name: Download and verify MinGW-w64 GCC 15.2
-        if: steps.cache-mingw.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $expectedSha = (Get-Content cmake/toolchains/mingw-gcc15.sha256 | Select-String -Pattern '^[0-9a-f]{64}').Matches.Value
-          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.7z"
-          $archive = "$env:TEMP\winlibs.7z"
-          Write-Host "Downloading MinGW GCC 15.2..."
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          $actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualSha -ne $expectedSha) {
-              throw "Checksum mismatch — Expected: $expectedSha, got: $actualSha"
-          }
-          7z x $archive -oC:\ -y
-          Remove-Item $archive
-
-      - name: Add MinGW to PATH
-        shell: pwsh
-        run: |
-          "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      # ── Build under sanitizers ─────────────────────────────────────────────
-      # The `asan` preset (CMakePresets.json) passes:
-      #   -fsanitize=address,undefined -fno-omit-frame-pointer
-      # to both the compiler and linker. ASAN_OPTIONS and UBSAN_OPTIONS are
-      # set in the preset environment so that ctest inherits them.
+      # ── MSYS2 CLANG64 ─────────────────────────────────────────────────────
+      # CLANG64 is MSYS2's fully LLVM-based Windows environment. It provides
+      # clang / clang++ targeting x86_64-w64-mingw32, and the compiler-rt
+      # package which ships clang_rt.asan-x86_64.dll — the LLVM ASan runtime
+      # for Windows. No libasan needed.
       #
-      # halt_on_error=1 — terminate the process immediately on the first
-      #   sanitizer finding rather than accumulating errors. This keeps the
-      #   log readable and prevents the finding from being masked by a
-      #   subsequent crash.
-      # abort_on_error=1 — exit via abort() so ctest marks the test as
-      #   FAILED (non-zero exit) rather than letting it continue.
+      # update: false keeps the action fast by skipping pacman -Syu; packages
+      # are pinned to whatever ships in the MSYS2 installer image on the
+      # runner. If a package is missing, set update: true.
 
-      - name: Configure (asan preset)
-        run: cmake --preset asan
+      - name: Set up MSYS2 CLANG64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: false
+          install: >-
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-compiler-rt
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-python
 
-      - name: Build (asan preset)
-        run: cmake --build --preset asan
+      # ── Verify toolchain ───────────────────────────────────────────────────
+      - name: Verify Clang and ASan runtime availability
+        shell: msys2 {0}
+        run: |
+          clang++ --version
+          # Confirm the ASan runtime DLL is present before attempting a build.
+          # If this fails, the compiler-rt package is missing or mismatched.
+          find /clang64/lib/clang -name "clang_rt.asan*" 2>/dev/null \
+            | grep -q . && echo "ASan runtime: found" \
+            || (echo "ASan runtime: NOT FOUND — check compiler-rt package" && exit 1)
+
+      # ── Configure ─────────────────────────────────────────────────────────
+      # We pass all flags explicitly rather than using --preset asan, because
+      # that preset inherits the GCC-only toolchain file. Clang needs a clean
+      # configure with no toolchain constraints beyond what we specify here.
+      #
+      # -fsanitize=address,undefined : enable ASan + UBSan
+      # -fno-omit-frame-pointer      : preserve frame pointers for readable
+      #                                ASan stack traces on Windows
+      # -g                           : debug info for source-level diagnostics
+      # PORTPS5_COMPILE_WARNING_AS_ERROR=ON mirrors the ci preset so we catch
+      # any Clang-specific warnings that GCC silently accepts.
+
+      - name: Configure (Clang + ASan/UBSan)
+        shell: msys2 {0}
+        run: |
+          cmake -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_STANDARD=23 \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DBUILD_TESTING=ON \
+            -DANYPS5_ENABLE_SPIRV_TOOLS=ON \
+            -DPORTPS5_COMPILE_WARNING_AS_ERROR=ON \
+            -B build/asan \
+            .
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build build/asan --parallel
+
+      # ── Run tests ──────────────────────────────────────────────────────────
+      # halt_on_error=1    — stop on the first sanitizer finding rather than
+      #                      accumulating errors; keeps the log readable.
+      # abort_on_error=1   — exit via abort() so ctest records FAILED
+      #                      (non-zero exit) rather than letting execution
+      #                      continue past the first violation.
+      # print_stacktrace=1 — emit a symbolised stack trace for UBSan findings.
+      #
+      # The ASan runtime DLL (clang_rt.asan-x86_64.dll) must be on PATH at
+      # test run time. msys2/setup-msys2 adds /clang64/bin to PATH for the
+      # msys2 shell, so this is handled automatically.
 
       - name: Run unit tests under ASan / UBSan
-        run: ctest --preset asan
+        shell: msys2 {0}
+        env:
+          ASAN_OPTIONS: halt_on_error=1:abort_on_error=1:print_stats=1
+          UBSAN_OPTIONS: halt_on_error=1:abort_on_error=1:print_stacktrace=1
+        run: |
+          ctest --test-dir build/asan \
+            --label-regex "^unit$" \
+            --output-on-failure \
+            --parallel 1

@@ -47,7 +47,7 @@
     {
       "name": "asan",
       "displayName": "ASan / UBSan",
-      "description": "Memory-safety CI job: AddressSanitizer + UndefinedBehaviorSanitizer on every unit test. Inherits ci so warnings-as-errors and SPIRV-Tools are on. Kept separate from the main ci preset so sanitizer overhead does not slow the primary build job.",
+      "description": "AddressSanitizer + UndefinedBehaviorSanitizer. In CI this is run via MSYS2 CLANG64 (LLVM compiler-rt ships clang_rt.asan on Windows; MinGW-w64 GCC does not ship libasan). For local use on Linux/WSL, cmake --preset asan works with GCC's native libasan. The asan CI job (.github/workflows/asan.yml) configures cmake directly, bypassing this preset's inherited GCC toolchain file.",
       "inherits": "ci",
       "cacheVariables": {
         "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
