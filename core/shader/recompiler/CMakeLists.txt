@@ -10,7 +10,11 @@ function(add_shader_recompiler target runtimeTarget)
         set(SPIRV_TOOLS_BUILD_STATIC ON)
         set(SPIRV_WERROR OFF)
         set(BUILD_SHARED_LIBS OFF)
+        set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)
         add_subdirectory("${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Tools" "${CMAKE_BINARY_DIR}/3rdparty/SPIRV-Tools" EXCLUDE_FROM_ALL)
+        if(PORTPS5_COMPILE_WARNING_AS_ERROR)
+            set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+        endif()
     endif()
 
     if(BUILD_TESTING AND NOT TARGET glslang)
@@ -23,12 +27,22 @@ function(add_shader_recompiler target runtimeTarget)
         set(ENABLE_SPVREMAPPER OFF)
         set(ENABLE_OPT OFF)
         set(ALLOW_EXTERNAL_SPIRV_TOOLS OFF)
+        set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)
 
         add_subdirectory(
                 "${PROJECT_SOURCE_DIR}/3rdparty/glslang"
                 "${CMAKE_BINARY_DIR}/3rdparty/glslang"
                 EXCLUDE_FROM_ALL
         )
+        if(PORTPS5_COMPILE_WARNING_AS_ERROR)
+            set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+        endif()
+        foreach(t glslang MachineIndependent GenericCodeGen OSDependent glslang-default-resource-limits glslang-standalone)
+            if(TARGET ${t})
+                set_target_properties(${t} PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+                target_compile_options(${t} PRIVATE -Wno-error -Wno-maybe-uninitialized)
+            endif()
+        endforeach()
     endif()
 
     add_library(${target} STATIC EXCLUDE_FROM_ALL

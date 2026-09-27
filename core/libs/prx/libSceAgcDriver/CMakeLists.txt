@@ -22,11 +22,18 @@ function(ensure_agc_glslang)
     set(ENABLE_SPVREMAPPER OFF)
     set(ENABLE_OPT OFF)
 
+    set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)
     add_subdirectory(
             "${CMAKE_SOURCE_DIR}/3rdparty/glslang"
             "${CMAKE_BINARY_DIR}/3rdparty/glslang"
             EXCLUDE_FROM_ALL
     )
+    foreach(t glslang MachineIndependent GenericCodeGen OSDependent glslang-default-resource-limits glslang-standalone)
+        if(TARGET ${t})
+            set_target_properties(${t} PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+            target_compile_options(${t} PRIVATE -Wno-error -Wno-maybe-uninitialized)
+        endif()
+    endforeach()
 endfunction()
 
 ensure_agc_glslang()

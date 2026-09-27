@@ -11,6 +11,21 @@ if(BUILD_TESTING)
 endif()
 
 option(ANYPS5_ENABLE_SPIRV_TOOLS "Enable SPIRV-Tools validation and optimization" OFF)
+option(PORTPS5_COMPILE_WARNING_AS_ERROR "Treat warnings as errors for PortPS5 targets" OFF)
+
+if(CMAKE_COMPILE_WARNING_AS_ERROR)
+    set(PORTPS5_COMPILE_WARNING_AS_ERROR ON CACHE BOOL "Treat warnings as errors for PortPS5 targets" FORCE)
+    unset(CMAKE_COMPILE_WARNING_AS_ERROR CACHE)
+endif()
+
+if(NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        message(STATUS "Found ccache: ${CCACHE_PROGRAM}")
+    endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +52,11 @@ set(CMAKE_EXE_LINKER_FLAGS "")
 add_subdirectory(3rdparty/SDL2)
 set(CMAKE_EXE_LINKER_FLAGS "${ANYPS5_EXE_LINKER_FLAGS}")
 
+if(PORTPS5_COMPILE_WARNING_AS_ERROR)
+    set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
+endif()
+
 add_subdirectory(core/shader/recompiler)
 add_subdirectory(core/libs)
 add_subdirectory(core/relinker)
+

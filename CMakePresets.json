@@ -41,7 +41,7 @@
       "description": "Hosted CI (inherits dev, warnings as errors for PortPS5 targets)",
       "inherits": "dev",
       "cacheVariables": {
-        "CMAKE_COMPILE_WARNING_AS_ERROR": "ON"
+        "PORTPS5_COMPILE_WARNING_AS_ERROR": "ON"
       }
     }
   ],
