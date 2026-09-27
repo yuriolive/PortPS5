@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "e6cfe3ed835c5a796498aadd072adb2675a167c5",
-    "indexed_at": "2026-09-27T15:28:49Z",
+    "commit": "4e07bf3a753e105418781330e19c55699be5a6b3",
+    "indexed_at": "2026-09-27T15:32:31Z",
     "project": "C-Users-yuri_-.gemini-antigravity-worktrees-portps5-setup_milestone_seed_mcp",
-    "nodes": 272,
-    "edges": 269,
+    "nodes": 280,
+    "edges": 277,
     "original_size": 2031616,
-    "compressed_size": 101523,
+    "compressed_size": 102957,
     "compression_level": 9
 }
