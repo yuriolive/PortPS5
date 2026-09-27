@@ -6,7 +6,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 
 ## 1. Hosted CI (GitHub Actions, every PR and every push to `main`)
 
-- **Environment:** Windows runner with the pinned MinGW-w64 GCC 15.2 toolchain, downloaded and verified by checksum.
+- **Environment:** Windows runner (pinned `windows-2022`) with the pinned MinGW-w64 GCC 15.2 toolchain, downloaded and verified by checksum.
 - **Jobs:**
 
 | Job | Contents |
