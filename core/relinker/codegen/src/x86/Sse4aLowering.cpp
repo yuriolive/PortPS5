@@ -144,9 +144,6 @@ std::optional<std::vector<std::uint8_t>> Sse4aLowering::LowerInPlace(const Sse4a
         if (index == 0 && length == kFieldBits) {
         } else if (index + length == kFieldBits) {
             _shiftImm(sequence, kShiftRight, dst, index);
-        } else if (index == 0 && (length == 8 || length == 16 || length == 32)) {
-            const std::uint8_t opcode = length == 8 ? 0x32 : (length == 16 ? 0x34 : 0x35);
-            _sse(sequence, kPrefixPacked, {0x0F, 0x38, opcode}, dst, dst);
         } else {
             return std::nullopt;
         }

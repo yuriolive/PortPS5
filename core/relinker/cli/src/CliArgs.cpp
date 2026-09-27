@@ -54,7 +54,7 @@ Args ParseArgs(int argc, char* argv[]) {
     if (args.inputPath.empty() || args.outputPath.empty())
         throw std::runtime_error(
             "Usage: relinker [--windows] [--windows-diagnostics] [--skip-syscall-check] [--skip-sce-module] [--to-intel] [unused-filter=0|1|2] [--registry] [--rpath <path>] [--lazy-binding] [--autorun] <input> <output>\n"
-            "Example: relinker input.elf output.exe"
+            "Example: relinker --windows input.elf output.exe"
         );
 
     return args;

@@ -126,6 +126,8 @@ void sse4aOperands() {
     requireFailure([] { const Bytes bytes = {0x66, 0x0F, 0x78, 0xCB, 0x08, 0x28}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "EXTRQ with a non-zero reg field was accepted");
     requireFailure([] { const Bytes bytes = {0xF2, 0x0F, 0x78, 0x1B, 0x08, 0x08}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "SSE4a memory operand was accepted");
     requireFailure([] { const Bytes bytes = {0xF2, 0x0F, 0x78, 0xC8, 0x20, 0x30}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "Field beyond bit 64 was accepted");
+    requireFailure([] { const Bytes bytes = {0xF0, 0x66, 0x0F, 0x78, 0xC0, 0x40, 0x00}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "SSE4a instruction with LOCK prefix was accepted");
+    requireFailure([] { const Bytes bytes = {0xF3, 0x0F, 0x78, 0xC0, 0x40, 0x00}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "SSE4a instruction with REP prefix was accepted");
 }
 
 void matcherSubstitutions() {
@@ -145,6 +147,8 @@ void matcherSubstitutions() {
     require(stub && stub->Lowering == Codegen::Amd64OnlyLowering::Trampoline && stub->StubBody == kInsertqHighBody && stub->ReturnBranchOffset == 15 && stub->InstructionName == "INSERTQ", "INSERTQ was not lowered through a stub");
     const auto shiftInPlace = match({0x66, 0x0F, 0x78, 0xC3, 0x18, 0x28});
     require(shiftInPlace && shiftInPlace->Lowering == Codegen::Amd64OnlyLowering::InPlace && shiftInPlace->ReplacementBytes == Bytes{0x66, 0x0F, 0x73, 0xD3, 0x28, 0x90}, "Top-aligned EXTRQ was not lowered in place");
+    const auto lockedExtrq = match({0xF0, 0x66, 0x0F, 0x78, 0xC0, 0x40, 0x00});
+    require(!lockedExtrq, "EXTRQ with invalid LOCK prefix was matched instead of preserving #UD");
 }
 
 void goldenBodies() {
@@ -168,7 +172,12 @@ void goldenBodies() {
     };
     inPlace({0xF2, 0x0F, 0x78, 0xC8, 0x00, 0x00}, {0xF3, 0x0F, 0x7E, 0xC8, 0x66, 0x90});
     inPlace({0x66, 0x0F, 0x78, 0xC3, 0x18, 0x28}, {0x66, 0x0F, 0x73, 0xD3, 0x28, 0x90});
-    inPlace({0x66, 0x0F, 0x78, 0xC3, 0x08, 0x00}, {0x66, 0x0F, 0x38, 0x32, 0xDB, 0x90});
+    {
+        const Bytes extrq8 = {0x66, 0x0F, 0x78, 0xC3, 0x08, 0x00};
+        const auto operands = Codegen::DecodeSse4a(extrq8.data(), extrq8.size());
+        require(!lowering.LowerInPlace(operands, extrq8.size()).has_value(),
+                "EXTRQ length 8 must not lower in-place (PMOVZX would corrupt adjacent elements)");
+    }
     inPlace({0xF2, 0x0F, 0x78, 0xDB, 0x08, 0x00}, {0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00});
     inPlace({0xF2, 0x0F, 0x78, 0xC8, 0x20, 0x00}, {0x66, 0x0F, 0x3A, 0x0E, 0xC8, 0x03});
     inPlace({0xF2, 0x45, 0x0F, 0x78, 0xC8, 0x10, 0x00}, {0x66, 0x45, 0x0F, 0x3A, 0x0E, 0xC8, 0x01});

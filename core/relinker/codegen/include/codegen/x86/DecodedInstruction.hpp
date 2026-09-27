@@ -23,7 +23,12 @@ struct DecodedInstruction {
     [[nodiscard]] bool IsMovntsd() const;
 
 private:
-    [[nodiscard]] std::size_t _skipPrefixesAndRex(bool* outHasOperandSizePrefix, bool* outHasRepnePrefix, bool* outHasRepPrefix) const;
+    [[nodiscard]] std::size_t _skipPrefixesAndRex(
+        bool* outHasOperandSizePrefix,
+        bool* outHasRepnePrefix,
+        bool* outHasRepPrefix,
+        bool* outHasLockPrefix = nullptr
+    ) const;
 };
 
 }

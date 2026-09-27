@@ -202,17 +202,22 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
 
     // Shared CodeMap is the only instruction-discovery engine: syscall scan
     // reads proven Starts, Unproven bytes are only logged.
+    // Catch only BuildCodeMap failures; let exceptions from ScanImage propagate.
+    std::optional<Domain::CodeMap> codeMap;
     try {
-        const auto codeMap = BuildCodeMap(sourceElf, programHeaders);
-        _syscallScanner->ScanImage(sourceElf, programHeaders, codeMap);
+        codeMap = BuildCodeMap(sourceElf, programHeaders);
     } catch (const RelinkerException& e) {
         // Images without discoverable code (e.g. synthetic fixtures with no
         // entry points) fall back to the legacy single-segment scan.
-        if (!textSection.empty())
-            _syscallScanner->ScanCodeSectionForSyscalls(textSection, textVAddr, textSection.size());
-        else
+        if (std::string(e.what()).find("no code entry points") == std::string::npos)
             throw;
-        (void)e;
+    }
+    if (codeMap.has_value()) {
+        _syscallScanner->ScanImage(sourceElf, programHeaders, *codeMap);
+    } else if (!textSection.empty()) {
+        _syscallScanner->ScanCodeSectionForSyscalls(textSection, textVAddr, textSection.size());
+    } else {
+        throw RelinkerException("Code analysis: no code entry points");
     }
 
     _validationPolicy->ValidateSyscallAbsence();

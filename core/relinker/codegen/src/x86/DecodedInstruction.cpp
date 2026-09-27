@@ -8,15 +8,25 @@ using namespace X64OpcodeConstants;
 std::size_t DecodedInstruction::_skipPrefixesAndRex(
     bool* outHasOperandSizePrefix,
     bool* outHasRepnePrefix,
-    bool* outHasRepPrefix
+    bool* outHasRepPrefix,
+    bool* outHasLockPrefix
 ) const {
     std::size_t pos = 0;
     *outHasOperandSizePrefix = false;
     *outHasRepnePrefix = false;
     *outHasRepPrefix = false;
+    if (outHasLockPrefix)
+        *outHasLockPrefix = false;
 
     while (pos < Length) {
         const std::uint8_t b = Data[pos];
+
+        if (b == PrefixLock) {
+            if (outHasLockPrefix)
+                *outHasLockPrefix = true;
+            pos += 1;
+            continue;
+        }
 
         if (b == PrefixRepne) {
             *outHasRepnePrefix = true;
@@ -30,8 +40,7 @@ std::size_t DecodedInstruction::_skipPrefixesAndRex(
             continue;
         }
 
-        if (b == PrefixLock ||
-            b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs || b == PrefixSegEs ||
+        if (b == PrefixSegCs || b == PrefixSegSs || b == PrefixSegDs || b == PrefixSegEs ||
             b == PrefixSegFs || b == PrefixSegGs) {
             pos += 1;
             continue;
@@ -101,9 +110,10 @@ bool DecodedInstruction::IsExtrq() const {
     bool operandSizeOverride = false;
     bool repnePrefix = false;
     bool repPrefix = false;
-    const std::size_t pos = _skipPrefixesAndRex(&operandSizeOverride, &repnePrefix, &repPrefix);
+    bool lockPrefix = false;
+    const std::size_t pos = _skipPrefixesAndRex(&operandSizeOverride, &repnePrefix, &repPrefix, &lockPrefix);
 
-    if (!operandSizeOverride || repnePrefix || repPrefix) {
+    if (lockPrefix || !operandSizeOverride || repnePrefix || repPrefix) {
         return false;
     }
 
@@ -119,9 +129,10 @@ bool DecodedInstruction::IsInsertq() const {
     bool operandSizeOverride = false;
     bool repnePrefix = false;
     bool repPrefix = false;
-    const std::size_t pos = _skipPrefixesAndRex(&operandSizeOverride, &repnePrefix, &repPrefix);
+    bool lockPrefix = false;
+    const std::size_t pos = _skipPrefixesAndRex(&operandSizeOverride, &repnePrefix, &repPrefix, &lockPrefix);
 
-    if (operandSizeOverride || !repnePrefix || repPrefix) {
+    if (lockPrefix || operandSizeOverride || !repnePrefix || repPrefix) {
         return false;
     }
 
