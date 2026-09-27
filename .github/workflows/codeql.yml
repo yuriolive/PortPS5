@@ -58,11 +58,10 @@ jobs:
         with:
           submodules: false
 
-      # ── Submodules (main / cron deep build only) ───────────────────────────
-      # PR fast scanning operates directly on source files (build-mode: none)
-      # and does not compile code, so submodules can be completely skipped.
+      # ── Submodules ─────────────────────────────────────────────────────────
+      # Submodules provide external headers (SDL2, Vulkan-Headers, etc.) needed
+      # by the CodeQL AST extractor to resolve includes without compilation errors.
       - name: Cache git submodules
-        if: github.event_name != 'pull_request'
         uses: actions/cache@v4
         with:
           path: .git/modules
@@ -71,7 +70,6 @@ jobs:
             submodules-${{ runner.os }}-
 
       - name: Update submodules
-        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           git submodule sync --recursive
