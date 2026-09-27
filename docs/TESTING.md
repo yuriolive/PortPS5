@@ -45,7 +45,10 @@ Tests are registered using `portps5_add_test` and `gtest_discover_tests()`:
 
 ## 3. Reference Test Porting from Reference Projects
 
-Reference open-source implementations (such as KytyPS5) provide valuable low-level test cases that are systematically adapted into PortPS5 GoogleTest suites:
+Reference open-source implementations provide battle-tested low-level test cases that are systematically adapted into PortPS5 GoogleTest suites. All Title IDs are scrubbed to generic synthetic mocks (`PPSA00000`) per legal and policy rules.
+
+### 3.1 KytyPS5 Subsystem Test Library
+KytyPS5 provides extensive C++ subsystem test suites covering core kernel primitives, 16 KB virtual memory management, and compute shader reconstruction:
 
 | Reference Test Source | Target PortPS5 Suite | Key Coverage |
 | :--- | :--- | :--- |
@@ -59,6 +62,20 @@ Reference open-source implementations (such as KytyPS5) provide valuable low-lev
 | `PadHapticsTests.cpp` | `tests/input/PadHapticsTests.cpp` | DualSense rumble and haptics emulation with mocked SDL streams. |
 | `ShaderRecompilerComputeTests.cpp` | `tests/shader/ComputeInstructionsTest.cpp` | Full RDNA2 compute instruction set verification. |
 | `shaderCfgTests.cpp` | `tests/shader/ShaderCfgTest.cpp` | CFG reconstruction, SSA rewrite, dead code elimination, constant propagation, SPIR-V validation. |
+
+### 3.2 SharpEMU Security, Concurrency & Instruction Edge-Case Tests
+SharpEMU (GPL-2.0-or-later) provides targeted verification for guest sandbox containment, POSIX threading semantics, fibers, and specific RDNA2 ALU instructions:
+
+| SharpEMU Test Suite | Target PortPS5 Suite | Key Coverage |
+| :--- | :--- | :--- |
+| `KernelSandboxEscapeTests.cs` | `tests/filesystem/SandboxPathTests.cpp` | Guest-to-host path containment: default-deny on unmapped absolute paths (`/etc/passwd`, `/proc/self/mem`, UNC shares), mount-relative `..` path traversal containment (`/app0/../../`), and case-sensitivity normalization. |
+| `PthreadMutexSemanticsTests.cs` | `tests/kernel/PthreadMutexTests.cpp` | Normal, recursive, and error-checking mutex semantics, priority ceiling, timeouts, owner destruction, and waiter handoff. |
+| `PthreadCondSemanticsTests.cs` | `tests/kernel/PthreadCondTests.cpp` | Clock selection (`CLOCK_MONOTONIC` vs `CLOCK_REALTIME`), timed waits, spurious wakeup handling, and signal/broadcast dispatch. |
+| `PthreadRwlockSemanticsTests.cs` | `tests/kernel/PthreadRwlockTests.cpp` | Reader reentrancy, writer-preference priority, and writer starvation prevention. |
+| `FiberExportsTests.cs` & `FiberSwitchLoopTests.cs` | `tests/kernel/FiberTests.cpp` | `sceFiberInitialize`, `sceFiberSwitch`, `sceFiberReturnToThread`, and register preservation across fiber yields. |
+| `Gen5*Tests.cs` (Alu, Pack, Xor) | `tests/shader/Rdna2InstructionTests.cpp` | Packed half-precision math (`VopcF16`, `SignedPack16`), bit manipulation (`ThreeInputXor`, `XorAdd`, `SignedMultiply24`), and LDS data sharing (`DataShareRead64`, `DataShareSwizzle`). |
+| `VideoOutFlipStatusTests.cs` & `VideoOutLatencyTests.cs` | `tests/video/VideoOutTests.cpp` | Presentation flip queue state transitions, latency calculation, and pixel format conversions. |
+| `KernelAioWaitTests.cs` & `KernelPosixSocketOptionTests.cs` | `tests/kernel/KernelNetworkAioTests.cpp` | Kernel AIO completion wait queues and POSIX socket option handling (`SO_REUSEADDR`, non-blocking I/O). |
 
 ---
 
