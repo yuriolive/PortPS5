@@ -128,6 +128,8 @@ jobs:
 
           # 2. No title hacks in core/
           $titleHacks = git grep -n -E "PPSA[0-9]{5}|CUSA[0-9]{5}" core/ 2>$null
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
           if ($titleHacks) {
               throw "Forbidden title-ID found in core/: $titleHacks"
           }
