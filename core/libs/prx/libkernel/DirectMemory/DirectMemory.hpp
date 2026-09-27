@@ -21,4 +21,19 @@ int DoMprotect(const void* addr, size_t len, int prot);
 int DoMunmap(void* addr, size_t len);
 int DoReserveVirtual(void** addr, size_t len, size_t alignment);
 
+#include "prx/libc/include/general/VabiMacros.hpp"
+
+extern "C" {
+int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out);
+int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out);
+int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t search_end, size_t alignment, int64_t* phys_addr_out, size_t* size_out);
+size_t APS5_VABI sceKernelGetDirectMemorySize(void);
+int APS5_VABI sceKernelMapDirectMemory(void** addr, size_t len, int prot, int flags, int64_t direct_memory_start, size_t alignment);
+int APS5_VABI sceKernelMapFlexibleMemory(void** addr_in_out, size_t len, int prot, int flags);
+int APS5_VABI sceKernelMprotect(const void* addr, size_t len, int prot);
+int APS5_VABI sceKernelMunmap(uint64_t vaddr, size_t len);
+int APS5_VABI sceKernelReleaseDirectMemory(int64_t start, size_t len);
+int APS5_VABI sceKernelReserveVirtualRange(void** addr, size_t len, int flags, size_t alignment);
+}
+
 #endif
