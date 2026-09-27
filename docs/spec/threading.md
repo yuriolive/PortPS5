@@ -22,7 +22,7 @@ Paths are relative to `core/libs/prx/`. "main" means `e06dbff`; "PR5" means `29b
 | TLS | The relinker rewrites the guest `mov rax, fs:[0]` into a stub that reads the PE TLS slot through `gs:[0x58]` (`relinker/elfpatcher/src/windows/WindowsTlsBuilder.cpp:82,118`). | Same. |
 | Fibers | Stubs. | An asm context switch in `libSceFiber/Export.cpp:98`. Fibers migrate between threads (34-37). |
 | Time | — | `NtSetTimerResolution` is set to 0.5 ms at load, with power throttling disabled (`libkernel/Time/Time.cpp:71-89`). `SleepUntil` waits on a high-resolution timer and then spins `YieldProcessor` for the last 0.5 ms (`TimedWait.cpp:231-244`). `APS5_TIME_SCALE` rescales the guest clocks (`Time.cpp:39-45`). |
-| Errors | `NotImplemented_nid_no_patch` throws `std::runtime_error` (`libc/src/General.cpp:86-88`). | Same (`General.cpp:85-87`). |
+| Errors | `NotImplemented_nid_no_patch` logs and aborts via `Unsupported()` (`libc/src/General.cpp:86-91`); it no longer throws, because the shared unwinder let guest `catch(...)` swallow host exceptions. | Same (`General.cpp:85-87`). |
 
 ## Decision
 

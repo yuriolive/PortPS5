@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <filesystem>
@@ -83,6 +84,13 @@ extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
       catch (const std::filesystem::filesystem_error& error) { errno = DirectoryFailure(error.code()); return nullptr; }
 }
 
+void Unsupported(const char* what) {
+    APS5_LOG_ERR("Unsupported: %s", what ? what : "?");
+    std::abort();
+}
+
 extern "C" void NotImplemented_nid_no_patch(const char* funcName) {
-    throw std::runtime_error(std::string(funcName) + " not implemented");
+    // Why abort, not throw: the shared unwinder lets guest catch(...) swallow
+    // host exceptions, turning unimplemented calls into silent wrong behavior.
+    Unsupported(funcName);
 }

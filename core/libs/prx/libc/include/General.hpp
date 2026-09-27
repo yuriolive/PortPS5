@@ -10,6 +10,12 @@
 
 extern "C" void NotImplemented_nid_no_patch(const char* funcName);
 
+// Logs and aborts for genuinely unsupported states (docs/spec/threading.md
+// Error policy). Replaces the throw in NotImplemented_nid_no_patch, which the
+// shared DWARF unwinder lets guest catch(...) swallow. The log names what was
+// hit; the threading slice adds caller offset and thread name.
+[[noreturn]] void Unsupported(const char* what);
+
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
 
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
