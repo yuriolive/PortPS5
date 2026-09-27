@@ -5,7 +5,7 @@
 
 extern "C" {
 
-int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params) {
+int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params) noexcept {
     (void)handle;
     (void)vbap_params;
     (void)ambi_params;
@@ -13,13 +13,13 @@ int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle
     return 0;
 }
 
-int APS5_VABI sceAudioOut2SpeakerArrayDestroy(AudioOut2SpeakerArrayHandle handle) {
+int APS5_VABI sceAudioOut2SpeakerArrayDestroy(AudioOut2SpeakerArrayHandle handle) noexcept {
     (void)handle;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(AudioOut2SpeakerArrayHandle handle, uint32_t ambisonics_channel, float* coefficients, uint32_t num_coefficients) {
+int APS5_VABI sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(AudioOut2SpeakerArrayHandle handle, uint32_t ambisonics_channel, float* coefficients, uint32_t num_coefficients) noexcept {
     (void)handle;
     (void)ambisonics_channel;
     (void)coefficients;
@@ -28,7 +28,7 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(AudioOut2Speaker
     return 0;
 }
 
-int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients, uint8_t height_aware, float downmix_spread_radius) {
+int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandle handle, AudioOut2Position pos, float spread, float* coefficients, uint32_t num_coefficients, uint8_t height_aware, float downmix_spread_radius) noexcept {
     (void)handle;
     (void)pos;
     (void)spread;
@@ -40,7 +40,7 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayCoefficients(AudioOut2SpeakerArrayHandl
     return 0;
 }
 
-size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, uint8_t is_3d, uint8_t is_ambisonics) {
+size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, uint8_t is_3d, uint8_t is_ambisonics) noexcept {
     (void)num_speakers;
     (void)is_3d;
     (void)is_ambisonics;
@@ -48,10 +48,19 @@ size_t APS5_VABI sceAudioOut2GetSpeakerArrayMemorySize(uint32_t num_speakers, ui
     return 0;
 }
 
-int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t flags) {
-    (void)info;
+int APS5_VABI sceAudioOut2GetSpeakerInfo(AudioOut2SpeakerInfo* info, uint32_t flags) noexcept {
     (void)flags;
-    NotImplemented_nid_no_patch(__func__);
+    if (!info) return static_cast<int>(0x80260502);
+    // The M1 mix is stereo-only, so the host reports a stereo pair at +/-
+    // 30 degrees; multichannel output is an M5-or-later question per the
+    // audio spec.
+    constexpr std::uint8_t SpeakerTypeStereo = 0;
+    constexpr std::uint32_t FrontLeftAndRight = 0x3;
+    *info = AudioOut2SpeakerInfo{};
+    info->type = SpeakerTypeStereo;
+    info->available_bits = FrontLeftAndRight;
+    info->speaker_angle[0] = {-30, 0};
+    info->speaker_angle[1] = {30, 0};
     return 0;
 }
 
