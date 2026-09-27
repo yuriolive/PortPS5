@@ -1,0 +1,14 @@
+# Git workflow
+
+- **Branches:** `main` is protected. Work on `feat/…`, `fix/…`, `docs/…` or `chore/…` branches, one concern per branch.
+- **Commits:** Conventional Commits (`feat(agc): …`, `fix(libkernel): …`, `docs(spec): …`). The subject is at most 72 characters; the body explains why.
+- **PRs:**
+  - Say which ROADMAP milestone and which spec files the PR touches.
+  - List the tests you added and how you verified the change.
+  - Never attach game footage, logs containing game data, or dumps.
+- **Upstream (AnyPS5):**
+  - It is not tracked for now.
+  - When you port something from AnyPS5 or its PRs, cite the source commit in the commit body.
+- **Generated or large files:**
+  - Don't commit build outputs, caches or telemetry logs.
+  - Check `.gitignore` before adding new output paths.
