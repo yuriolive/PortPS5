@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdio>
+#include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/General.hpp"
@@ -9,6 +10,7 @@
 // Why scripted-OK with RUNNING->FINISHED: Open records the first dir name and
 // reports RUNNING; the next UpdateStatus completes to FINISHED so titles that
 // poll see the console sequence instead of blocking inside Open.
+static std::mutex g_dialogMutex;
 static int g_status = SAVE_DATA_DIALOG_STATUS_NONE;
 static int g_mode = 0;
 static void* g_user_data = nullptr;
@@ -17,6 +19,7 @@ static char g_dir_name[32] = {};
 extern "C" {
 
 int APS5_VABI sceSaveDataDialogInitialize(void) noexcept {
+ std::lock_guard lock(g_dialogMutex);
  if (g_status != SAVE_DATA_DIALOG_STATUS_NONE) {
   return SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED;
  }
@@ -28,10 +31,12 @@ int APS5_VABI sceSaveDataDialogInitialize(void) noexcept {
 }
 
 int APS5_VABI sceSaveDataDialogGetStatus(void) noexcept {
+ std::lock_guard lock(g_dialogMutex);
  return g_status;
 }
 
 int APS5_VABI sceSaveDataDialogUpdateStatus(void) noexcept {
+ std::lock_guard lock(g_dialogMutex);
  if (g_status == SAVE_DATA_DIALOG_STATUS_RUNNING) {
   g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
  }
@@ -39,6 +44,10 @@ int APS5_VABI sceSaveDataDialogUpdateStatus(void) noexcept {
 }
 
 int APS5_VABI sceSaveDataDialogGetResult(void* result) noexcept {
+ std::lock_guard lock(g_dialogMutex);
+ if (g_status != SAVE_DATA_DIALOG_STATUS_FINISHED) {
+  return SAVE_DATA_DIALOG_ERROR_INVALID_STATE;
+ }
  if (result == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
@@ -55,6 +64,7 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) noexcept {
 }
 
 int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept {
+ std::lock_guard lock(g_dialogMutex);
  if (g_status != SAVE_DATA_DIALOG_STATUS_INITIALIZED && g_status != SAVE_DATA_DIALOG_STATUS_FINISHED) {
   return SAVE_DATA_DIALOG_ERROR_INVALID_STATE;
  }
@@ -81,6 +91,7 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept {
 
 int APS5_VABI sceSaveDataDialogClose(const void* closeParam) noexcept {
  (void)closeParam;
+ std::lock_guard lock(g_dialogMutex);
  g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;
 }
@@ -90,6 +101,7 @@ int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) noexcept {
 }
 
 int APS5_VABI sceSaveDataDialogTerminate(void) noexcept {
+ std::lock_guard lock(g_dialogMutex);
  g_status = SAVE_DATA_DIALOG_STATUS_NONE;
  g_mode = 0;
  g_user_data = nullptr;
