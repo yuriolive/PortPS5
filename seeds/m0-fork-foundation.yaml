@@ -1,0 +1,37 @@
+goal: Establish the PortPS5 repository foundation on AnyPS5 upstream main (e06dbff) with GPL-2.0-only licensing, pinned MinGW GCC 15.2 C++23 toolchain, green CI with ctest, and completed gate-title pins in the PRD.
+
+constraints:
+  - No Sony keys, firmware, SDK headers, decryption code, or game assets (dumps, saves, shader bytecode, footage) in repository, CI, or issues (.agents/rules/legal-boundary.md).
+  - No title-specific branching or workarounds in core subsystems; game-specific adjustments belong strictly in config/games/<titleId>.toml (.agents/rules/no-title-hacks.md).
+  - Host exports called by guest code must use APS5_VABI (System V AMD64 ABI) and noexcept (.agents/rules/cpp-style.md).
+  - MinGW-w64 GCC 15.2 (ucrt-posix-seh) is the only supported Windows compiler; MSVC cannot express sysv_abi and must not be used (docs/spec/build-toolchain.md).
+  - Subsystem behavior or interface changes must update corresponding specs under docs/spec/ in the same PR (.agents/rules/docs-and-specs.md).
+  - Hardware is described only as the generic reference tier; never name personal contributor machines (docs/PRD.md §4.4, .agents/rules/docs-and-specs.md).
+  - Out of scope for M0: AnyPS5 PR #5 runtime port (M1), gamepad input (M2), disk pipeline cache (M2), GPU driver split and indirect draws (M3).
+
+acceptance_criteria:
+  - name: clean_clone_build_and_ctest_pass
+    description: main builds from a clean clone in hosted CI using the pinned MinGW GCC 15.2 toolchain and ci preset, with ctest passing all unit and relinker tests.
+    verify: ctest --preset ci
+  - name: prd_pin_table_complete
+    description: All five gate titles in PRD §4.1 have their Title ID, Region, and Patch version recorded with zero TBD cells remaining.
+    verify: python -c "assert 'TBD' not in open('docs/PRD.md', encoding='utf-8').read().split('### 4.1 Gate titles')[1].split('### 4.2')[0], 'PRD pin table contains TBD'"
+  - name: baseline_demon_souls_preserved
+    description: Demon's Souls reaches at least the same observable boot stage on the rebased PortPS5 fork as recorded on upstream main (e06dbff).
+    verify: NONE
+    results_json_field: 'title.id == "PPSA01342" && furthest_stage >= "upstream_baseline"'
+
+context_references:
+  - docs/ROADMAP.md
+  - docs/PRD.md
+  - docs/spec/build-toolchain.md
+  - docs/spec/verification.md
+  - docs/spec/relinker.md
+  - docs/spec/shader-recompiler.md
+  - AGENTS.md
+  - .agents/rules/legal-boundary.md
+  - .agents/rules/no-title-hacks.md
+  - .agents/rules/cpp-style.md
+  - .agents/rules/testing.md
+  - .agents/rules/docs-and-specs.md
+  - .agents/rules/git-workflow.md

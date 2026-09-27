@@ -160,7 +160,8 @@ The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` on
 
 | Layer | Tests |
 |---|---|
-| unit (hosted `ctest`) | PM4 parse and size tables (extending `tests/Pm4.cpp`); state translation per register field; label-wait rule state machine; interval map and block-generation logic; `KernelIdiom` recognition on synthetic IR (also in `recompiler-golden`). |
+| unit (hosted `ctest -L unit`) | GoogleTest suites: PM4 parse and size tables (extending `tests/Pm4.cpp`); state translation per register field; label-wait rule state machine; interval map and block-generation logic; `KernelIdiom` recognition on synthetic IR (also in `recompiler-golden`). Death tests (`EXPECT_DEATH`): verify that unsupported packets or invalid draw descriptors abort via `Unsupported()`. |
+| ecosystem reference ports (hosted & lavapipe) | **DXVK & RPCS3 Test Patterns:** buffer/texture cache overlap invalidation, staging ring-buffer allocation and exhaustion, descriptor pool fragmentation, and multi-queue synchronization barrier hazard tests. |
 | `driver-lavapipe` (hosted) | Recorder ordering and completion order (extending `tests/Recorder.cpp`, which already creates a real instance); detile then retile is the identity for every tile mode; buffer-cache invalidation after a CPU write; staging path with the budget forced to 0 through a test hook (not an env var); two surfaces in one 64 KiB block; a cross-queue test where queue A writes an SRT pointer then a label and queue B waits and dispatches; depth/stencil and indirect-family synthetic PM4; fill and copy transfers byte-identical to running the shader; descriptor-heap probe. |
 | local regression | Frame checks per [verification.md](verification.md) §2; the Demon's Souls stress run (3 × 150 s intro) with 0 wedges and 0 skips in the "not readable" class; `capture_split` in the results JSON, with BDA fault counts in the run log. |
 

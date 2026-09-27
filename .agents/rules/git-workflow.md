@@ -2,6 +2,9 @@
 
 - **Branches:** `main` is protected. Work on `feat/…`, `fix/…`, `docs/…` or `chore/…` branches, one concern per branch.
 - **Commits:** Conventional Commits (`feat(agc): …`, `fix(libkernel): …`, `docs(spec): …`). The subject is at most 72 characters; the body explains why.
+- **Local Verification Before Commit:**
+  - Always iterate and verify changes locally (clean compile and test run) before creating a commit or pushing to remote. Do not rely on hosted CI as a syntax/link checker.
+  - Local worktrees share `ccache` at `%LOCALAPPDATA%\ccache` across the machine, keeping rebuilds across branches and worktrees down to seconds.
 - **PRs:**
   - Say which ROADMAP milestone and which spec files the PR touches.
   - List the tests you added and how you verified the change.

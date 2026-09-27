@@ -1,0 +1,11 @@
+{
+    "schema_version": 2,
+    "commit": "9189dd97bf7a4cc63bc2a6efe1c46dd386df365c",
+    "indexed_at": "2026-09-27T16:00:42Z",
+    "project": "PortPS5",
+    "nodes": 163268,
+    "edges": 522898,
+    "original_size": 292814848,
+    "compressed_size": 42968441,
+    "compression_level": 9
+}

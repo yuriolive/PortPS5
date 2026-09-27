@@ -1,0 +1,3 @@
+# Vendored single-header dependencies must be byte-identical everywhere:
+# pins in 3rdparty/*/VERSION.txt record hashes of the committed bytes.
+3rdparty/tomlplusplus/toml.hpp text eol=lf

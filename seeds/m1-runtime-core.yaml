@@ -1,0 +1,48 @@
+goal: Port the general mechanisms from AnyPS5 PR #5 onto the fork with no title-specific code, delivering the M1 runtime core so Demon's Souls reaches the in-engine intro cinematic with the policy job green.
+
+constraints:
+  - No Sony keys, firmware, SDK headers, decryption code, or game assets (dumps, saves, shader bytecode, footage) in repository, CI, or issues (.agents/rules/legal-boundary.md).
+  - No title-specific branching, hash-matched kernels, fixed caps, or skipped dispatches in core/; per-title behaviour only as documented mechanisms in config/games/<titleId>.toml (.agents/rules/no-title-hacks.md).
+  - Host exports called by guest code must use APS5_VABI and noexcept via the APS5_EXPORT_FN macro; no throw crosses the guest boundary (.agents/rules/cpp-style.md).
+  - Real POSIX/SCE conditions return codes; only truly unsupported states abort via Unsupported() with a log (.agents/rules/cpp-style.md).
+  - Subsystem behaviour or interface changes update the corresponding docs/spec/*.md in the same PR (.agents/rules/docs-and-specs.md).
+  - Hardware described only as the generic reference tier; never name personal contributor machines (docs/PRD.md §4.4).
+  - Zero APS5_* reads remain after M1: 78 diagnostic switches map to typed [debug] keys, 2 size overrides become auto-sized with [debug] overrides, 227 behaviour/kill switches are deleted (docs/spec/configuration.md).
+  - Out of scope for M1: 2D gate input/save/mixer and depth/stencil-driven titles (M2), driver module split, GPU indirect path, capture-ordering redesign and general block-generation tracking (M3), UE4 job coverage, Wave64, GPU descriptor heap and idiom replacement (M4), streaming/aliasing at full size and perf pass (M5), release runs and user guide (M6).
+
+acceptance_criteria:
+  - name: demons_souls_intro_without_title_code
+    description: With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic (the stage PR #5 reached); its fill and copy kernels run as the title's own compiled shaders with no replacement; the policy CI job is green.
+    verify: NONE
+    results_json_field: 'title.id == "PPSA01342" && furthest_stage >= "intro_cinematic" && result == "pass"'
+  - name: sync_microbenchmark_and_pthread_tests
+    description: Uncontended futex lock/unlock is at least 10x faster than the main-branch implementation measured with the same build flags and run protocol, and all pthread/futex unit tests pass.
+    verify: ctest --preset ci -L unit
+  - name: golden_corpus_coverage_green
+    description: The hosted synthetic-shader golden corpus covers every decoded RDNA instruction class and is green in CI; the local-only game-derived corpus replays with 0 validation failures and no Unsupported() abort.
+    verify: ctest --preset ci -L golden
+
+context_references:
+  - docs/ROADMAP.md
+  - docs/PRD.md
+  - docs/spec/README.md
+  - docs/spec/relinker.md
+  - docs/spec/guest-memory.md
+  - docs/spec/threading.md
+  - docs/spec/gpu-driver.md
+  - docs/spec/shader-recompiler.md
+  - docs/spec/video-fmv.md
+  - docs/spec/audio.md
+  - docs/spec/save-data.md
+  - docs/spec/configuration.md
+  - docs/spec/build-toolchain.md
+  - docs/spec/verification.md
+  - AGENTS.md
+  - .agents/rules/legal-boundary.md
+  - .agents/rules/no-title-hacks.md
+  - .agents/rules/cpp-style.md
+  - .agents/rules/testing.md
+  - .agents/rules/docs-and-specs.md
+  - .agents/rules/git-workflow.md
+  - Upstream AnyPS5 PR #5 (29b4601): general mechanisms only (Recorder, host import with staging fallback, GPU detile, GuestArena/GuestHeap, --to-intel SSE4a lowering, AudioOut2, ATRAC9, saveexec/atomic-zero/LDS fixes, agc_shader_replay, RequestSerializer); title-specific code rejected
+  - Code paths: core/relinker, core/shader/recompiler, core/libs/prx/libc, core/libs/prx/libkernel, core/libs/prx/libSceAgc, core/libs/prx/libSceAgcDriver, core/libs/prx/libSceAudioOut, core/libs/prx/libSceAjm.native, config/, tools/

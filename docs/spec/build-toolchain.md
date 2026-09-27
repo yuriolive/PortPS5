@@ -96,16 +96,17 @@ Build presets name the `relinker` and `libs` targets explicitly, so that patched
 
 **Language level.** Set `CMAKE_CXX_STANDARD 23` once at the root, and delete the per-target `cxx_std_20` features in `core/libs/CMakeLists.txt:17` and `core/shader/recompiler/CMakeLists.txt:151`, the only two sites. Existing `CXX_EXTENSIONS OFF` properties stay. The rest keep GNU extensions, because `APS5_EXPORT` relies on GNU asm.
 
-**Test wiring.** A helper `portps5_add_test(name target LABELS ...)` does three things: it clears `EXCLUDE_FROM_ALL` when `BUILD_TESTING` is on, it applies the libc `PATH` prepend that is now repeated 27 times, and it attaches labels:
+**Test wiring.** Test suites are standardized on GoogleTest and wired into CTest via a modernized `portps5_add_test(name target LABELS ...)` helper. The helper ensures test executables link `GTest::gtest` and `GTest::gmock`, clears `EXCLUDE_FROM_ALL` under `BUILD_TESTING`, sets runtime DLL lookup paths on Windows (`libc.prx` and MinGW runtime DLLs), and attaches CTest labels:
 
 | Label | Runs in | Members |
 |---|---|---|
-| `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, PR #5 `amd64_only_*` |
+| `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, PR #5 `amd64_only_*`, ported Kyty kernel/sync/event suites |
 | `golden` | hosted `recompiler-golden` | `agc_shader_replay` over `tests/golden/` (M1) |
 | `lavapipe` | hosted `driver-lavapipe` | driver tests that need a Vulkan device (M1) |
+| `stress` | local / nightly CI | multithreaded futex/umtx concurrency perturbation tests |
 | `local` | maintainer machine only | anything needing a hardware GPU or game data |
 
-Tests currently unregistered are classified into these labels at M0 by running each one on a GPU-less runner (inference: `bda_device`, `graphics` and `flip` probably need a device). Python tests become required, so a missing interpreter is a configure error under `BUILD_TESTING`.
+Tests are progressively consolidated from standalone single-function executables into cohesive GoogleTest suite binaries discovered via `gtest_discover_tests()`. Python tests become required, so a missing interpreter is a configure error under `BUILD_TESTING`.
 
 **Runtime DLLs.** A POST_BUILD step on the `libs` target copies the three MinGW runtime DLLs from the toolchain `bin/` into the patched `libs/` directory. This matches the relinker default run path `$ORIGIN/libs`. Static linking of the prx runtime stays off; TechnicalDebt records that it conflicts.
 
@@ -114,8 +115,8 @@ Tests currently unregistered are classified into these labels at M0 by running e
 **Dependency pins.** Every dependency the specs add is pinned here, by submodule commit or by a vendored release with its version and SHA-256 recorded next to it. Exact versions are chosen when each lands:
 
 | Dependency | Licence | Used by | Form | Lands |
-|---|---|---|---|---|
-| toml++ | MIT, header-only | [configuration.md](configuration.md) | pinned submodule or vendored release header | M1 |
+| GoogleTest (GTest + GMock) | BSD-3-Clause | [verification.md](verification.md) (unit/integration test suites, death testing, mocking) | CMake FetchContent / pinned submodule | M0 / M1 |
+| toml++ | MIT, header-only | [configuration.md](configuration.md) | vendored single header `3rdparty/tomlplusplus/toml.hpp` at v3.4.0 (commit `30172438cee64926dc41fdd9c11fb3ba5b2ba9de`, SHA-256 `6b5172ad4dd6519aec67b919181fa7a38a2234131e5b2afa232dfe444819783e` of the committed LF bytes, see `3rdparty/tomlplusplus/VERSION.txt`) | M1 |
 | xxHash (XXH3-64/128) | BSD-2 | [shader-recompiler.md](shader-recompiler.md) (hashed keys), [pipeline-cache.md](pipeline-cache.md) (keys and record checksums) | vendored single header at a pinned release | M1 |
 | `llvm-mc` (AMDGPU target, `gfx10.3`) | Apache-2.0 with LLVM exception | [shader-recompiler.md](shader-recompiler.md) synthetic corpus | **build-time tool only**, never linked. It regenerates the checked-in `.req` and `.spvasm` from `.s` sources; the LLVM release is pinned, and CI verifies it before use | M1 |
 | SDL2 | zlib | [input.md](input.md), [audio.md](audio.md) | existing submodule. **Pin check:** confirm that commit `4b69833` has the HIDAPI PS5 driver (*inference:* SDL 2.0.14 or later), or bump the pin | M2 |

@@ -134,7 +134,21 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 
 ## Tests
 
-- **Unit** (`ctest`): every mutex type (lock, trylock, timedlock, `EDEADLK`, `EPERM`, `EBUSY`, destroy); lazy initialization with 64 threads racing on a zero slot, with exactly one INIT winner; condition-variable 10^6-round ping-pong and a broadcast storm with no lost wakeups; rwlock writer preference; event-flag AND/OR and clear modes, single-waiter `EPERM` and cancel; semaphore FIFO ordering; `_umtx_op` wait/wake at sizes 4 and 8; TSD destructors at thread exit; `once` under contention; and a check that `Unsupported()` aborts and cannot be caught.
+- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
+  - Every mutex type (lock, trylock, timedlock, `EDEADLK`, `EPERM`, `EBUSY`, destroy).
+  - Lazy initialization with 64 threads racing on a zero slot, with exactly one INIT winner.
+  - Condition-variable 10^6-round ping-pong and a broadcast storm with no lost wakeups.
+  - RWLock writer preference and recursive read lock semantics.
+  - Event-flag AND/OR and clear modes, single-waiter `EPERM` and cancel.
+  - Semaphore FIFO ordering and count clamping.
+  - `_umtx_op` wait/wake at sizes 4 and 8, ported from FreeBSD 12 `sys/tests` umtx validation.
+  - TSD destructors at thread exit and `once` under multi-threaded contention.
+  - Death tests (`EXPECT_DEATH`): verify that `Unsupported()` aborts the process and cannot be caught by guest C++ `catch(...)` exception handlers.
+- **Ported Ecosystem Test Suites:**
+  - **KytyPS5 `SyncOnAddressTests`:** wait-on-address primitives, wake-all broadcast storms, spurious wakeup resilience, sub-millisecond timeout slice accuracy.
+  - **SharpEMU `Pthread*SemanticsTests`:** POSIX mutex attribute invariants, timed condvar deadline precision, writer-preference rwlock starvation prevention.
+  - **SharpEMU `Fiber*Tests` (M4):** fiber stack allocation, context switching, migration across threads, and fiber-local storage (FLS) isolation.
+  - **Wine / Proton Concurrency Perturbation:** high-contention `WaitOnAddress` race conditions under thread affinity perturbation.
 - **Microbenchmarks** (M1 exit): an uncontended lock/unlock pair is **at least 10× faster** than main's implementation. Also measured: contended hand-off latency, condition-variable round trip, `sceKernelUsleep(100)` error (p50/p99), and the CPU cost of a 1 ms sleep.
 - **Local regression:** per-run telemetry counts contended waits, `Unsupported()` hits (target 0) and watchdog heartbeats. Bugsnax job-system coverage is checked at M4.
 
