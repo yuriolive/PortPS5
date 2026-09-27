@@ -7,11 +7,16 @@ set(BUILD_GMOCK ON CACHE BOOL "Build GMock" FORCE)
 set(INSTALL_GTEST OFF CACHE BOOL "Install GTest" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build GTest static" FORCE)
 
+# WinLibs MinGW toolchain does not package root CA bundles for GnuTLS curl.
+# Cryptographic integrity is verified by the pinned SHA-256 URL_HASH below.
+set(CMAKE_TLS_VERIFY OFF CACHE BOOL "Disable TLS verification when toolchain lacks CA bundle" FORCE)
+
 FetchContent_Declare(
     googletest
     URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
     URL_HASH SHA256=7b42b4d6ed48810c5362c265a17faebe90dc2373c885e5216439d37927f02926
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    TLS_VERIFY OFF
 )
 
 FetchContent_MakeAvailable(googletest)

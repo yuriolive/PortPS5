@@ -105,45 +105,31 @@ PortableAddressRegistry& GetPortableRegistry() {
 }
 
 // Registers a waiter into the address registry.
-// Locking invariant: Acquires registry.mutex briefly to lookup/allocate the slot, then unlocks
-// registry.mutex before acquiring entry->mutex. This prevents lock inversion deadlocks.
+// Locking invariant: Acquires registry.mutex FIRST, then entry->mutex SECOND.
+// Holding registry.mutex while pushing into waiters guarantees that concurrent unregister/cleanup
+// cannot erase the slot between allocation and waiter registration, preventing orphaned waiters.
 std::shared_ptr<PortableAddressEntry> RegisterPortableWaiter(volatile void* address,
                                                              PortableWaiter* waiter) {
     auto& registry = GetPortableRegistry();
-    std::shared_ptr<PortableAddressEntry> entry;
-    {
-        std::lock_guard registry_lock(registry.mutex);
-        auto& slot = registry.entries[reinterpret_cast<uintptr_t>(address)];
-        if (!slot) {
-            slot = std::make_shared<PortableAddressEntry>();
-        }
-        entry = slot;
+    std::lock_guard registry_lock(registry.mutex);
+    auto& slot = registry.entries[reinterpret_cast<uintptr_t>(address)];
+    if (!slot) {
+        slot = std::make_shared<PortableAddressEntry>();
     }
-
-    std::lock_guard entry_lock(entry->mutex);
-    entry->waiters.push_back(waiter);
-    return entry;
+    std::lock_guard entry_lock(slot->mutex);
+    slot->waiters.push_back(waiter);
+    return slot;
 }
 
 // Unregisters a waiter from the address registry upon wake or timeout.
-// If no waiters remain, cleans up the registry entry under a consistent lock ordering.
+// Locking invariant: Follows the same strict registry.mutex-then-entry->mutex lock hierarchy.
 void UnregisterPortableWaiter(volatile void* address,
                               const std::shared_ptr<PortableAddressEntry>& entry,
                               PortableWaiter* waiter) {
-    bool empty = false;
-    {
-        std::lock_guard entry_lock(entry->mutex);
-        entry->waiters.remove(waiter);
-        empty = entry->waiters.empty();
-    }
-    if (!empty) {
-        return;
-    }
-
-    // Clean up empty registry slot: acquire registry lock first, then entry lock
     auto& registry = GetPortableRegistry();
     std::lock_guard registry_lock(registry.mutex);
     std::lock_guard entry_lock(entry->mutex);
+    entry->waiters.remove(waiter);
     if (entry->waiters.empty()) {
         const auto it = registry.entries.find(reinterpret_cast<uintptr_t>(address));
         if (it != registry.entries.end() && it->second == entry) {
