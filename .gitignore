@@ -1,0 +1,3 @@
+# local AI tool state (shared config lives in AGENTS.md, .agents/, CLAUDE.md, opencode.json)
+.claude/worktrees/
+.claude/settings.local.json

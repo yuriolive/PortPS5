@@ -1,0 +1,20 @@
+# C++ conventions
+
+These rules come from the AnyPS5 `docs/CONVENTIONS.md`, with PortPS5's changes.
+
+- **Standard:** C++20 today and C++23 from Milestone 0. The only compiler is MinGW-w64 GCC 15.2. Don't use MSVC-only or clang-only features unless they are behind a guard.
+- **Naming:** PascalCase for types and functions, `I`-prefixed interfaces, `T`-prefixed template parameters. Match the surrounding file.
+- **Comments:** explain *why*, not what. Required on magic constants, hand-assembled bytes, ABI tricks and ordering and synchronization invariants. This replaces AnyPS5's no-comments rule.
+- **ABI:**
+  - Every host function reachable from guest code uses `APS5_VABI` (System V calling convention).
+  - Guest-visible structs use explicit-width types and `static_assert` on their size and offsets.
+- **Errors:**
+  - A POSIX or SCE error that a real console would return is returned as a code.
+  - A state that is genuinely unsupported goes through the logging abort path. Don't add new `throw std::runtime_error`, because the shared unwinder lets guest `catch(...)` swallow host exceptions.
+- **Concurrency:**
+  - Guest synchronization uses in-place futex words on `WaitOnAddress`, not heap-allocated `std::` mutexes.
+  - No process-global locks on hot paths.
+- **Guest memory:**
+  - Treat all guest pointers as untrusted and validate them through the guest-memory API.
+  - Never hand guest code host addresses outside the guest arena.
+- **Dependencies:** add them as pinned submodules under `3rdparty/` with a compatible licence (see `legal-boundary.md`).
