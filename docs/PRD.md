@@ -37,11 +37,11 @@ Each title is pinned at dump time. Its title ID, region and patch version are re
 
 | # | Title | Tier / engine | What it proves | Title ID | Region | Patch |
 |---|---|---|---|---|---|---|
-| 1 | Dreaming Sarah | 2D, custom | PM4 basics, blits, presentation, file streaming | TBD at dump | TBD | TBD |
-| 2 | TMNT: Shredder's Revenge | 2D action | Sprite throughput, pad input, audio mixing, 60 Hz pacing | TBD at dump | TBD | TBD |
-| 3 | Tomb Raider I-III Remastered | Simple 3D | Depth buffer, 3D transforms, texture sampling, save/load | TBD at dump | TBD | TBD |
-| 4 | Bugsnax | Unreal Engine 4 | UE4 job system, dynamic buffers, shadow passes | TBD at dump | TBD | TBD |
-| 5 | Demon's Souls | AAA custom engine | Async compute, resource aliasing, streaming, Bink FMV, indirect draws | PPSA01342 (per the AnyPS5 PR #5 description) | TBD | TBD |
+| 1 | Dreaming Sarah | 2D, custom | PM4 basics, blits, presentation, file streaming | PPSA02929 | US | 01.000.000 |
+| 2 | TMNT: Shredder's Revenge | 2D action | Sprite throughput, pad input, audio mixing, 60 Hz pacing | PPSA06731 | US | 01.000.000 |
+| 3 | Tomb Raider I-III Remastered | Simple 3D | Depth buffer, 3D transforms, texture sampling, save/load | PPSA16902 | US | 01.000.000 |
+| 4 | Bugsnax | Unreal Engine 4 | UE4 job system, dynamic buffers, shadow passes | PPSA01502 | US | 01.000.000 |
+| 5 | Demon's Souls | AAA custom engine | Async compute, resource aliasing, streaming, Bink FMV, indirect draws | PPSA01342 | US | 01.000.000 |
 
 A title is replaced only by one of the same tier. For example, if a title's dump turns out to be a PS4 (CUSA) build rather than a native PS5 (PPSA) build, it is swapped for a PS5-native title of the same tier. Any swap is recorded in this table with a reason.
 
