@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test:
+    name: Build & Test (MinGW GCC 15.2)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache MinGW toolchain
+        id: cache-mingw
+        uses: actions/cache@v4
+        with:
+          path: C:\mingw64
+          key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
+
+      - name: Install Ninja
+        uses: ashley-hebler/install-ninja@v1.0.0
+        with:
+          version: '1.12.1'
+
+      - name: Download and verify MinGW-w64 GCC 15.2
+        if: steps.cache-mingw.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $expectedSha = (Get-Content cmake/toolchains/mingw-gcc15.sha256 | Select-String -Pattern '^[0-9a-f]{64}').Matches.Value
+          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.7z"
+          $archive = "$env:TEMP\winlibs.7z"
+          Write-Host "Downloading MinGW GCC 15.2 from $url..."
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha -ne $expectedSha) {
+              throw "Checksum verification failed! Expected: $expectedSha, got: $actualSha"
+          }
+          Write-Host "Checksum verified. Extracting..."
+          7z x $archive -oC:\ -y
+          Remove-Item $archive
+
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: |
+          "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify toolchain
+        shell: pwsh
+        run: |
+          gcc --version
+          g++ --version
+          ninja --version
+          cmake --version
+          python --version
+
+      - name: Configure CMake (ci preset)
+        run: cmake --preset ci
+
+      - name: Build (ci preset)
+        run: cmake --build --preset ci
+
+      - name: Run Unit Tests (ctest --preset ci)
+        run: ctest --preset ci
+
+      - name: Gate test count
+        shell: pwsh
+        run: |
+          $expectedCount = [int](Get-Content tests/expected-count).Trim()
+          $testList = ctest --preset ci -N
+          $match = [regex]::Match($testList, 'Total Tests: (\d+)')
+          if ($match.Success) {
+              $actualCount = [int]$match.Groups[1].Value
+              Write-Host "Found $actualCount tests (expected at least $expectedCount)"
+              if ($actualCount -lt $expectedCount) {
+                  throw "Test count shrunk! Expected at least $expectedCount, but found $actualCount"
+              }
+          } else {
+              throw "Could not determine test count from ctest output"
+          }
+
+      - name: Policy checks
+        shell: pwsh
+        run: |
+          Write-Host "Running policy checks..."
+          
+          # 1. No glslang symbols in libSceAgcDriver.prx
+          $driverPrx = "build/ci/core/libs/libs/libSceAgcDriver.prx"
+          if (Test-Path $driverPrx) {
+              $symbols = & nm -D $driverPrx 2>$null
+              $glslangSyms = $symbols | Select-String -Pattern "glslang"
+              if ($glslangSyms) {
+                  throw "glslang symbol found in release libSceAgcDriver.prx: $glslangSyms"
+              }
+              Write-Host "Policy pass: glslang is absent from libSceAgcDriver.prx"
+          }
+
+          # 2. No title hacks in core/
+          $titleHacks = git grep -n -E "PPSA[0-9]{5}|CUSA[0-9]{5}" core/ 2>$null
+          if ($titleHacks) {
+              throw "Forbidden title-ID found in core/: $titleHacks"
+          }
+          Write-Host "Policy pass: No title-IDs found in core/"
+
+          # 3. Hardware descriptions must strictly refer to reference tier
+          $hwViolations = git grep -n -i -E "RTX 4090|RTX 3080|Ryzen 9 5950X|i9-13900K" docs/ 2>$null
+          if ($hwViolations) {
+              throw "Personal contributor machine name found in docs: $hwViolations"
+          }
+          Write-Host "Policy pass: No personal hardware names found in docs/"
