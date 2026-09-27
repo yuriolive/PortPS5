@@ -20,6 +20,7 @@ PRD bar owned here: F6 (a per-game TOML keyed by title ID that holds resolution 
 - **Present mode** is hard-coded to FIFO (`libSceAgcDriver/Execution/src/VulkanDevice.cpp:847`, `:1471`). There is no resolution-scale control.
 - **Title ID** comes from `/app0/sce_sys/param.json` (`libkernel/AppMetadata/src/AppMetadata.cpp:22-37`), so the runtime can select a per-title file.
 - **No TOML parser** is in the tree. The submodules are SDL2, Vulkan-Headers, SPIRV-Headers, SPIRV-Tools, glslang, VMA and LibAtrac9.
+- **PortPS5 `feat/m1-runtime-core` (this branch):** `core/libs/prx/libc/src/Config.cpp` (`include/config/Config.hpp`) parses and validates `config/global.toml`, `config/games/<titleId>.toml` and `PORTPS5_DEBUG`, reporting `file:line: key: reason`; toml++ v3.4.0 is vendored at `3rdparty/tomlplusplus/toml.hpp` (pinned in [build-toolchain.md](build-toolchain.md)). Still open on this branch: call `Loader::Initialize` at startup with the `param.json` title ID, copy `config/` at conversion time, wire `display.present_mode` / `resolution_scale` in the driver, and emit the results-JSON fields.
 
 The 307 PR #5 switches fall into these classes (by name pattern, then reviewed):
 
@@ -138,7 +139,7 @@ Any `APS5_*` variable in the environment triggers one warning that lists the nam
 
 | Milestone | Work |
 |---|---|
-| M1 | `Config`, schema, validation and `[debug]`. Every ported PR #5 switch is dispositioned: 0 `APS5_*` reads remain. Per-game TOML (F6). `display.present_mode` and `display.resolution_scale` are wired. |
+| M1 | `Config`, schema, validation and `[debug]` landed with unit tests and `policy` enforcement (done). Still open: startup call with the `param.json` title ID, `config/` copy at conversion, `display` key wiring, results-JSON fields. Until then, 0 `APS5_*` reads and per-game TOML (F6) are not closed. |
 | M2 | `[input]` bindings (with [input.md](input.md)). The regression tooling records the config hash. |
 | M3 | Any `[workarounds]` keys Tomb Raider needs, each with a docs entry. |
 | M4 | Exit criterion: every `[workarounds]` key used by a gate title has a `docs/workarounds.md` entry. |

@@ -12,6 +12,7 @@
 #include <string>
 
 #ifdef _WIN32
+// Excludes rarely-used Windows headers for faster test builds.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
@@ -238,10 +239,10 @@ void TestRejectCases() {
     // Schema too new.
     REQUIRE(InitErr("schema = 2\n", "", "", "").find("schema") != std::string::npos);
     // Unknown top-level key.
-    REQUIRE(InitErr("schema = 1\nnope = 1\n", "", "", "").find("nope") != std::string::npos);
+    REQUIRE(InitErr("schema = 1\nnope = 1\n", "", "", "") == "global.toml:2: nope: unknown key");
     // Wrong type.
-    REQUIRE(InitErr("schema = 1\n[display]\nfullscreen = \"yes\"\n", "", "", "")
-                .find("display.fullscreen") != std::string::npos);
+    REQUIRE(InitErr("schema = 1\n[display]\nfullscreen = \"yes\"\n", "", "", "") ==
+            "global.toml:3: display.fullscreen: expected boolean");
     // Out of range.
     REQUIRE(InitErr("schema = 1\n[display]\nresolution_scale = 4.0\n", "", "", "")
                 .find("display.resolution_scale") != std::string::npos);
@@ -257,8 +258,8 @@ void TestRejectCases() {
     REQUIRE(InitErr("schema = 1\ntitle_id = \"PPSA01342\"\n", "", "", "").find("title_id") !=
             std::string::npos);
     // title_id mismatch in the game file.
-    REQUIRE(InitErr("schema = 1\n", "schema = 1\ntitle_id = \"PPSA00000\"\n", "", "PPSA01342")
-                .find("title_id") != std::string::npos);
+    REQUIRE(InitErr("schema = 1\n", "schema = 1\ntitle_id = \"PPSA00000\"\n", "", "PPSA01342") ==
+            "PPSA01342.toml:2: title_id: title_id 'PPSA00000' does not match 'PPSA01342'");
     // Missing title_id in the game file.
     REQUIRE(InitErr("schema = 1\n", "schema = 1\n[display]\n", "", "PPSA01342")
                 .find("title_id") != std::string::npos);

@@ -112,6 +112,7 @@ struct WorkaroundInfo {
 void RegisterWorkaround(const char* key, WorkaroundType type,
                         WorkaroundValue defaultValue, const char* mechanism);
 
+// Usage: PORTPS5_WORKAROUND(name, Type, Default, "mechanism") at namespace scope; the static registrar runs before Initialize validates game files.
 #define PORTPS5_WORKAROUND(Key, Type, DefaultValue, Mechanism)                \
     namespace PortPS5 {                                                       \
     namespace Config {                                                        \
@@ -156,8 +157,11 @@ public:
                                      const std::string& titleId,
                                      std::string& error,
                                      std::vector<std::string>& warnings);
+    // Get returns the parsed config; aborts when Initialize has not run because start-up must precede guest threads.
     static const ResolvedConfig& Get();
+    // IsInitialized reports whether Initialize has succeeded (for start-up sequencing only).
     static bool IsInitialized();
+    // ResetForTesting clears the instance so tests can re-initialize with in-memory TOML.
     static void ResetForTesting();
 
     // Workaround accessors. Unregistered keys return nullopt (GetWorkaround)

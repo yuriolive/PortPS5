@@ -65,7 +65,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 | `mouse_look` | bool | false | Start with mouse-look on. The middle button still toggles it. |
 | `mouse_sensitivity` | float 0.1–10 | 1.0 | Replaces `Pad::MouseSensitivity`. |
 | `swap_confirm` | bool | false | Swap Cross and Circle for controllers only. |
-| `bindings` | table `name → [keys]` | the current table | `cross = ["Return", "Space"]`, `left_stick_left = ["A"]`, `r2 = ["MouseRight"]`, `dpad_up = ["WheelUp"]`. SDL scancode names are used. An unknown key name is a validation error. |
+| `bindings` | table `name → [keys]` | the current table | `cross = ["Return", "Space"]`, `left_stick_left = ["A"]`, `r2 = ["MouseRight"]`, `up = ["WheelUp"]`. SDL scancode names are used. An unknown key name is a validation error. |
 
 7. **Output calls.**
    - `SetVibration` forwards to `SDL_GameControllerRumble` when available, and otherwise returns OK. Rumble is basic XInput/HIDAPI rumble, not DualSense haptics.

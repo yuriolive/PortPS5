@@ -10,6 +10,7 @@
 schema = 1
 
 [display]
+# Schema: docs/spec/configuration.md; scale/present wiring: docs/spec/gpu-driver.md.
 # Internal render-target scale. The 1.0 performance bar is measured at 1.0.
 resolution_scale = 1.0
 # Swapchain present mode. Falls back to fifo with a warning if unsupported.
@@ -19,6 +20,7 @@ fullscreen = false
 window_percent = 60
 
 [input]
+# Schema: docs/spec/configuration.md; binding vocabulary: docs/spec/input.md.
 # Host radial dead zone for sticks (0.0-0.5).
 deadzone = 0.08
 mouse_look = false
@@ -61,5 +63,6 @@ r2 = ["MouseRight"]
 # No [debug] section is shipped: [debug] keys are diagnostic or override only,
 # a release run must not set any, and the results JSON records every key that
 # is set. Built-in defaults (log_level "info", everything else off/empty) come
-# from the Config module. Uncomment a key below only for local diagnostics;
+# from the Config module. Schema and per-key owner specs: docs/spec/configuration.md.
+# Uncomment a key below only for local diagnostics;
 # never ship a global.toml with [debug] keys set.

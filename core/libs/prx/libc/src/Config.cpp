@@ -24,9 +24,9 @@
 #include <system_error>
 
 #ifdef _WIN32
-// _environ is declared by <cstdlib> above.
+// Windows CRT names the block _environ (already declared by <cstdlib> above).
 #else
-// Host environment block for the stale APS5_* scan (no getenv, by policy).
+// Host environment block for the stale APS5_* scan (no getenv, by policy; docs/spec/configuration.md).
 extern char** environ;
 #endif
 
@@ -753,6 +753,7 @@ bool ApplyDebug(const toml::table& table, const std::string& file, ResolvedConfi
                 return Fail(error, file, &value, "debug.gpu." + name, "unknown key");
             }
         }
+        // Why positive: empty means the automatic host-import budget; non-positive would leave no budget (docs/spec/configuration.md).
         if (const toml::node* mib = gpu.get("host_import_mib")) {
             std::int64_t value = 0;
             if (!ReadInt(*mib, value) || value <= 0) {
@@ -786,6 +787,7 @@ bool ApplyDebug(const toml::table& table, const std::string& file, ResolvedConfi
                 return Fail(error, file, &value, "debug.memory." + name, "unknown key");
             }
         }
+        // Why positive: empty means the automatically sized heap-cache cap; non-positive would leave no cache (docs/spec/configuration.md).
         if (const toml::node* mib = memory.get("heap_cache_mib")) {
             std::int64_t value = 0;
             if (!ReadInt(*mib, value) || value <= 0) {
@@ -1166,6 +1168,7 @@ bool ApplyDebugEnvEntry(ResolvedConfig& out, std::set<std::string>& debugKeys,
         return true;
     }
     if (key == "gpu.host_import_mib" || key == "memory.heap_cache_mib") {
+        // Why positive: same automatic-budget override as the TOML layer (docs/spec/configuration.md).
         std::int64_t parsed = 0;
         if (!ParseIntText(value, parsed) || parsed <= 0) {
             return fail(std::string(key), "expected positive integer");
