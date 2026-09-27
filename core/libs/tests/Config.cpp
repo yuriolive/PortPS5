@@ -59,8 +59,9 @@ std::string InitErr(const std::string& globalToml, const std::string& gameToml,
     std::string error;
     std::vector<std::string> warnings;
     Loader::ResetForTesting();
-    REQUIRE(!Loader::InitializeForTesting(globalToml, gameToml, debugEnv, "C:/game", titleId,
-                                          error, warnings));
+    const bool ok = Loader::InitializeForTesting(globalToml, gameToml, debugEnv, "C:/game",
+                                                 titleId, error, warnings);
+    REQUIRE(!ok);
     REQUIRE(!error.empty());
     return error;
 }

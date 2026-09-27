@@ -45,5 +45,5 @@ target_include_directories(libc PRIVATE
 )
 # SYSTEM: toml++ is vendored third-party; its headers stay warning-clean.
 target_include_directories(libc SYSTEM PRIVATE
-        ${TOMLPLUSPLUS_INCLUDE_DIR}
+        ${PORTPS5_THIRDPARTY_DIR}
 )

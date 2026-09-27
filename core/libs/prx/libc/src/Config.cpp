@@ -15,6 +15,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <mutex>
 #include <set>
@@ -370,6 +371,11 @@ const char* DescribeType(toml::node_type type) {
 }
 
 bool ReadString(const toml::node& node, std::string& out) {
+    // Exact type match: value<T>() converts (e.g. bool to integer), which a
+    // validating parser must not accept.
+    if (node.type() != toml::node_type::string) {
+        return false;
+    }
     const std::optional<std::string> value = node.value<std::string>();
     if (!value.has_value()) {
         return false;
@@ -379,6 +385,9 @@ bool ReadString(const toml::node& node, std::string& out) {
 }
 
 bool ReadBool(const toml::node& node, bool& out) {
+    if (node.type() != toml::node_type::boolean) {
+        return false;
+    }
     const std::optional<bool> value = node.value<bool>();
     if (!value.has_value()) {
         return false;
@@ -388,6 +397,9 @@ bool ReadBool(const toml::node& node, bool& out) {
 }
 
 bool ReadInt(const toml::node& node, std::int64_t& out) {
+    if (node.type() != toml::node_type::integer) {
+        return false;
+    }
     const std::optional<std::int64_t> value = node.value<std::int64_t>();
     if (!value.has_value()) {
         return false;
@@ -398,6 +410,10 @@ bool ReadInt(const toml::node& node, std::int64_t& out) {
 
 bool ReadDouble(const toml::node& node, double& out) {
     // Accept integers for float keys so "resolution_scale = 1" keeps working.
+    if (node.type() != toml::node_type::floating_point &&
+        node.type() != toml::node_type::integer) {
+        return false;
+    }
     const std::optional<double> floatValue = node.value<double>();
     if (floatValue.has_value()) {
         out = *floatValue;
@@ -1219,27 +1235,35 @@ void FinishResolve(ResolvedConfig& out, std::set<std::string>& debugKeys,
 
 bool ParseFileLayer(const std::string& path, bool isGlobal, const std::string& expectedTitle,
                     ResolvedConfig& out, std::set<std::string>& debugKeys, std::string& error) {
-    toml::parse_result parsed = toml::parse_file(path);
-    if (!parsed) {
-        const toml::parse_error& parseError = parsed.error();
+    toml::table root;
+    try {
+        root = toml::parse_file(path);
+    } catch (const toml::parse_error& parseError) {
         error = path + ":" + std::to_string(parseError.source().begin.line) + ": " +
-                std::string(parseError.error_description());
+                std::string(parseError.description());
+        return false;
+    } catch (const std::exception& other) {
+        error = path + ":1: " + std::string(other.what());
         return false;
     }
-    return ApplyDocument(parsed.table(), path, isGlobal, expectedTitle, out, debugKeys, error);
+    return ApplyDocument(root, path, isGlobal, expectedTitle, out, debugKeys, error);
 }
 
 bool ParseMemoryLayer(const std::string& text, const std::string& label, bool isGlobal,
                       const std::string& expectedTitle, ResolvedConfig& out,
                       std::set<std::string>& debugKeys, std::string& error) {
-    toml::parse_result parsed = toml::parse(text, label);
-    if (!parsed) {
-        const toml::parse_error& parseError = parsed.error();
+    toml::table root;
+    try {
+        root = toml::parse(text, label);
+    } catch (const toml::parse_error& parseError) {
         error = label + ":" + std::to_string(parseError.source().begin.line) + ": " +
-                std::string(parseError.error_description());
+                std::string(parseError.description());
+        return false;
+    } catch (const std::exception& other) {
+        error = label + ":1: " + std::string(other.what());
         return false;
     }
-    return ApplyDocument(parsed.table(), label, isGlobal, expectedTitle, out, debugKeys, error);
+    return ApplyDocument(root, label, isGlobal, expectedTitle, out, debugKeys, error);
 }
 
 }  // namespace

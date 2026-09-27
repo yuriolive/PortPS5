@@ -34,8 +34,9 @@ endfunction()
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
 add_library(libc SHARED EXCLUDE_FROM_ALL)
 set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-# Vendored single-header TOML parser for the Config module (docs/spec/build-toolchain.md).
-set(TOMLPLUSPLUS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty/tomlplusplus)
+# Vendored single-header dependencies (docs/spec/build-toolchain.md). The
+# directory itself is on the path so includes read tomlplusplus/toml.hpp.
+set(PORTPS5_THIRDPARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../3rdparty)
 add_subdirectory(${LIBC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/prx/libc)
 target_include_directories(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 configure_windows_unwind(libc)

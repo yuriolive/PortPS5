@@ -159,9 +159,11 @@ jobs:
           # 5. Workaround registry matches docs/workarounds.md in both
           # directions, and key names describe mechanisms (snake_case, no
           # title names or title-ID patterns). Test sources are exempt: their
-          # keys never ship.
-          $registered = git grep -h -E 'PORTPS5_WORKAROUND\(' -- core/ 2>$null | Where-Object {
-              $_ -notmatch '/tests/'
+          # keys never ship. git grep prints path:line:content (no -h), so the
+          # filters below see the file path; the macro definition itself is
+          # excluded by name.
+          $registered = git grep -E 'PORTPS5_WORKAROUND\(' -- core/ 2>$null | Where-Object {
+              $_ -notmatch '/tests/' -and $_ -notmatch '#define PORTPS5_WORKAROUND'
           } | ForEach-Object {
               if ($_ -match 'PORTPS5_WORKAROUND\(\s*([A-Za-z0-9_]+)') { $Matches[1] }
           } | Sort-Object -Unique
