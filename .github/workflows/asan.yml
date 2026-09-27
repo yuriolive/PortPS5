@@ -61,21 +61,24 @@ jobs:
       # package which ships clang_rt.asan-x86_64.dll — the LLVM ASan runtime
       # for Windows. No libasan needed.
       #
-      # update: false keeps the action fast by skipping pacman -Syu; packages
-      # are pinned to whatever ships in the MSYS2 installer image on the
-      # runner. If a package is missing, set update: true.
+      # cache: true — msys2/setup-msys2 persists the pacman package download
+      # cache via actions/cache keyed on the package list + msys2 version.
+      # On a cache hit the packages install from disk instead of the network.
+      # Saves 3–5 min on every run after the first.
 
       - name: Set up MSYS2 CLANG64
         uses: msys2/setup-msys2@v2
         with:
           msystem: CLANG64
           update: false
+          cache: true
           install: >-
             mingw-w64-clang-x86_64-clang
             mingw-w64-clang-x86_64-compiler-rt
             mingw-w64-clang-x86_64-cmake
             mingw-w64-clang-x86_64-ninja
             mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-ccache
 
       # ── Verify toolchain ───────────────────────────────────────────────────
       - name: Verify Clang and ASan runtime availability
@@ -100,12 +103,35 @@ jobs:
       # PORTPS5_COMPILE_WARNING_AS_ERROR=ON mirrors the ci preset so we catch
       # any Clang-specific warnings that GCC silently accepts.
 
+      - name: Configure ccache (Clang)
+        shell: msys2 {0}
+        run: |
+          # Use a separate ccache key from the GCC CI job — the object files
+          # are incompatible between compilers.
+          echo "CCACHE_DIR=$RUNNER_TEMP/ccache-asan" >> $GITHUB_ENV
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"    >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=512M"                 >> $GITHUB_ENV
+
+      - name: Restore ccache (Clang/ASan)
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache-asan
+          key: ccache-asan-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-asan-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}-
+            ccache-asan-${{ runner.os }}-${{ github.ref }}-
+            ccache-asan-${{ runner.os }}-refs/heads/${{ github.base_ref }}-
+            ccache-asan-${{ runner.os }}-refs/heads/main-
+            ccache-asan-${{ runner.os }}-
+
       - name: Configure (Clang + ASan/UBSan)
         shell: msys2 {0}
         run: |
           cmake -G Ninja \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_STANDARD=23 \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
@@ -121,6 +147,13 @@ jobs:
       - name: Build
         shell: msys2 {0}
         run: cmake --build build/asan --parallel
+
+      - name: Save ccache (Clang/ASan)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache-asan
+          key: ccache-asan-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}-${{ github.run_attempt }}
 
       # ── Run tests ──────────────────────────────────────────────────────────
       # halt_on_error=1    — stop on the first sanitizer finding rather than
