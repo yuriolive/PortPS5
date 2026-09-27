@@ -42,8 +42,8 @@ The guest's x86-64 code is not recompiled. The relinker rewrites the decrypted E
 | [input.md](input.md) | Pad, keyboard, mouse | Keep SDL. Add mapping and hot-plug. |
 | [save-data.md](save-data.md) | Save data and dialogs | Adopt PR #5. Replace silent dialog stubs. |
 | [configuration.md](configuration.md) | Per-game TOML, env-switch migration | Replace env switches with typed TOML. |
-| [build-toolchain.md](build-toolchain.md) | CMake, MinGW GCC, CI build, conventions | Keep a pinned GCC 15.2. Move to C++23. |
-| [verification.md](verification.md) | CI, local regression, full runs, results JSON | Hosted CI without a GPU, plus local results. |
+| [build-toolchain.md](build-toolchain.md) | CMake, MinGW GCC, CI build, conventions | Keep a pinned GCC 15.2. Move to C++23. GoogleTest dependency pin. |
+| [verification.md](verification.md) | CI, test framework, local regression, full runs, results JSON | GoogleTest/GMock adoption, death/perturbation testing, hosted CI without a GPU, plus local results. |
 
 Every subsystem spec uses the same sections: Scope, Current state, Decision, Target design, Interfaces, Failure modes, Tests, Milestones, Open questions.
 

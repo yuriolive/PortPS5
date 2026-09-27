@@ -78,13 +78,15 @@ Results are uploaded by a local script as a PR to `compat/results/`, or as a rel
 
 - **Pass rule:** `debug_keys_set` is empty, and in warm-cache runs `spirv_compilations` = 0 and `pipeline_creations_after_warmup` = 0. A run that fails any of these reports `result: "fail"`.
 - The results JSON carries no personally identifying hardware detail beyond GPU vendor, driver and tier.
-- The compatibility list tiers are generated from these files:
 
-| Tier | Meaning |
-|---|---|
-| Nothing | Fails to convert. |
-| Boots | Reaches the title screen. |
-| Menus | Title screen and menus work. |
-| In-game | Gameplay reached. |
-| Playable | Full run completed, but below the bar. |
-| Perfect | Full run completed, meeting the bar. |
+## 5. Test Framework Architecture (GoogleTest & GMock)
+
+PortPS5 standardizes on **GoogleTest (GTest) and GMock** for all unit, integration, and subsystem tests, replacing ad-hoc standalone `main()` executables.
+
+- **Unified Test Suites:** Instead of separate executables for every individual test function, tests are grouped into cohesive suite binaries (`kernel_tests`, `libc_tests`, `relinker_tests`, `shader_recompiler_tests`, `audio_tests`) linked against `GTest::gtest` and `GTest::gmock`.
+- **Expression Decomposition:** All test assertions use GoogleTest macros (`EXPECT_EQ`, `EXPECT_NE`, `ASSERT_TRUE`, `EXPECT_THAT`) so that failures report file, line, expression, and actual vs expected values (including formatted SCE/errno error codes).
+- **Death Testing (`EXPECT_DEATH`):** Fatal errors in `core/` call the logging abort path (`APS5_ABORT`). GoogleTest death tests verify that invalid guest pointers, misaligned addresses, or unsupported parameters abort cleanly with the expected log message without crashing the test runner process.
+- **Hardware/System Mocking (`GMock`):** Subsystems depending on external hardware (Vulkan physical devices, SDL2 audio streams, DualSense gamepad endpoints) use GMock classes to simulate device state, timing, and error conditions deterministically.
+- **Concurrency Perturbation Testing:** Multi-threaded synchronization primitives (`WaitOnAddress`, `futex`, `umtx`, `equeues`) run under chaos perturbation in test builds. Injected microsecond delays, random thread yields (`std::this_thread::yield()`), and thread preemption proactively expose race conditions and deadlocks under heavy contention.
+- **Test Discovery:** CMake uses `gtest_discover_tests()` with label inheritance (`unit`, `golden`, `lavapipe`, `stress`, `local`), reporting each test case individually to CTest and generating JUnit XML reports for CI.
+- **KytyPS5 Reference Test Porting:** The ~50,000+ lines of subsystem tests in KytyPS5 (`SyncOnAddressTests`, `EventQueueLifetimeTests`, `VirtualMemoryAllocationTests`, `KernelFileSystemTests`, `AudioOut2PortTests`, `ShaderRecompilerComputeTests`) are systematically ported into PortPS5 GoogleTest suites, scrubbing all game Title IDs to synthetic constants (e.g. `PPSA00000`) per legal and policy rules.
