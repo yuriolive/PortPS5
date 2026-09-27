@@ -56,19 +56,11 @@
     },
     {
       "name": "dev",
-      "configurePreset": "dev",
-      "targets": [
-        "relinker",
-        "libs"
-      ]
+      "configurePreset": "dev"
     },
     {
       "name": "ci",
-      "configurePreset": "ci",
-      "targets": [
-        "relinker",
-        "libs"
-      ]
+      "configurePreset": "ci"
     }
   ],
   "testPresets": [

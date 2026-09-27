@@ -105,7 +105,7 @@ foreach(LIB_DIR ${LIBS_DIRS})
     endif()
 endforeach()
 
-add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+add_custom_target(libs ALL DEPENDS ${PATCHED_OUTPUTS})
 
 if(WIN32 AND MINGW)
     get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
