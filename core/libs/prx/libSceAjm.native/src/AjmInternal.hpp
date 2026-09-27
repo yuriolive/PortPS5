@@ -70,10 +70,12 @@ inline AjmJobHeader AjmMakeHeader(AjmJobKind kind, std::uint32_t instance,
 // used-bytes field back.
 inline int AjmAppend(AjmBatchInfo* info, const AjmJobHeader& header,
                      const AjmBuffer* inputs, const AjmBuffer* outputs) {
-    if (!info || !info->p_buffer) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!info || !info->p_buffer || (header.inputCount && !inputs) || (header.outputCount && !outputs))
+        return SCE_AJM_ERROR_INVALID_PARAMETER;
     const std::size_t bytes =
-        sizeof(AjmJobHeader) + (header.inputCount + header.outputCount) * sizeof(AjmBuffer);
-    if (bytes > info->size - info->offset) return SCE_AJM_ERROR_OUT_OF_RESOURCES;
+        sizeof(AjmJobHeader) + (static_cast<std::size_t>(header.inputCount) + header.outputCount) * sizeof(AjmBuffer);
+    if (info->offset > info->size || bytes > info->size - info->offset)
+        return SCE_AJM_ERROR_OUT_OF_RESOURCES;
     auto* cursor = static_cast<std::uint8_t*>(info->p_buffer) + info->offset;
     AjmJobHeader record = header;
     record.bytes = static_cast<std::uint32_t>(bytes);

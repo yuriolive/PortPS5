@@ -32,6 +32,7 @@ static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
 // code (returned for null pointers), -2144993277 the invalid-handle code.
 static constexpr int SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT = -2144993276;
 static constexpr int SCE_AUDIO_OUT_ERROR_INVALID_HANDLE = -2144993277;
+static constexpr int SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY = -2144993278;
 
 enum class Format {
     Unknown,
@@ -199,7 +200,6 @@ static void queueAudio(Port& port, const void* data) {
         const std::uint64_t waitStart = sceKernelGetProcessTime();
         while (SDL_GetQueuedAudioSize(port.device) > 0) {
             if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-                SDL_ClearQueuedAudio(port.device);
                 break;
             }
             struct timespec req{};
@@ -367,7 +367,11 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) noexcept {
         nanosleep(&req, nullptr);
     }
 
-    queueAudio(*port, ptr);
+    try {
+        queueAudio(*port, ptr);
+    } catch (const std::bad_alloc&) {
+        return SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY;
+    }
     port->lastOutputTime = sceKernelGetProcessTime();
     return static_cast<int>(port->samplesNum);
 }
@@ -414,8 +418,12 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
         nanosleep(&req, nullptr);
     }
 
-    for (std::uint32_t i = 0; i < num; i++) {
-        if (auto* port = getPort(param[i].handle)) queueAudio(*port, param[i].ptr);
+    try {
+        for (std::uint32_t i = 0; i < num; i++) {
+            if (auto* port = getPort(param[i].handle)) queueAudio(*port, param[i].ptr);
+        }
+    } catch (const std::bad_alloc&) {
+        return SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY;
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();

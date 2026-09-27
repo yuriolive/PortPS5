@@ -23,6 +23,7 @@
 bool AudioOut2TraceEnabled();
 // Seconds since the first AudioOut2 call, for the trace.
 double AudioOut2TraceSeconds();
+bool AudioOut2IsValidContext(AudioOut2ContextHandle ctx);
 
 #define AUDIOOUT2_TRACE(...) \
     do { \
@@ -31,6 +32,7 @@ double AudioOut2TraceSeconds();
 
 static constexpr int SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80260502);
 static constexpr int SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE = static_cast<int>(0x80260503);
+static constexpr int SCE_AUDIO_OUT2_ERROR_OUT_OF_MEMORY = static_cast<int>(0x80260505);
 // Not recovered from a title or SDK header: follows the 0x802605xx pattern of the codes above. Returned
 // by a non-blocking push when the modelled hardware queue is full.
 static constexpr int SCE_AUDIO_OUT2_ERROR_QUEUE_FULL = static_cast<int>(0x80260507);
@@ -62,7 +64,7 @@ static constexpr std::uint32_t AUDIO_OUT2_OUTPUT_BYTES_PER_MS =
 inline std::uint32_t AudioOut2DecodeChannels(std::uint32_t dataFormat) {
     const std::uint32_t channels =
         (dataFormat >> AUDIO_OUT2_FORMAT_CHANNELS_SHIFT) & AUDIO_OUT2_FORMAT_CHANNELS_MASK;
-    return channels <= AUDIO_OUT2_PORT_CHANNELS_MAX ? channels : 0;
+    return (channels == 1 || channels == 2 || channels == 8) ? channels : 0;
 }
 
 // Downmixes one source frame onto the stereo pair, adding to out[0..1].

@@ -378,7 +378,7 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
     auto created = std::make_unique<Instance>();
     created->codec = codec;
     created->flags = flags;
-    const std::uint32_t id = (codec << 14) | (g_nextInstance.fetch_add(1, std::memory_order_relaxed) & 0x3FFF);
+    const std::uint32_t id = g_nextInstance.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_lock);
     g_instances[id] = std::move(created);
     *instance = id;
@@ -454,7 +454,7 @@ int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, vo
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) noexcept {
     (void)context;
     (void)priority;
-    if (!info || !batch) return SCE_AJM_ERROR_INVALID_PARAMETER;
+    if (!info || !batch || !info->p_buffer || info->offset > info->size) return SCE_AJM_ERROR_INVALID_PARAMETER;
     AJM_TRACE("[ajm] batch start: context %u, priority %d, %llu of %llu buffer bytes used\n", context, priority, static_cast<unsigned long long>(info->offset), static_cast<unsigned long long>(info->size));
     // Decode runs synchronously on the calling thread; BatchWait therefore
     // only reports completion. Whether this costs frame time is an M5
@@ -462,8 +462,17 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
     const auto* cursor = static_cast<const std::uint8_t*>(info->p_buffer);
     const auto* end = cursor + info->offset;
     while (cursor < end) {
+        const std::size_t remaining = static_cast<std::size_t>(end - cursor);
+        if (remaining < sizeof(AjmJobHeader)) {
+            if (error) std::memset(error, 0, sizeof(*error));
+            return SCE_AJM_ERROR_INVALID_PARAMETER;
+        }
         AjmJobHeader job;
         std::memcpy(&job, cursor, sizeof(job));
+        if (job.bytes < sizeof(AjmJobHeader) || job.bytes > remaining) {
+            if (error) std::memset(error, 0, sizeof(*error));
+            return SCE_AJM_ERROR_INVALID_PARAMETER;
+        }
         const auto* buffers = reinterpret_cast<const AjmBuffer*>(cursor + sizeof(AjmJobHeader));
         Execute(job, buffers, buffers + job.inputCount);
         cursor += job.bytes;

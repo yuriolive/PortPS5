@@ -80,7 +80,7 @@ static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port
 extern "C" {
 
 int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) noexcept {
-    if (!ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (!ctx || !AudioOut2IsValidContext(ctx)) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(g_portsLock);
     std::size_t index = 0;

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <vector>
 #include "SceTypes.hpp"
@@ -70,8 +71,21 @@ void AudioOut2ResetTelemetryForTesting() {
     g_telemetryOverrunDrops.store(0, std::memory_order_relaxed);
 }
 
+static std::mutex g_contextsLock;
+static std::set<AudioOut2Context*> g_liveContexts;
+
+bool AudioOut2IsValidContext(AudioOut2ContextHandle ctx) {
+    if (!ctx) return false;
+    std::lock_guard lock(g_contextsLock);
+    return g_liveContexts.count(reinterpret_cast<AudioOut2Context*>(ctx)) != 0;
+}
+
 static AudioOut2Context* FromHandle(AudioOut2ContextHandle ctx) {
-    return reinterpret_cast<AudioOut2Context*>(ctx);
+    if (!ctx) return nullptr;
+    std::lock_guard lock(g_contextsLock);
+    auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
+    if (g_liveContexts.count(context) == 0) return nullptr;
+    return context;
 }
 
 static Clock::duration GrainDuration(const AudioOut2Context& context) {
@@ -234,22 +248,37 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) noexcept {
 
 int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) noexcept {
     if (!params || !ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    auto* context = new AudioOut2Context();
-    context->grain = params->num_grains ? params->num_grains : AUDIO_OUT2_DEFAULT_GRAIN;
-    context->queueDepth = params->queue_depth ? params->queue_depth : 1;
-    context->playHead = Clock::now();
-    context->mix.assign(static_cast<std::size_t>(context->grain) * AUDIO_OUT2_OUTPUT_CHANNELS, 0.0f);
+    if (params->num_grains > 192000) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+    AudioOut2Context* context = nullptr;
+    try {
+        context = new AudioOut2Context();
+        context->grain = params->num_grains ? params->num_grains : AUDIO_OUT2_DEFAULT_GRAIN;
+        context->queueDepth = params->queue_depth ? params->queue_depth : 1;
+        context->playHead = Clock::now();
+        context->mix.assign(static_cast<std::size_t>(context->grain) * AUDIO_OUT2_OUTPUT_CHANNELS, 0.0f);
+    } catch (const std::bad_alloc&) {
+        delete context;
+        return SCE_AUDIO_OUT2_ERROR_OUT_OF_MEMORY;
+    }
     AUDIOOUT2_TRACE("t=%.3f ContextCreate: max_ports=%u max_object_ports=%u guarantee_object_ports=%u queue_depth=%u num_grains=%u flags=0x%x buffer=%p size=%zu -> ctx %p: %u-sample grains (%.2f ms), %u queued, %u Hz stereo float output\n",
         AudioOut2TraceSeconds(), params->max_ports, params->max_object_ports, params->guarantee_object_ports, params->queue_depth, params->num_grains, params->flags, buffer, buffer_size,
         static_cast<void*>(context), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
     OpenDevice(*context);
+    {
+        std::lock_guard lock(g_contextsLock);
+        g_liveContexts.insert(context);
+    }
     *ctx = reinterpret_cast<AudioOut2ContextHandle>(context);
     return 0;
 }
 
 int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) noexcept {
-    auto* context = FromHandle(ctx);
-    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    AudioOut2Context* context = nullptr;
+    {
+        std::lock_guard lock(g_contextsLock);
+        context = reinterpret_cast<AudioOut2Context*>(ctx);
+        if (g_liveContexts.erase(context) == 0) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    }
     AUDIOOUT2_TRACE("t=%.3f ContextDestroy ctx %p after %llu pushes\n", AudioOut2TraceSeconds(), static_cast<void*>(context), static_cast<unsigned long long>(context->pushes));
     {
         std::lock_guard lock(context->lock);
@@ -290,6 +319,9 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
         std::this_thread::sleep_for(FULL_WAIT_STEP);
         lock.lock();
         now = Clock::now();
+    }
+    if (QueueLevel(*context, now) >= context->queueDepth) {
+        return SCE_AUDIO_OUT2_ERROR_QUEUE_FULL;
     }
     context->queued++;
     context->playHead += GrainDuration(*context);
