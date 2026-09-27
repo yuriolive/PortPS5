@@ -5,7 +5,6 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
-#include <stdexcept>
 #include <vector>
 #include <prx/libc/include/General.hpp>
 
@@ -28,6 +27,11 @@ static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
 static constexpr std::uint64_t TARGET_LATENCY_US = 40000;
 static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
+
+// Guest error codes observed on this path: -2144993276 is the invalid-argument
+// code (returned for null pointers), -2144993277 the invalid-handle code.
+static constexpr int SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT = -2144993276;
+static constexpr int SCE_AUDIO_OUT_ERROR_INVALID_HANDLE = -2144993277;
 
 enum class Format {
     Unknown,
@@ -64,7 +68,9 @@ static int channelsForFormat(Format f) {
         case Format::F32_8ChStd:
             return 8;
         default:
-            throw std::runtime_error("channelsForFormat: unknown format");
+            // Unreachable: sceAudioOutOpen validates the format before a port
+            // is created, so an Unknown here is a host bug, not guest input.
+            Unsupported("channelsForFormat: unknown format");
     }
 }
 
@@ -185,8 +191,23 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
 }
 
 static void queueAudio(Port& port, const void* data) {
-    if (port.device == 0 || data == nullptr) {
-        APS5_INVALID_ARG_EX;
+    // Without an SDL device there is nothing to queue: the callers already sleep for the block's
+    // duration so the game's timing holds. A null pointer is the documented way to wait until the
+    // port's queued audio has been output (sceAudioOutOutput(handle, NULL)); it queues nothing.
+    if (port.device == 0) return;
+    if (data == nullptr) {
+        const std::uint64_t waitStart = sceKernelGetProcessTime();
+        while (SDL_GetQueuedAudioSize(port.device) > 0) {
+            if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
+                SDL_ClearQueuedAudio(port.device);
+                break;
+            }
+            struct timespec req{};
+            req.tv_sec = 0;
+            req.tv_nsec = static_cast<long>(DRAIN_SLEEP_US * 1000ULL);
+            nanosleep(&req, nullptr);
+        }
+        return;
     }
 
     std::vector<std::uint8_t> prepareBuf;
@@ -201,7 +222,9 @@ static void queueAudio(Port& port, const void* data) {
         port.spec.format, port.spec.channels, port.spec.freq);
 
     if (cvtResult < 0) {
-        throw std::runtime_error(std::string("SDL_BuildAudioCVT: ") + SDL_GetError());
+        // The formats above come from a port the host itself opened, so a
+        // conversion failure is a broken host audio path, not guest input.
+        Unsupported("SDL_BuildAudioCVT failed");
     }
 
     const void* queueData = prepared;
@@ -214,7 +237,7 @@ static void queueAudio(Port& port, const void* data) {
         cvt.buf = convertBuf.data();
         cvt.len = static_cast<int>(preparedSize);
         if (SDL_ConvertAudio(&cvt) < 0) {
-            throw std::runtime_error(std::string("SDL_ConvertAudio: ") + SDL_GetError());
+            Unsupported("SDL_ConvertAudio failed");
         }
         queueData = cvt.buf;
         queueSize = static_cast<std::uint32_t>(cvt.len_cvt);
@@ -241,9 +264,8 @@ static void queueAudio(Port& port, const void* data) {
     }
 
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
-        throw std::runtime_error(std::string("SDL_QueueAudio: ") + SDL_GetError());
+        Unsupported("SDL_QueueAudio failed");
     }
-    // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize, SDL_GetQueuedAudioSize(port.device));
 }
 
 static bool portTypeValid(int type) {
@@ -263,18 +285,20 @@ static Port* getPort(int handle) {
 
 extern "C" {
 
-int APS5_VABI sceAudioOutInit() {
+int APS5_VABI sceAudioOutInit() noexcept {
     return 0;
 }
 
 int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len,
-    std::uint32_t freq, std::uint32_t param) {
+    std::uint32_t freq, std::uint32_t param) noexcept {
     (void)userId;
     if (!portTypeValid(type)) {
         return -2144993270;
     }
     if (index != 0) {
-        throw std::runtime_error("sceAudioOutOpen: index != 0 not supported");
+        // Only the primary index is modelled; a non-zero index is outside
+        // what this implementation supports rather than a guest typo.
+        Unsupported("sceAudioOutOpen: index != 0 not supported");
     }
 
     Format format = Format::Unknown;
@@ -288,7 +312,7 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
         case 6: format = Format::S16_8ChStd; break;
         case 7: format = Format::F32_8ChStd; break;
         default:
-            throw std::runtime_error("sceAudioOutOpen: unknown format param");
+            return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
     }
 
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -314,22 +338,22 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
     return -2144993275;
 }
 
-int APS5_VABI sceAudioOutClose(int handle) {
+int APS5_VABI sceAudioOutClose(int handle) noexcept {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
-        return -2144993277;
+        return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
     }
     closeDevice(*port);
     *port = Port{};
     return 0;
 }
 
-int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) {
+int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) noexcept {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
-        return -2144993277;
+        return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
     }
 
     const std::uint64_t blockUs = (1000000ULL * port->samplesNum) / port->freq;
@@ -348,16 +372,16 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) {
     return static_cast<int>(port->samplesNum);
 }
 
-int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) {
+int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) noexcept {
     if (param == nullptr || num == 0) {
-        return -2144993276;
+        return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
     }
 
     std::lock_guard<std::mutex> lock(g_mutex);
 
     for (std::uint32_t i = 0; i < num; i++) {
         if (getPort(param[i].handle) == nullptr) {
-            return -2144993277;
+            return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
         }
     }
 
@@ -391,25 +415,25 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     }
 
     for (std::uint32_t i = 0; i < num; i++) {
-        queueAudio(*getPort(param[i].handle), param[i].ptr);
+        if (auto* port = getPort(param[i].handle)) queueAudio(*port, param[i].ptr);
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
     for (std::uint32_t i = 0; i < num; i++) {
-        getPort(param[i].handle)->lastOutputTime = done;
+        if (auto* port = getPort(param[i].handle)) port->lastOutputTime = done;
     }
 
     return static_cast<int>(first.samplesNum);
 }
 
-int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
+int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) noexcept {
     if (vol == nullptr) {
-        return -2144993276;
+        return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
     }
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
-        return -2144993277;
+        return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
     }
     const bool isStd = formatIsStd(port->format);
     for (int i = 0; i < port->channels; i++, flag >>= 1u) {
@@ -428,14 +452,14 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) {
     return 0;
 }
 
-int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
+int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) noexcept {
     if (state == nullptr) {
-        return -2144993276;
+        return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
     }
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
-        return -2144993277;
+        return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
     }
     state->rerouteCounter = 0;
     state->volume = 127;
@@ -464,7 +488,9 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) {
             state->channel = 0;
             break;
         default:
-            throw std::runtime_error("sceAudioOutGetPortState: unknown port type");
+            // Unreachable: the type was validated at open, so an unknown type
+            // here means host-side port corruption.
+            Unsupported("sceAudioOutGetPortState: unknown port type");
     }
     return 0;
 }
