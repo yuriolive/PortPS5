@@ -1,153 +1,478 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/include/FutexCore.hpp"
+#include "prx/libkernel/Pthread/include/GuestTid.hpp"
+#include "prx/libkernel/Pthread/include/SyncWords.hpp"
+#include "prx/libc/include/General.hpp"
+#include <atomic>
 #include <chrono>
-#include <memory>
-#include <stdexcept>
+#include <cstdint>
+#include <cstdio>
 
 namespace {
 
-constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
-std::mutex condInitializationMutex;
-
-PthreadCond destroyedCond() {
-    return reinterpret_cast<PthreadCond>(std::uintptr_t{2});
+// Ring trace for lost-wakeup debugging (temporary, removed before commit).
+struct E {
+    char op[8];
+    std::uint32_t tid, waiters, seq;
+    std::uint64_t w;
+};
+inline E g_t[128] = {};
+inline std::atomic<int> g_n{0};
+inline void TC(const char* op, std::uint64_t w) noexcept {
+    const int i = g_n.fetch_add(1, std::memory_order_relaxed) % 128;
+    auto& e = g_t[i];
+    for (int k = 0; k < 7; ++k)
+        e.op[k] = op[k] ? op[k] : '\0';
+    e.tid = GuestTid::Ensure();
+    e.waiters = SyncWords::CondWord::Waiters(w);
+    e.seq = SyncWords::CondWord::Seq(w);
+    e.w = w;
 }
-
-PthreadCond resolveCond(PthreadCond* cond) {
-    if (!cond)
-        throw std::invalid_argument("Condition variable pointer is null");
-    std::lock_guard lock(condInitializationMutex);
-    if (*cond == destroyedCond())
-        throw std::runtime_error("Condition variable has been destroyed");
-    if (!*cond)
-        *cond = new PthreadCondPrivate();
-    return *cond;
-}
-
-PthreadMutex lockedMutex(PthreadMutex* mutex) {
-    if (!mutex || !*mutex)
-        throw std::invalid_argument("Mutex pointer is null");
-    auto* current = *mutex;
-    if (current->_owner.load(std::memory_order_acquire) != std::this_thread::get_id())
-        throw std::runtime_error("Condition wait mutex is not owned by the current thread");
-    return current;
-}
-
-int waitUntil(PthreadCond* cond, PthreadMutex* mutex, const std::chrono::system_clock::time_point* deadline) {
-    auto* c = resolveCond(cond);
-    auto* m = lockedMutex(mutex);
-    if (m->_type == MutexType::Recursive) {
-        std::unique_lock<std::recursive_timed_mutex> lock(m->_rmtx, std::adopt_lock);
-        const auto previousCount = m->_count;
-        m->_count = 0;
-        m->_owner.store(std::thread::id{}, std::memory_order_release);
-        const bool timedOut = deadline && c->_cv.wait_until(lock, *deadline) == std::cv_status::timeout;
-        if (!deadline)
-            c->_cv.wait(lock);
-        m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
-        m->_count = previousCount;
-        lock.release();
-        return timedOut ? sceTimedOut : 0;
+inline void TD() noexcept {
+    const int t = g_n.load(std::memory_order_relaxed);
+    const int s = t > 128 ? t - 128 : 0;
+    std::fprintf(stderr, "--- trace %d..%d ---\n", s, t);
+    for (int i = s; i < t; ++i) {
+        const auto& e = g_t[i % 128];
+        std::fprintf(stderr, "[%d t%u %s w=%u s=%u]\n", i, e.tid, e.op, e.waiters, e.seq);
     }
-    std::unique_lock<std::timed_mutex> lock(m->_mtx, std::adopt_lock);
-    m->_owner.store(std::thread::id{}, std::memory_order_release);
-    const bool timedOut = deadline && c->_cv.wait_until(lock, *deadline) == std::cv_status::timeout;
-    if (!deadline)
-        c->_cv.wait(lock);
-    m->_owner.store(std::this_thread::get_id(), std::memory_order_release);
-    lock.release();
-    return timedOut ? sceTimedOut : 0;
 }
 
-std::chrono::system_clock::time_point toDeadline(const KernelTimespec* abstime) {
-    if (!abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
-        throw std::invalid_argument("Invalid absolute condition variable timeout");
-    const auto maximum = std::chrono::nanoseconds::max().count();
-    if (abstime->tv_sec > (maximum - abstime->tv_nsec) / 1000000000)
-        throw std::overflow_error("Absolute condition variable timeout exceeds the host clock range");
-    const auto duration = std::chrono::nanoseconds(abstime->tv_sec * 1000000000 + abstime->tv_nsec);
-    if (std::chrono::duration<long double>(duration) >= std::chrono::duration<long double>(std::chrono::system_clock::duration::max()))
-        throw std::overflow_error("Absolute condition variable timeout exceeds the host clock range");
-    return std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(duration));
+using SyncWords::kSceEbusy;
+using SyncWords::kSceEinval;
+using SyncWords::kSceEperm;
+using SyncWords::kSceOk;
+using SyncWords::kSceTimedOut;
+using CW = SyncWords::CondWord;
+using MW = SyncWords::MutexWord;
+
+inline std::uint64_t* CondPtr(PthreadCond* slot) noexcept {
+    return reinterpret_cast<std::uint64_t*>(slot);
+}
+inline std::atomic_ref<std::uint64_t> CondRef(PthreadCond* slot) noexcept {
+    return std::atomic_ref<std::uint64_t>(*CondPtr(slot));
+}
+inline std::uint64_t* MutexPtr(PthreadMutex* slot) noexcept {
+    return reinterpret_cast<std::uint64_t*>(slot);
+}
+inline std::atomic_ref<std::uint64_t> MutexRef(PthreadMutex* slot) noexcept {
+    return std::atomic_ref<std::uint64_t>(*MutexPtr(slot));
 }
 
+// Verify the wait mutex is owned by us; return its word + type/recursion so
+// the waiter can fully unlock (including recursive count) and restore after.
+struct HeldMutex {
+    std::uint64_t word;
+    std::uint32_t type;
+    std::uint32_t recStored;
+};
+
+int CheckHeldMutex(PthreadMutex* mutex, std::uint32_t tid, HeldMutex& out) noexcept {
+    if (!mutex)
+        return kSceEinval;
+    const std::uint64_t w = MutexRef(mutex).load(std::memory_order_acquire);
+    if (w == 0 || w == 1)
+        return kSceEperm;
+    if (!MW::IsInit(w) || MW::IsDestroyed(w))
+        return kSceEinval;
+    const std::uint32_t type = MW::Type(w);
+    if (type != MW::kErrCheck && type != MW::kRecursive && type != MW::kNormal)
+        return kSceEinval;
+    if (MW::Owner(w) != tid)
+        return kSceEperm;
+    out.word = w;
+    out.type = type;
+    out.recStored = MW::RecStored(w);
+    return kSceOk;
 }
 
-int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime) {
-    const auto deadline = toDeadline(abstime);
-    return waitUntil(cond, mutex, &deadline);
+// Fully unlock for cond wait (clear owner + recursion, keep type). Wake one
+// waiter if the mutex itself was contended, mirroring Mutex.cpp unlock.
+void MutexUnlockForWait(PthreadMutex* mutex, const HeldMutex& held) noexcept {
+    auto ref = MutexRef(mutex);
+    while (true) {
+        const std::uint64_t w = ref.load(std::memory_order_acquire);
+        if (!MW::IsInit(w) || MW::IsDestroyed(w) || MW::Owner(w) == 0)
+            return;
+        const bool hadWaiters = MW::IsContended(w);
+        const std::uint64_t desired = MW::Make(held.type, 0, 0, false);
+        std::uint64_t expected = w;
+        if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            if (hadWaiters)
+                FutexCore::WakeSingle(MutexPtr(mutex));
+            return;
+        }
+    }
+}
+
+// Relock after wait in CONTENDED state (spec), so the next unlock hands off.
+// For recursive mutexes the saved recursion count is restored.
+int MutexRelockAfterWait(PthreadMutex* mutex, const HeldMutex& held, std::uint32_t tid,
+                         std::uint64_t deadline) noexcept {
+    auto ref = MutexRef(mutex);
+    // First acquire ownership (contended path sets CONTENDED as needed).
+    while (true) {
+        const std::uint64_t w = ref.load(std::memory_order_acquire);
+        if (!MW::IsInit(w) || MW::IsDestroyed(w))
+            return kSceEinval;
+        const std::uint32_t type = MW::Type(w);
+        const std::uint32_t owner = MW::Owner(w);
+        if (owner == 0) {
+            std::uint64_t desired;
+            if (held.type == MW::kRecursive)
+                desired = MW::Make(type, tid, held.recStored, true);
+            else
+                desired = MW::Make(type, tid, 0, true);
+            std::uint64_t expected = w;
+            // Preserve the unlocked word's type (== held.type in practice).
+            desired = MW::Make(type, tid,
+                               (held.type == MW::kRecursive) ? held.recStored : 0, true);
+            if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return kSceOk;
+            continue;
+        }
+        if (owner == tid) {
+            // Already own (spurious re-entry after broadcast race): ensure
+            // recursion matches and CONTENDED is set.
+            if (held.type == MW::kRecursive) {
+                const std::uint64_t desired = MW::Make(type, tid, held.recStored, true);
+                std::uint64_t expected = w;
+                if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                                std::memory_order_acquire))
+                    return kSceOk;
+                continue;
+            }
+            const std::uint64_t desired = w | MW::kContended;
+            if (w == desired)
+                return kSceOk;
+            std::uint64_t expected = w;
+            if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return kSceOk;
+            continue;
+        }
+        if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline) {
+            TC("mTO0", w);
+            return kSceTimedOut;
+        }
+        const std::uint64_t withContended = w | MW::kContended;
+        if (w != withContended) {
+            std::uint64_t expected = w;
+            ref.compare_exchange_strong(expected, withContended, std::memory_order_acq_rel,
+                                        std::memory_order_acquire);
+        }
+        const std::uint64_t expect = ref.load(std::memory_order_acquire);
+        // Lost-wakeup guard (mirrors Mutex.cpp): if unlocked before we slept,
+        // retry instead of waiting on a free word (unlock already returned).
+        if (!MW::IsInit(expect) || MW::IsDestroyed(expect))
+            continue;
+        if (MW::Owner(expect) == 0 || MW::Owner(expect) == tid)
+            continue;
+        TC("mSlp", expect);
+        if (!FutexCore::WaitU64(MutexPtr(mutex), expect, deadline)) {
+            TC("mTO2", expect);
+            return kSceTimedOut;
+        }
+        TC("mWk", ref.load(std::memory_order_acquire));
+    }
+}
+
+int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
+                 bool hasDeadline) noexcept {
+    if (!cond || !mutex)
+        return kSceEinval;
+    const std::uint32_t tid = GuestTid::Ensure();
+    if (tid == 0)
+        return SyncWords::kSceEagain;
+    HeldMutex held{};
+    if (const int rc = CheckHeldMutex(mutex, tid, held))
+        return rc;
+
+    auto cref = CondRef(cond);
+    // Lazy init of a zero slot (plain INIT, realtime clock). Slot 1 is not a
+    // valid cond static; treat any non-INIT non-zero word as EINVAL.
+    std::uint64_t cw = cref.load(std::memory_order_acquire);
+    if (cw == 0) {
+        std::uint64_t expected = 0;
+        const std::uint64_t init = CW::Make(false, 0, 0);
+        cref.compare_exchange_strong(expected, init, std::memory_order_acq_rel,
+                                     std::memory_order_acquire);
+        cw = cref.load(std::memory_order_acquire);
+    }
+    if (!CW::IsInit(cw) || CW::IsDestroyed(cw))
+        return kSceEinval;
+
+    // Read seq, increment waiters, THEN unlock the mutex (release): the
+    // increment must be visible before we sleep, otherwise a signal between
+    // the read and the sleep would be lost. The signal side bumps seq BEFORE
+    // waking (release), and we only sleep while seq is unchanged, so the
+    // seq check closes the lost-wakeup window.
+    std::uint32_t seq = 0;
+    while (true) {
+        cw = cref.load(std::memory_order_acquire);
+        if (!CW::IsInit(cw) || CW::IsDestroyed(cw))
+            return kSceEinval;
+        const std::uint32_t waiters = CW::Waiters(cw);
+        if (waiters == 0xFFFFu)
+            return SyncWords::kSceEagain;
+        seq = CW::Seq(cw);
+        // Rebuild preserving flags exactly:
+        const std::uint64_t want = CW::kInit | (CW::IsMono(cw) ? CW::kClockMono : 0ULL) |
+                                   (static_cast<std::uint64_t>(waiters + 1) << CW::kWaitersShift) |
+                                   seq;
+        std::uint64_t expected = cw;
+        if (cref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
+                                         std::memory_order_acquire)) {
+            TC("wait+1", want);
+            break;
+        }
+    }
+
+    MutexUnlockForWait(mutex, held);
+
+    // Wait while seq is unchanged. A wake with only non-seq bits changed
+    // (e.g. a concurrent destroy flag, which we already reject) waits again
+    // with the new value; only a seq bump returns.
+    int waitRc = kSceOk;
+    while (true) {
+        const std::uint64_t cur = cref.load(std::memory_order_acquire);
+        if (!CW::IsInit(cur) || CW::IsDestroyed(cur)) {
+            waitRc = kSceEinval;
+            break;
+        }
+        if (CW::Seq(cur) != seq)
+            break;
+        if (hasDeadline && FutexCore::NowNanos() >= deadline) {
+            waitRc = kSceTimedOut;
+            TC("timeout", cur);
+            TD();
+            break;
+        }
+        // Decrement our waiter slot on timeout/invalid before relocking, so
+        // Signal's waiters==0 fast path stays accurate. On success the
+        // signal/broadcast already dequeued us (signal decrements, broadcast
+        // zeroes), so only adjust when we leave without a seq change.
+        TC("sleep", cur);
+        const bool woken = FutexCore::WaitU64(CondPtr(cond), cur, deadline);
+        TC(woken ? "wake" : "wakeTO", cref.load(std::memory_order_acquire));
+        if (!woken) {
+            waitRc = kSceTimedOut;
+            TC("timeout", cur);
+            TD();
+            break;
+        }
+    }
+
+    if (waitRc == kSceTimedOut || waitRc == kSceEinval) {
+        // We may still be counted in waiters (no seq bump consumed us):
+        // try to dequeue exactly once. If a concurrent signal already did
+        // (seq changed after our last check), the CAS below fails harmlessly
+        // because seq differs; re-read to avoid underflow.
+        while (true) {
+            const std::uint64_t cur = cref.load(std::memory_order_acquire);
+            if (!CW::IsInit(cur))
+                break;
+            if (CW::Seq(cur) != seq)
+                break;  // a signal took us; nothing to dequeue.
+            const std::uint32_t w = CW::Waiters(cur);
+            if (w == 0)
+                break;
+            const std::uint64_t want = CW::kInit | (CW::IsMono(cur) ? CW::kClockMono : 0ULL) |
+                                       (static_cast<std::uint64_t>(w - 1) << CW::kWaitersShift) |
+                                       CW::Seq(cur);
+            std::uint64_t expected = cur;
+            if (cref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
+                                             std::memory_order_acquire))
+                break;
+        }
+    }
+
+    // POSIX requires the mutex held on return (even after timeout).
+    const std::uint64_t relockDeadline =
+        hasDeadline ? deadline : FutexCore::kInfinite;
+    const int relock = MutexRelockAfterWait(mutex, held, tid, relockDeadline);
+    if (relock != kSceOk) {
+        TC("relFail", static_cast<std::uint64_t>(static_cast<std::uint32_t>(relock)));
+        return (waitRc == kSceOk) ? relock : waitRc;
+    }
+    return waitRc;
+}
+
+}  // namespace
+
+int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex,
+                                      const KernelTimespec* abstime) {
+    if (!cond || !mutex || !abstime)
+        return kSceEinval;
+    if (abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000LL)
+        return kSceEinval;
+    // Clock selection comes from the cond's MONOTONIC bit when initialized;
+    // default (zero slot) is REALTIME.
+    bool mono = false;
+    if (cond) {
+        const std::uint64_t cw =
+            std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(cond)).load(
+                std::memory_order_acquire);
+        if (CW::IsInit(cw))
+            mono = CW::IsMono(cw);
+    }
+    const std::uint64_t deadline =
+        FutexCore::AbsoluteToDeadline(abstime->tv_sec, abstime->tv_nsec, mono);
+    return WaitInternal(cond, mutex, deadline, true);
 }
 
 extern "C" {
 
-int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) {
+int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) noexcept {
     if (!attr)
-        throw std::invalid_argument("Condition attribute pointer is null");
-    *attr = new PthreadCondattrPrivate{0};
-    return 0;
+        return kSceEinval;
+    *attr = new (std::nothrow) PthreadCondattrPrivate{0};
+    return *attr ? kSceOk : SyncWords::kSceEnomem;
 }
 
-int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) {
+int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) noexcept {
     if (!attr || !*attr)
-        throw std::invalid_argument("Condition attributes are not initialized");
+        return kSceEinval;
     delete *attr;
     *attr = nullptr;
-    return 0;
+    return kSceOk;
 }
 
-int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) {
+int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) noexcept {
     if (!attr || !*attr)
-        throw std::invalid_argument("Condition attributes are not initialized");
+        return kSceEinval;
     (*attr)->_clockid = static_cast<int>(clockId);
-    return 0;
+    return kSceOk;
 }
 
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char*) {
+int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr,
+                                const char*) noexcept {
     if (!cond)
-        throw std::invalid_argument("Condition variable pointer is null");
+        return kSceEinval;
     if (attr && !*attr)
-        throw std::invalid_argument("Condition attributes are not initialized");
-    auto replacement = std::make_unique<PthreadCondPrivate>();
-    std::lock_guard lock(condInitializationMutex);
-    *cond = replacement.release();
-    return 0;
+        return kSceEinval;
+    bool mono = false;
+    if (attr && *attr) {
+        const int clk = (*attr)->_clockid;
+        // Monotonic ids per Time.cpp (1/4/5/7/8/11/12); 0/9/10/13 realtime.
+        mono = (clk == 1 || clk == 4 || clk == 5 || clk == 7 || clk == 8 || clk == 11 || clk == 12);
+    }
+    CondRef(cond).store(CW::Make(mono, 0, 0), std::memory_order_release);
+    return kSceOk;
 }
 
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) {
+int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) noexcept {
     if (!cond)
-        throw std::invalid_argument("Condition variable pointer is null");
-    std::lock_guard lock(condInitializationMutex);
-    if (*cond == destroyedCond())
-        throw std::runtime_error("Condition variable has already been destroyed");
-    delete *cond;
-    *cond = destroyedCond();
-    return 0;
+        return kSceEinval;
+    auto ref = CondRef(cond);
+    const std::uint64_t w = ref.load(std::memory_order_acquire);
+    if (w == 0) {
+        ref.store(CW::kDestroyedWord, std::memory_order_release);
+        return kSceOk;
+    }
+    if (!CW::IsInit(w) || CW::IsDestroyed(w))
+        return kSceEinval;
+    if (CW::Waiters(w) != 0)
+        return kSceEbusy;
+    ref.store(CW::kDestroyedWord, std::memory_order_release);
+    return kSceOk;
 }
 
-int APS5_VABI scePthreadCondSignal(PthreadCond* cond) {
-    resolveCond(cond)->_cv.notify_one();
-    return 0;
+int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept {
+    if (!cond)
+        return kSceEinval;
+    auto ref = CondRef(cond);
+    std::uint64_t w = ref.load(std::memory_order_acquire);
+    if (w == 0) {
+        std::uint64_t expected = 0;
+        ref.compare_exchange_strong(expected, CW::Make(false, 0, 0), std::memory_order_acq_rel,
+                                    std::memory_order_acquire);
+        return kSceOk;  // no waiters on a fresh cond.
+    }
+    if (!CW::IsInit(w) || CW::IsDestroyed(w))
+        return kSceEinval;
+    while (true) {
+        w = ref.load(std::memory_order_acquire);
+        if (!CW::IsInit(w) || CW::IsDestroyed(w))
+            return kSceEinval;
+        const std::uint32_t waiters = CW::Waiters(w);
+        if (waiters == 0) {
+            return kSceOk;  // fast path: nothing to wake.
+        }
+        const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
+                                   (static_cast<std::uint64_t>(waiters - 1) << CW::kWaitersShift) |
+                                   ((CW::Seq(w) + 1) & 0xFFFFFFFFULL);
+        std::uint64_t expected = w;
+        if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            TC("signal", want);
+            FutexCore::WakeSingle(CondPtr(cond));
+            return kSceOk;
+        }
+    }
 }
 
-int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) {
-    resolveCond(cond)->_cv.notify_all();
-    return 0;
+int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
+    if (!cond)
+        return kSceEinval;
+    auto ref = CondRef(cond);
+    std::uint64_t w = ref.load(std::memory_order_acquire);
+    if (w == 0) {
+        std::uint64_t expected = 0;
+        ref.compare_exchange_strong(expected, CW::Make(false, 0, 0), std::memory_order_acq_rel,
+                                    std::memory_order_acquire);
+        return kSceOk;
+    }
+    if (!CW::IsInit(w) || CW::IsDestroyed(w))
+        return kSceEinval;
+    while (true) {
+        w = ref.load(std::memory_order_acquire);
+        if (!CW::IsInit(w) || CW::IsDestroyed(w))
+            return kSceEinval;
+        if (CW::Waiters(w) == 0) {
+            // Still bump seq so a waiter between check and sleep cannot miss
+            // us (its seq read predates our bump, so it sleeps and our wake
+            // arrives after; with zero waiters the wake is harmless).
+            const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
+                                       (static_cast<std::uint64_t>(0) << CW::kWaitersShift) |
+                                       ((CW::Seq(w) + 1) & 0xFFFFFFFFULL);
+            std::uint64_t expected = w;
+            if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return kSceOk;
+            continue;
+        }
+        const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
+                                   ((CW::Seq(w) + 1) & 0xFFFFFFFFULL);
+        std::uint64_t expected = w;
+        if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            FutexCore::WakeAll(CondPtr(cond));
+            return kSceOk;
+        }
+    }
 }
 
-int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
+int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) noexcept {
     (void)thread;
-    resolveCond(cond)->_cv.notify_all();
-    return 0;
+    // POSIX permits broadcast-as-signal (spurious wakeup); matches PR5.
+    return scePthreadCondBroadcast(cond);
 }
 
-int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) {
-    return waitUntil(cond, mutex, nullptr);
+int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) noexcept {
+    return WaitInternal(cond, mutex, FutexCore::kInfinite, false);
 }
 
-int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec) {
-    const auto deadline = std::chrono::system_clock::now() + std::chrono::microseconds(usec);
-    return waitUntil(cond, mutex, &deadline);
+int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex,
+                                      KernelUseconds usec) noexcept {
+    if (!cond || !mutex)
+        return kSceEinval;
+    const std::uint64_t deadline = FutexCore::NowNanos() + static_cast<std::uint64_t>(usec) * 1000ULL;
+    return WaitInternal(cond, mutex, deadline, true);
 }
 
 }

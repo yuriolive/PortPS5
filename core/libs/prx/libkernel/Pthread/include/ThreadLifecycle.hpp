@@ -10,6 +10,6 @@ public:
     static void SetThreadAtexitReport(thread_atexit_report_func_t callback);
 };
 
-extern "C" void APS5_VABI scePthreadExit(void* retval);
+extern "C" void APS5_VABI scePthreadExit(void* retval) noexcept;
 
 #endif

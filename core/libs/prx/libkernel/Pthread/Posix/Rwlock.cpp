@@ -1,49 +1,50 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
 #include "../include/Rwlock.hpp"
-
-namespace {
-
-int toPosix(int result) {
-    if (result == 0)
-        return 0;
-    const auto error = static_cast<std::uint32_t>(result);
-    if ((error & 0xffff0000u) != 0x80020000u)
-        throw std::runtime_error("Unexpected SCE rwlock error");
-    return static_cast<int>(error & 0xffffu);
-}
-
-}
+#include "prx/libkernel/Pthread/include/SyncWords.hpp"
 
 extern "C" {
 
-int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI pthread_rwlock_destroy_nid_postfix(PthreadRwlock* rwlock) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockDestroy(rwlock));
 }
 
-int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const PthreadRwlockattr* attr) {
- (void)rwlock;
- (void)attr;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock,
+                                              const PthreadRwlockattr* attr) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockInit(rwlock, attr, nullptr));
 }
 
-int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock) {
-    return toPosix(scePthreadRwlockRdlock(rwlock));
+int APS5_VABI pthread_rwlock_rdlock_nid_postfix(PthreadRwlock* rwlock) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockRdlock(rwlock));
 }
 
-int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock) {
-    return toPosix(scePthreadRwlockUnlock(rwlock));
+int APS5_VABI pthread_rwlock_tryrdlock_nid_postfix(PthreadRwlock* rwlock) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockTryrdlock(rwlock));
 }
 
-int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock) {
- (void)rwlock;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI pthread_rwlock_trywrlock_nid_postfix(PthreadRwlock* rwlock) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockTrywrlock(rwlock));
+}
+
+int APS5_VABI pthread_rwlock_unlock_nid_postfix(PthreadRwlock* rwlock) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockUnlock(rwlock));
+}
+
+int APS5_VABI pthread_rwlock_wrlock_nid_postfix(PthreadRwlock* rwlock) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockWrlock(rwlock));
+}
+
+int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockattrDestroy(attr));
+}
+
+int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockattrInit(attr));
+}
+
+int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(PthreadRwlockattr* attr, int type) noexcept {
+    return SyncWords::ToPosix(scePthreadRwlockattrSettype(attr, type));
 }
 
 }

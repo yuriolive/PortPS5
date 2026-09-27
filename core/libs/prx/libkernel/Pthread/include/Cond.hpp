@@ -10,16 +10,18 @@ public:
 
 extern "C" {
 
-int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr);
-int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr);
-int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId);
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-int APS5_VABI scePthreadCondSignal(PthreadCond* cond);
-int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond);
-int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread);
-int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
-int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec);
+int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) noexcept;
+int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) noexcept;
+int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) noexcept;
+int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr,
+                                const char* name) noexcept;
+int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) noexcept;
+int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept;
+int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept;
+int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) noexcept;
+int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) noexcept;
+int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex,
+                                      KernelUseconds usec) noexcept;
 
 }
 

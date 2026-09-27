@@ -5,16 +5,17 @@
 
 extern "C" {
 
-int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr);
-int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr);
-int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type);
-int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr, const char* name);
-int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock);
-int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock);
+int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) noexcept;
+int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr) noexcept;
+int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) noexcept;
+int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr,
+                                  const char* name) noexcept;
+int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock) noexcept;
+int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock) noexcept;
+int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) noexcept;
+int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock) noexcept;
+int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) noexcept;
+int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) noexcept;
 
 }
 

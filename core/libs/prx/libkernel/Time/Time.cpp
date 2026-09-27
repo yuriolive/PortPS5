@@ -3,14 +3,39 @@
 #include "prx/libc/include/General.hpp"
 #include <cerrno>
 #include <cstdint>
-#include <stdexcept>
-#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <time.h>
 #include <sys/time.h>
+#endif
+
+#ifdef _WIN32
+// 0.5ms tick raise, kept unconditionally (threading.md: timer kept).
+// Why NtSetTimerResolution: timeBeginPeriod caps at 1ms; the 0.5ms tick needs
+// the native 100ns-unit call (5000 = 0.5ms). Loaded dynamically so MinGW
+// links without ntdll import hassle; failure falls back to 1ms and never
+// changes behaviour via env (no APS5_* switches).
+void EnsureTimerTick() noexcept {
+    using NtSetFn = LONG(WINAPI*)(ULONG, BOOLEAN, PULONG);
+    static const bool done = [] {
+        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        if (ntdll) {
+            auto fn = reinterpret_cast<NtSetFn>(GetProcAddress(ntdll, "NtSetTimerResolution"));
+            if (fn) {
+                ULONG current = 0;
+                fn(5000, TRUE, &current);
+                return true;
+            }
+        }
+        timeBeginPeriod(1);
+        return true;
+    }();
+    (void)done;
+}
+#else
+inline void EnsureTimerTick() noexcept {}
 #endif
 
 static std::uint64_t GetMonotonicNanos() {
@@ -36,14 +61,25 @@ static std::uint64_t GetStartNanos() {
     return start;
 }
 
-static void SleepNanos(std::uint64_t nanos) {
+static void SleepNanos(std::uint64_t nanos) noexcept {
     if (nanos == 0) {
+#ifdef _WIN32
+        // sceKernelUsleep(0) yields (spec); SwitchToThread hands off to a
+        // ready same-priority thread without sleeping.
+        EnsureTimerTick();
+        SwitchToThread();
+#endif
         return;
     }
 #ifdef _WIN32
+    EnsureTimerTick();
     const DWORD millis = static_cast<DWORD>(nanos / 1000000ULL);
     if (millis > 0) {
         Sleep(millis);
+    } else {
+        // Sub-millisecond sleep: yield once; precision comes from the futex
+        // sub-ms slices, not from Sleep (1ms granularity).
+        SwitchToThread();
     }
 #else
     struct timespec req{};
@@ -55,28 +91,29 @@ static void SleepNanos(std::uint64_t nanos) {
 
 extern "C" {
 
-std::uint64_t APS5_VABI sceKernelGetProcessTime() {
+std::uint64_t APS5_VABI sceKernelGetProcessTime() noexcept {
     return (GetMonotonicNanos() - GetStartNanos()) / 1000ULL;
 }
 
-std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter() {
+std::uint64_t APS5_VABI sceKernelGetProcessTimeCounter() noexcept {
     return GetMonotonicNanos() - GetStartNanos();
 }
 
-std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency() {
+std::uint64_t APS5_VABI sceKernelGetProcessTimeCounterFrequency() noexcept {
     return 1000000000ULL;
 }
 
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
+int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) noexcept {
     SleepNanos(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
 }
 
-int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) noexcept {
     if (rqtp == nullptr) {
         return -1;
     }
     if (rqtp->tv_sec < 0 || rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) {
+        errno = 22;
         return -1;
     }
     SleepNanos(static_cast<std::uint64_t>(rqtp->tv_sec) * 1000000000ULL +
@@ -88,17 +125,18 @@ int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmt
     return 0;
 }
 
-int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) noexcept {
     return sceKernelNanosleep(rqtp, rmtp);
 }
 
-int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
+int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) noexcept {
     return sceKernelNanosleep(rqtp, rmtp);
 }
 
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
+int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) noexcept {
     if (tp == nullptr) {
-        APS5_INVALID_ARG_EX;
+        errno = 22;
+        return -1;
     }
 #ifdef _WIN32
     if (clockId == 0 || clockId == 9) {
@@ -127,7 +165,8 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
         tp->tv_nsec = static_cast<std::int64_t>(nanos % 1000000000ULL);
         return 0;
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported clock_id " + std::to_string(clockId));
+    errno = 22;
+    return -1;
 #else
     clockid_t nativeId;
     switch (clockId) {
@@ -160,7 +199,8 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
             nativeId = CLOCK_PROCESS_CPUTIME_ID;
             break;
         default:
-            throw std::runtime_error(std::string(__func__) + ": unsupported clock_id " + std::to_string(clockId));
+            errno = 22;
+            return -1;
     }
     struct timespec ts{};
     if (clock_gettime(nativeId, &ts) != 0) {
@@ -172,9 +212,10 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
 #endif
 }
 
-int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
+int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) noexcept {
     if (tv == nullptr) {
-        APS5_INVALID_ARG_EX;
+        errno = 22;
+        return -1;
     }
 #ifdef _WIN32
     FILETIME ft{};
@@ -198,9 +239,10 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     return 0;
 }
 
-int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
+int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) noexcept {
     if (res == nullptr) {
-        APS5_INVALID_ARG_EX;
+        errno = 22;
+        return -1;
     }
 #ifdef _WIN32
     if (clockId == 0 || clockId == 9) {
@@ -219,7 +261,8 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
         res->tv_nsec = static_cast<std::int64_t>(nsPerTick);
         return 0;
     }
-    throw std::runtime_error(std::string(__func__) + ": unsupported clock_id " + std::to_string(clockId));
+    errno = 22;
+    return -1;
 #else
     clockid_t nativeId;
     switch (clockId) {
@@ -252,7 +295,8 @@ int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
             nativeId = CLOCK_PROCESS_CPUTIME_ID;
             break;
         default:
-            throw std::runtime_error(std::string(__func__) + ": unsupported clock_id " + std::to_string(clockId));
+            errno = 22;
+            return -1;
     }
     struct timespec ts{};
     if (clock_getres(nativeId, &ts) != 0) {
