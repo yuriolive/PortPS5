@@ -17,6 +17,8 @@ struct RelinkResult {
     SysVDynamicSection DynamicSection;
     VirtualAddress OriginalPltGotVaddr;
     std::vector<RelinkPatch> Patches;
+    std::size_t NidsIn = 0;
+    std::size_t NidsOut = 0;
 };
 
 }

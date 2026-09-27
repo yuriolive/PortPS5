@@ -1,5 +1,6 @@
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <relinker/analysis/ValidationPolicy.hpp>
+#include <relinker/analysis/CodeMap.hpp>
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <sstream>
 #include <iostream>
@@ -199,8 +200,20 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
     for (const auto& ref : nidRefs)
         _validationPolicy->ValidateRelocationTypeSupported(ref.RelocationTypeValue, ref.RelocationTableOffset);
 
-    if (!textSection.empty())
-        _syscallScanner->ScanCodeSectionForSyscalls(textSection, textVAddr, textSection.size());
+    // Shared CodeMap is the only instruction-discovery engine: syscall scan
+    // reads proven Starts, Unproven bytes are only logged.
+    try {
+        const auto codeMap = BuildCodeMap(sourceElf, programHeaders);
+        _syscallScanner->ScanImage(sourceElf, programHeaders, codeMap);
+    } catch (const RelinkerException& e) {
+        // Images without discoverable code (e.g. synthetic fixtures with no
+        // entry points) fall back to the legacy single-segment scan.
+        if (!textSection.empty())
+            _syscallScanner->ScanCodeSectionForSyscalls(textSection, textVAddr, textSection.size());
+        else
+            throw;
+        (void)e;
+    }
 
     _validationPolicy->ValidateSyscallAbsence();
 
@@ -301,7 +314,10 @@ RelinkResult RelinkerPipeline::Relink(const std::vector<std::uint8_t>& sourceElf
         entries.push_back(std::move(entry));
     }
 
-    return RelinkResult{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr, std::move(patches)};
+    RelinkResult result{std::move(entries), std::move(programHeaders), std::move(dynSection), gotVAddr, std::move(patches)};
+    result.NidsIn = originalNidCount;
+    result.NidsOut = nidRefs.size();
+    return result;
 }
 
 }

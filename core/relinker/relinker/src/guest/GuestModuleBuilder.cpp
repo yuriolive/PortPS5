@@ -1,6 +1,7 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
+#include <relinker/analysis/CodeMap.hpp>
 #include <io/FileReader.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
@@ -60,10 +61,25 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
-        if (toIntel) image.Bytes = Codegen::MakeAmd64OnlyConverter()->Convert(std::move(image.Bytes), codeHeaders).Bytes;
-        for (const auto& header : codeHeaders) {
-            const std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
-            syscallScanner.ScanCodeSectionForSyscalls(code, header.MappedAddress, header.FileSize);
+        if (toIntel) {
+            const auto moduleMap = BuildCodeMap(image.Bytes, image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(std::move(image.Bytes), codeHeaders, moduleMap);
+            if (!converted.Residuals.empty())
+                std::cout << "Guest module " << image.OutputName << ": " << converted.Residuals.size() << " residual SSE4a sites left for the runtime trap\n";
+            image.Bytes = std::move(converted.Bytes);
+            // Trampolines for guest modules are not yet emitted; fail clearly
+            // if a module needs out-of-line lowering until the writer supports it.
+            if (!converted.Trampolines.empty())
+                throw Domain::RelinkerException("Guest module requires AMD-only trampolines, which are not yet emitted for sce_module");
+        }
+        try {
+            const auto moduleMap = BuildCodeMap(image.Bytes, image.Headers);
+            syscallScanner.ScanImage(image.Bytes, image.Headers, moduleMap);
+        } catch (const Domain::RelinkerException&) {
+            for (const auto& header : codeHeaders) {
+                const std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
+                syscallScanner.ScanCodeSectionForSyscalls(code, header.MappedAddress, header.FileSize);
+            }
         }
         images.push_back(std::move(image));
     }

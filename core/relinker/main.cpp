@@ -14,11 +14,14 @@
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <relinker/analysis/CallSiteResolver.hpp>
 #include <relinker/analysis/UnusedNidFilter.hpp>
+#include <relinker/analysis/CodeMap.hpp>
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <relinker/output/CallRegistryWriter.hpp>
+#include <relinker/output/ConversionReport.hpp>
 #include <relinker/pipeline/RelinkerPipeline.hpp>
 #include <relinker/guest/GuestImage.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
+#include <codegen/CodegenException.hpp>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -41,6 +44,25 @@ int main(const int argc, char* argv[]) {
         auto sourceBytes = fileReader.Read(args.inputPath);
         const std::string absPath = std::filesystem::absolute(args.outputPath).string();
 
+        // Shared CodeMap is the only instruction-discovery engine. It is
+        // built once per image from CodeInstructionCollector and reused by
+        // --to-intel, the syscall scan and TLS/NID filtering.
+        Domain::CodeMap codeMap;
+        bool haveCodeMap = false;
+        const auto ensureCodeMap = [&](const std::vector<std::uint8_t>& bytes) -> const Domain::CodeMap& {
+            if (!haveCodeMap) {
+                const Relinker::ElfReader reader(bytes);
+                codeMap = Relinker::BuildCodeMap(bytes, reader.ReadProgramHeaders());
+                haveCodeMap = true;
+            }
+            return codeMap;
+        };
+
+        std::vector<Codegen::TrampolineSite> trampolines;
+        std::vector<Codegen::ResidualSite> residuals;
+        std::size_t inPlaceCount = 0;
+        std::size_t unprovenBytes = 0;
+
         if (args.toIntel) {
             std::cout << "Mode: Intel instruction conversion; system unchanged; unused-filter=" << args.unusedFilterLevel << " (not applied)\n";
 
@@ -48,10 +70,28 @@ int main(const int argc, char* argv[]) {
             const auto converter = Codegen::MakeAmd64OnlyConverter();
 
             auto codeSegments = elfReader.ReadCodeSegments();
-            auto result = converter->Convert(std::move(sourceBytes), codeSegments);
+            const auto& map = ensureCodeMap(sourceBytes);
+            auto converted = converter->Convert(std::move(sourceBytes), codeSegments, map);
 
-            sourceBytes = std::move(result.Bytes);
-            std::cout << "OK: " << result.ReplacedCount << " instructions replaced\n";
+            sourceBytes = std::move(converted.Bytes);
+            trampolines = std::move(converted.Trampolines);
+            residuals = std::move(converted.Residuals);
+            inPlaceCount = converted.ReplacedCount;
+            unprovenBytes = converted.UnprovenBytes;
+            haveCodeMap = false;
+
+            for (const auto& report : converted.Reports) {
+                const char* kind = report.Lowering == Codegen::Amd64OnlyLowering::InPlace ? "in place " :
+                    report.Lowering == Codegen::Amd64OnlyLowering::Trampoline ? "stub " :
+                    report.Lowering == Codegen::Amd64OnlyLowering::Residual ? "residual " : "unsupported ";
+                std::cout << "Intel substitution: " << report.InstructionName << " at 0x" << std::hex << report.Offset << std::dec
+                          << " (" << report.OriginalLength << " bytes) -> " << kind << report.ReplacementLength << " bytes\n";
+            }
+            std::cout << "Intel conversion: " << inPlaceCount << " in place, " << trampolines.size()
+                      << " stubs, " << residuals.size() << " residual\n";
+            for (const auto& site : residuals)
+                std::cout << "Intel residual: " << site.Mnemonic << " at 0x" << std::hex << site.FileOffset << std::dec
+                          << " left for the runtime trap\n";
         }
 
         auto elfReader = std::make_shared<Relinker::ElfReader>(sourceBytes);
@@ -81,11 +121,25 @@ int main(const int argc, char* argv[]) {
             guestArtifacts = Relinker::GuestModuleBuilder().Build(args.inputPath, absPath, result.DynamicSection, args.toWindows, args.toIntel, *syscallScanner, args.lazyBinding, args.runPath);
         }
 
+        const std::filesystem::path outFsPath(absPath);
         if (args.writeRegistry) {
-            const std::filesystem::path outFsPath(absPath);
             const std::string registryPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".registry.json")).string();
             fileWriter.Write(registryPath, std::make_shared<Relinker::CallRegistryWriter>()->WriteCallRegistry(result.RegistryEntries));
         }
+
+        // Conversion report feeds the M1 import inventory: NIDs in/out,
+        // stub count and residual sites for the runtime trap.
+        Relinker::ConversionReport report;
+        report.NidsIn = result.NidsIn;
+        report.NidsOut = result.NidsOut;
+        report.InPlaceCount = inPlaceCount;
+        report.StubCount = trampolines.size();
+        report.Residuals = residuals;
+        report.UnprovenBytes = unprovenBytes;
+        const std::string conversionPath = (outFsPath.parent_path() / (outFsPath.stem().string() + ".conversion.json")).string();
+        fileWriter.Write(conversionPath, Relinker::ConversionReportWriter().Write(report));
+        std::cout << "Conversion: NIDs " << report.NidsIn << " -> " << report.NidsOut
+                  << "; stubs " << report.StubCount << "; residual " << report.Residuals.size() << '\n';
 
         auto byteWriter = std::make_shared<Io::ByteWriter>();
 
@@ -104,7 +158,7 @@ int main(const int argc, char* argv[]) {
             );
         }
 
-        const auto executableBytes = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding, args.windowsDiagnostics);
+        const auto executableBytes = patcher->Patch(sourceBytes, result.OriginalHeaders, result.DynamicSection, result.OriginalPltGotVaddr, args.runPath, args.lazyBinding, args.windowsDiagnostics, trampolines);
         for (const auto& artifact : guestArtifacts) {
             std::filesystem::create_directories(artifact.Path.parent_path());
             fileWriter.Write(artifact.Path.string(), artifact.Bytes);
@@ -116,6 +170,11 @@ int main(const int argc, char* argv[]) {
         if (args.autorun) return Cli::Autorun(absPath, args.toWindows);
 
     } catch (const Domain::RelinkerException& e) {
+        std::cerr << "FAIL: " << e.what();
+        if (e.FailureOffset != 0) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
+        std::cerr << "\n";
+        return 2;
+    } catch (const Codegen::CodegenException& e) {
         std::cerr << "FAIL: " << e.what();
         if (e.FailureOffset != 0) std::cerr << " (offset 0x" << std::hex << e.FailureOffset << ")";
         std::cerr << "\n";
