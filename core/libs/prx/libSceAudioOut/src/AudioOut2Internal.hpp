@@ -129,6 +129,7 @@ struct AudioOut2Port {
 
 struct AudioOut2Context {
     std::mutex lock;
+    std::atomic<int> inFlight{0};
     std::uint32_t grain = AUDIO_OUT2_DEFAULT_GRAIN;
     std::uint32_t queueDepth = 1;
     // Fallback hardware queue model for a context without an SDL device: pushes that have not

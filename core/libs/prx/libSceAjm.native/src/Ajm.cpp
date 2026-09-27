@@ -194,7 +194,15 @@ void RunAt9(Instance& instance, const AjmJobHeader& job, const AjmBuffer* inputs
             if (input.size() != consumed) result |= AJM_RESULT_PARTIAL_INPUT;
             break;
         }
-        if (outputCapacity - produced < frameBytes) {
+        std::size_t frameOutputSamples = frameSamples;
+        if (instance.gapless.skippedSamples < instance.gapless.skipSamples) {
+            frameOutputSamples -= std::min<std::size_t>(frameOutputSamples, instance.gapless.skipSamples - instance.gapless.skippedSamples);
+        }
+        if (instance.gapless.totalSamples != 0) {
+            const std::uint64_t remaining = instance.gapless.totalSamples > instance.totalDecodedSamples ? instance.gapless.totalSamples - instance.totalDecodedSamples : 0;
+            frameOutputSamples = std::min<std::size_t>(frameOutputSamples, remaining);
+        }
+        if (outputCapacity - produced < frameOutputSamples * channels * sampleBytes) {
             if (frames == 0) result |= AJM_RESULT_NOT_ENOUGH_ROOM;
             break;
         }

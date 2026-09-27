@@ -85,7 +85,13 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     std::lock_guard lock(g_portsLock);
     std::size_t index = 0;
     while (index < g_ports.size() && g_ports[index].used) index++;
-    if (index == g_ports.size()) g_ports.emplace_back();
+    if (index == g_ports.size()) {
+        try {
+            g_ports.emplace_back();
+        } catch (const std::bad_alloc&) {
+            return SCE_AUDIO_OUT2_ERROR_OUT_OF_MEMORY;
+        }
+    }
     auto& entry = g_ports[index];
     entry = AudioOut2Port{};
     entry.used = true;

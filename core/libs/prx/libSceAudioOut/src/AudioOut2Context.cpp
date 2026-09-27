@@ -74,18 +74,44 @@ void AudioOut2ResetTelemetryForTesting() {
 static std::mutex g_contextsLock;
 static std::set<AudioOut2Context*> g_liveContexts;
 
+struct ContextRef {
+    AudioOut2Context* ctx = nullptr;
+    ~ContextRef() {
+        if (ctx) {
+            ctx->inFlight.fetch_sub(1, std::memory_order_release);
+        }
+    }
+    ContextRef() = default;
+    explicit ContextRef(AudioOut2Context* c) : ctx(c) {}
+    ContextRef(const ContextRef&) = delete;
+    ContextRef& operator=(const ContextRef&) = delete;
+    ContextRef(ContextRef&& other) noexcept : ctx(other.ctx) { other.ctx = nullptr; }
+    ContextRef& operator=(ContextRef&& other) noexcept {
+        if (this != &other) {
+            if (ctx) ctx->inFlight.fetch_sub(1, std::memory_order_release);
+            ctx = other.ctx;
+            other.ctx = nullptr;
+        }
+        return *this;
+    }
+    AudioOut2Context* get() const { return ctx; }
+    AudioOut2Context* operator->() const { return ctx; }
+    explicit operator bool() const { return ctx != nullptr; }
+};
+
+static ContextRef AcquireContext(AudioOut2ContextHandle handle) {
+    if (!handle) return {};
+    std::lock_guard lock(g_contextsLock);
+    auto* context = reinterpret_cast<AudioOut2Context*>(handle);
+    if (g_liveContexts.count(context) == 0) return {};
+    context->inFlight.fetch_add(1, std::memory_order_acquire);
+    return ContextRef{context};
+}
+
 bool AudioOut2IsValidContext(AudioOut2ContextHandle ctx) {
     if (!ctx) return false;
     std::lock_guard lock(g_contextsLock);
     return g_liveContexts.count(reinterpret_cast<AudioOut2Context*>(ctx)) != 0;
-}
-
-static AudioOut2Context* FromHandle(AudioOut2ContextHandle ctx) {
-    if (!ctx) return nullptr;
-    std::lock_guard lock(g_contextsLock);
-    auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
-    if (g_liveContexts.count(context) == 0) return nullptr;
-    return context;
 }
 
 static Clock::duration GrainDuration(const AudioOut2Context& context) {
@@ -125,8 +151,9 @@ void AudioOut2ForceWallClockForTesting(AudioOut2ContextHandle ctx) {
     // Tests close the device so the wall-clock model (not the host audio
     // driver) decides queue levels, keeping assertions deterministic with or
     // without audio hardware.
-    auto* context = FromHandle(ctx);
-    if (!context) return;
+    auto ref = AcquireContext(ctx);
+    if (!ref) return;
+    auto* context = ref.get();
     std::lock_guard lock(context->lock);
     if (context->device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) {
         SDL_ClearQueuedAudio(context->device);
@@ -136,8 +163,9 @@ void AudioOut2ForceWallClockForTesting(AudioOut2ContextHandle ctx) {
 }
 
 double AudioOut2LatencyMs(AudioOut2ContextHandle ctx) {
-    auto* context = FromHandle(ctx);
-    if (!context) return 0.0;
+    auto ref = AcquireContext(ctx);
+    if (!ref) return 0.0;
+    auto* context = ref.get();
     std::lock_guard lock(context->lock);
     // With a device the queued device bytes are the latency; without one the
     // modelled grains still pending are, so the FMV A/V offset stays defined
@@ -237,8 +265,9 @@ extern "C" {
 // The title's per-tick step between setting the ports' data and pushing. The ports are mixed at push
 // time from the buffers they currently point at, and the push paces the clock, so nothing is due here.
 int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) noexcept {
-    auto* context = FromHandle(ctx);
-    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto ref = AcquireContext(ctx);
+    if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto* context = ref.get();
     std::lock_guard lock(context->lock);
     context->advances++;
     context->summaryAdvances++;
@@ -264,9 +293,13 @@ int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, voi
         AudioOut2TraceSeconds(), params->max_ports, params->max_object_ports, params->guarantee_object_ports, params->queue_depth, params->num_grains, params->flags, buffer, buffer_size,
         static_cast<void*>(context), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
     OpenDevice(*context);
-    {
+    try {
         std::lock_guard lock(g_contextsLock);
         g_liveContexts.insert(context);
+    } catch (const std::bad_alloc&) {
+        CloseDevice(*context);
+        delete context;
+        return SCE_AUDIO_OUT2_ERROR_OUT_OF_MEMORY;
     }
     *ctx = reinterpret_cast<AudioOut2ContextHandle>(context);
     return 0;
@@ -279,6 +312,10 @@ int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) noexcept {
         context = reinterpret_cast<AudioOut2Context*>(ctx);
         if (g_liveContexts.erase(context) == 0) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     }
+    // Context is unregistered; no new operations can begin. Wait for in-flight ops:
+    while (context->inFlight.load(std::memory_order_acquire) > 0) {
+        std::this_thread::yield();
+    }
     AUDIOOUT2_TRACE("t=%.3f ContextDestroy ctx %p after %llu pushes\n", AudioOut2TraceSeconds(), static_cast<void*>(context), static_cast<unsigned long long>(context->pushes));
     {
         std::lock_guard lock(context->lock);
@@ -290,8 +327,9 @@ int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) noexcept {
 }
 
 int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint32_t* queue_level, uint32_t* available_queue) noexcept {
-    auto* context = FromHandle(ctx);
-    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto ref = AcquireContext(ctx);
+    if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto* context = ref.get();
     std::lock_guard lock(context->lock);
     const auto level = QueueLevel(*context, Clock::now());
     if (queue_level) *queue_level = level;
@@ -303,8 +341,9 @@ int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint3
 }
 
 int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t blocking) noexcept {
-    auto* context = FromHandle(ctx);
-    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto ref = AcquireContext(ctx);
+    if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto* context = ref.get();
     std::unique_lock lock(context->lock);
     auto now = Clock::now();
     const auto waitStart = now;
@@ -353,8 +392,9 @@ int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) noexc
 }
 
 int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num) noexcept {
-    auto* context = FromHandle(ctx);
-    if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto ref = AcquireContext(ctx);
+    if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    auto* context = ref.get();
     if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     // Context attributes have no modelled effect yet; they are logged when
     // tracing and otherwise ignored, never silently changing the mix.
