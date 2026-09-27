@@ -55,7 +55,20 @@ void RunColorTargetLayoutTests() {
     }
     reject([&] { layout.Detile(std::span(tiled).first(4), restored); });
     reject([&] { layout.Tile(std::span(linear).first(4), tiled); });
-    alignas(65536) static std::array<std::byte, 65536> guest{};
+
+    struct AlignedGuest {
+        alignas(8192) std::array<std::byte, 65536 * 2> storage{};
+        std::byte* data() {
+            auto addr = reinterpret_cast<std::uintptr_t>(storage.data());
+            auto aligned = (addr + 65535u) & ~std::uintptr_t(65535u);
+            return reinterpret_cast<std::byte*>(aligned);
+        }
+        constexpr std::size_t size() const { return 65536; }
+        std::byte& operator[](std::size_t i) { return data()[i]; }
+        const std::byte& operator[](std::size_t i) const { return const_cast<AlignedGuest*>(this)->data()[i]; }
+        void fill(std::byte val) { std::memset(data(), static_cast<int>(val), size()); }
+    };
+    static AlignedGuest guest;
     guest.fill(std::byte{0x6b});
     ColorTarget target{reinterpret_cast<std::uintptr_t>(guest.data()), {2, 2}, VK_FORMAT_R8G8B8A8_UNORM, guest.size(), 0xe4, ColorTileMode::RenderTarget};
     std::array<std::byte, 16> pixels{};
