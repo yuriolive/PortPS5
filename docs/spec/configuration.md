@@ -42,7 +42,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Conf
 
 ## Target design
 
-**Locations and layering.** The runtime reads `<install>/config/global.toml`, then `<install>/config/games/<titleId>.toml`, then `PORTPS5_DEBUG`. Later layers override earlier ones key by key. `<install>` is the directory of the converted executable, and the CLI copies the repository's `config/` there at conversion time. `global.toml` may not contain `[workarounds]`. `PORTPS5_DEBUG` may set only `[debug]` keys, with the syntax `key=value;key=v1,v2` (for example `trace=audio,ajm;dump=shaders`).
+**Locations and layering.** The runtime reads `<install>/config/global.toml`, then `<install>/config/games/<titleId>.toml`, then `PORTPS5_DEBUG`. Later layers override earlier ones key by key. `<install>` is the directory of the converted executable, and the CLI copies the repository's `config/` there at conversion time. `global.toml` may not contain `[workarounds]`. `PORTPS5_DEBUG` may set only `[debug]` keys, with the syntax `key=value;key=v1,v2` (for example `trace=audio,ajm;dump=shaders`). Booleans there read `true`/`false` (also `1`/`0`); `watch` cannot be set through `PORTPS5_DEBUG` because its table shape needs a TOML file.
 
 **Required top-level keys.** `schema = 1`. In game files, also `title_id = "PPSA01342"`, which must match both the file name and `param.json`.
 
@@ -150,3 +150,4 @@ Any `APS5_*` variable in the environment triggers one warning that lists the nam
 - Keep one `[debug] serialize_gpu` switch for bisecting ordering bugs? It changes timing, not results, but it conflicts with the rule against behaviour-changing toggles, so it is excluded for now.
 - A user-override directory, for example `%APPDATA%/PortPS5/config`, for players who reinstall. It is not needed for 1.0.
 - Does `resolution_scale` belong in pipeline-cache keys? Decide with [pipeline-cache.md](pipeline-cache.md).
+- Enforce `debug.dump_dir` outside the saves directory once [save-data.md](save-data.md) owns the saves path (M2). Until then the check is non-empty only.

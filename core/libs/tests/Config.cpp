@@ -11,6 +11,11 @@
 #include <cstring>
 #include <string>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 namespace {
 
 using namespace PortPS5::Config;
@@ -33,12 +38,12 @@ void SetEnv(const char* name, const char* value) {
 
 void ClearEnv(const char* name) {
 #ifdef _WIN32
-    REQUIRE(_putenv_s(name, "") == 0);
+    // SetEnvironmentVariableA with NULL truly deletes the variable;
+    // _putenv_s(name, "") would leave an empty entry behind.
+    REQUIRE(SetEnvironmentVariableA(name, nullptr) != 0);
 #else
     REQUIRE(::unsetenv(name) == 0);
 #endif
-    // An empty PORTPS5_DEBUG value parses as "no overrides"; a stale APS5_
-    // probe needs the variable fully gone on POSIX, handled per case below.
 }
 
 bool InitOk(const std::string& globalToml, const std::string& gameToml,
@@ -157,6 +162,8 @@ void TestGoldenParseAndLayering() {
     REQUIRE(config.titleId == "PPSA01342");
     REQUIRE(config.input.deadzone == 0.12);
     REQUIRE(config.input.mouseLook);
+    REQUIRE(config.input.mouseSensitivity == 2.5);
+    REQUIRE(config.input.swapConfirm);
     REQUIRE(config.input.bindings.at("cross").size() == 2);
     REQUIRE(config.debug.logLevel == LogLevel::Debug);
     REQUIRE(config.debug.trace.count(TraceCategory::Audio) == 1);
@@ -176,6 +183,7 @@ void TestGoldenParseAndLayering() {
     REQUIRE(config.debug.gpu.dumpFrames);
     REQUIRE(*config.debug.memory.heapCacheMib == 512);
     REQUIRE(config.debug.recompiler.dumpIr.size() == 1);
+    REQUIRE(config.debug.recompiler.dumpIr[0] == "all");
     REQUIRE(config.debug.recompiler.singleLane);
     REQUIRE(config.debug.recompiler.profile);
     REQUIRE(config.debug.recompiler.capture);
@@ -204,6 +212,21 @@ void TestDebugEnvLayer() {
         hasMib = hasMib || key == "gpu.host_import_mib";
     }
     REQUIRE(hasTrace && hasMib);
+    ClearEnv("PORTPS5_DEBUG");
+}
+
+void TestThreeLayerPrecedence() {
+    // The same key set in all three layers resolves to the last layer:
+    // global < game < PORTPS5_DEBUG (docs/spec/configuration.md).
+    ClearEnv("PORTPS5_DEBUG");
+    InitOk("schema = 1\n[debug]\nlog_level = \"info\"\ntrace = [\"audio\"]\n",
+           "schema = 1\ntitle_id = \"PPSA01342\"\n[debug]\nlog_level = \"warn\"\n"
+           "trace = [\"pad\"]\n",
+           "log_level=error;trace=sync", "PPSA01342");
+    const ResolvedConfig& config = Loader::Get();
+    REQUIRE(config.debug.logLevel == LogLevel::Error);
+    REQUIRE(config.debug.trace.size() == 1);
+    REQUIRE(config.debug.trace.count(TraceCategory::Sync) == 1);
     ClearEnv("PORTPS5_DEBUG");
 }
 
@@ -266,6 +289,8 @@ void TestRejectCases() {
 // Workaround keys used only by these tests.
 PORTPS5_WORKAROUND(test_flag, WorkaroundType::Bool, false, "test mechanism")
 PORTPS5_WORKAROUND(test_count, WorkaroundType::Int, std::int64_t{3}, "test mechanism")
+PORTPS5_WORKAROUND(test_ratio, WorkaroundType::Double, 0.5, "test mechanism")
+PORTPS5_WORKAROUND(test_name, WorkaroundType::String, std::string{"default"}, "test mechanism")
 
 void TestWorkarounds() {
     ClearEnv("PORTPS5_DEBUG");
@@ -273,18 +298,31 @@ void TestWorkarounds() {
     InitOk("schema = 1\n", "schema = 1\ntitle_id = \"PPSA01342\"\n", "", "PPSA01342");
     REQUIRE(Loader::GetWorkaroundBool("test_flag", true) == false);
     REQUIRE(Loader::GetWorkaroundInt("test_count", 99) == 3);
+    REQUIRE(Loader::GetWorkaroundDouble("test_ratio", 9.0) == 0.5);
+    REQUIRE(Loader::GetWorkaroundString("test_name", "other") == "default");
     REQUIRE(!Loader::GetWorkaround("missing_key").has_value());
     // Game file values override defaults.
     InitOk("schema = 1\n", "schema = 1\ntitle_id = \"PPSA01342\"\n[workarounds]\n"
-                           "test_flag = true\ntest_count = 7\n",
+                           "test_flag = true\ntest_count = 7\ntest_ratio = 1.25\n"
+                           "test_name = \"set\"\n",
            "", "PPSA01342");
     REQUIRE(Loader::GetWorkaroundBool("test_flag", false) == true);
     REQUIRE(Loader::GetWorkaroundInt("test_count", 0) == 7);
-    // Wrong value type is a start-up error.
+    REQUIRE(Loader::GetWorkaroundDouble("test_ratio", 0.0) == 1.25);
+    REQUIRE(Loader::GetWorkaroundString("test_name", "") == "set");
+    // Wrong value types are start-up errors.
     REQUIRE(InitErr("schema = 1\n", "schema = 1\ntitle_id = \"PPSA01342\"\n[workarounds]\n"
                                     "test_count = true\n",
                     "", "PPSA01342")
                 .find("test_count") != std::string::npos);
+    REQUIRE(InitErr("schema = 1\n", "schema = 1\ntitle_id = \"PPSA01342\"\n[workarounds]\n"
+                                    "test_ratio = \"x\"\n",
+                    "", "PPSA01342")
+                .find("test_ratio") != std::string::npos);
+    REQUIRE(InitErr("schema = 1\n", "schema = 1\ntitle_id = \"PPSA01342\"\n[workarounds]\n"
+                                    "test_name = 1\n",
+                    "", "PPSA01342")
+                .find("test_name") != std::string::npos);
     ClearEnv("PORTPS5_DEBUG");
 }
 
@@ -315,6 +353,7 @@ int main() {
     TestDefaults();
     TestGoldenParseAndLayering();
     TestDebugEnvLayer();
+    TestThreeLayerPrecedence();
     TestRejectCases();
     TestWorkarounds();
     TestStaleAps5Warning();

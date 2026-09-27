@@ -22,7 +22,8 @@ window_percent = 60
 # Host radial dead zone for sticks (0.0-0.5).
 deadzone = 0.08
 mouse_look = false
-# Replaces the old Pad::MouseSensitivity (0.1-10.0).
+# Replaces the old Pad::MouseSensitivity (PortPS5
+# core/libs/prx/libScePad/include/InputMapping.hpp:15, 0.1-10.0).
 mouse_sensitivity = 1.0
 # Swap Cross and Circle for controllers only.
 swap_confirm = false

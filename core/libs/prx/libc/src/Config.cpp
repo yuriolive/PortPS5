@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <mutex>
 #include <set>
+#include <shared_mutex>
 #include <string_view>
 #include <system_error>
 
@@ -75,9 +76,12 @@ std::map<std::string, WorkaroundInfo>& Registry() {
 }
 
 // --- Loader state ------------------------------------------------------------
+// Readers take a shared lock: resolved getters run on runtime hot paths
+// (e.g. per-draw workaround queries), where cpp-style forbids serializing
+// process-global locks. Only Initialize/ResetForTesting take it exclusively.
 
-std::mutex& InitMutex() {
-    static std::mutex mutex;
+std::shared_mutex& InitMutex() {
+    static std::shared_mutex mutex;
     return mutex;
 }
 
@@ -174,7 +178,8 @@ bool IsKnownBindingKey(std::string_view key) {
 }
 
 void FillDefaultBindings(InputConfig& input) {
-    // Mirrors the compile-time table in libScePad InputMapping.hpp.
+    // Mirrors the compile-time table in PortPS5
+    // core/libs/prx/libScePad/include/InputMapping.hpp:17-51.
     input.bindings = {
         {"toggle_fullscreen", {"F11"}},
         {"cross", {"Return", "Space"}},
@@ -451,6 +456,8 @@ bool ApplyDisplay(const toml::table& table, const std::string& file, ResolvedCon
         if (!ReadDouble(*node, value)) {
             return Fail(error, file, node, "display.resolution_scale", "expected float");
         }
+        // Why 1.0-2.0: sub-1.0 downscaling is outside the 1.0 perf bar and
+        // above 2.0 exceeds the VRAM budget of the reference tier (docs/spec/configuration.md).
         if (value < 1.0 || value > 2.0) {
             return Fail(error, file, node, "display.resolution_scale",
                         "expected float in range 1.0-2.0");
@@ -477,6 +484,8 @@ bool ApplyDisplay(const toml::table& table, const std::string& file, ResolvedCon
         if (!ReadInt(*node, value)) {
             return Fail(error, file, node, "display.window_percent", "expected integer");
         }
+        // Why 25-100: below 25% the window is unusable, above 100% is off-screen
+        // (docs/spec/configuration.md).
         if (value < 25 || value > 100) {
             return Fail(error, file, node, "display.window_percent",
                         "expected integer in range 25-100");
@@ -510,6 +519,8 @@ bool ApplyInput(const toml::table& table, const std::string& file, ResolvedConfi
         if (!ReadDouble(*node, value)) {
             return Fail(error, file, node, "input.deadzone", "expected float");
         }
+        // Why 0.0-0.5: beyond half deflection the stick has no travel left
+        // (docs/spec/input.md via docs/spec/configuration.md).
         if (value < 0.0 || value > 0.5) {
             return Fail(error, file, node, "input.deadzone",
                         "expected float in range 0.0-0.5");
@@ -526,6 +537,8 @@ bool ApplyInput(const toml::table& table, const std::string& file, ResolvedConfi
         if (!ReadDouble(*node, value)) {
             return Fail(error, file, node, "input.mouse_sensitivity", "expected float");
         }
+        // Why 0.1-10.0: keeps the resampler-free mouse path within one order
+        // of magnitude of the previous fixed sensitivity (docs/spec/input.md).
         if (value < 0.1 || value > 10.0) {
             return Fail(error, file, node, "input.mouse_sensitivity",
                         "expected float in range 0.1-10.0");
@@ -565,6 +578,8 @@ bool ApplyInput(const toml::table& table, const std::string& file, ResolvedConfi
                     return Fail(error, file, &item, "input.bindings." + name,
                                 "expected non-empty input name of at most 64 characters");
                 }
+                // Why 64: SDL scancode names are at most 20 characters; 64
+                // leaves headroom without unbounded allocations from TOML.
                 if (!IsKnownInputName(text)) {
                     return Fail(error, file, &item, "input.bindings." + name,
                                 "unknown input name '" + text + "'");
@@ -706,6 +721,8 @@ bool ApplyDebug(const toml::table& table, const std::string& file, ResolvedConfi
             }
             std::int64_t addr = 0;
             bool write = false;
+            // Why i64, not u64: TOML integers are signed 64-bit, so a full u64
+            // is unrepresentable; guest addresses always fit (arena < 2^48).
             if (!ReadInt(*addrNode, addr) || addr < 0) {
                 return Fail(error, file, addrNode, "debug.watch",
                             "expected addr as non-negative integer");
@@ -1066,6 +1083,17 @@ bool ApplyDebugEnvEntry(ResolvedConfig& out, std::set<std::string>& debugKeys,
         if (value.empty()) {
             return fail(std::string(key), "expected non-empty comma-separated list");
         }
+        // Later layers override earlier ones key by key (docs/spec/configuration.md),
+        // so the env layer replaces the TOML layers instead of merging into them.
+        if (key == "trace") {
+            out.debug.trace.clear();
+        } else if (key == "dump") {
+            out.debug.dump.clear();
+        } else if (key == "profile") {
+            out.debug.profile.clear();
+        } else {
+            out.debug.validate.clear();
+        }
         for (const std::string& item : SplitOn(value, ',')) {
             if (key == "trace") {
                 TraceCategory category = TraceCategory::Audio;
@@ -1239,11 +1267,12 @@ bool ParseFileLayer(const std::string& path, bool isGlobal, const std::string& e
     try {
         root = toml::parse_file(path);
     } catch (const toml::parse_error& parseError) {
-        error = path + ":" + std::to_string(parseError.source().begin.line) + ": " +
+        // Syntax errors have no key; "toml" keeps the file:line: key: reason shape.
+        error = path + ":" + std::to_string(parseError.source().begin.line) + ": toml: " +
                 std::string(parseError.description());
         return false;
     } catch (const std::exception& other) {
-        error = path + ":1: " + std::string(other.what());
+        error = path + ":1: toml: " + std::string(other.what());
         return false;
     }
     return ApplyDocument(root, path, isGlobal, expectedTitle, out, debugKeys, error);
@@ -1256,11 +1285,11 @@ bool ParseMemoryLayer(const std::string& text, const std::string& label, bool is
     try {
         root = toml::parse(text, label);
     } catch (const toml::parse_error& parseError) {
-        error = label + ":" + std::to_string(parseError.source().begin.line) + ": " +
+        error = label + ":" + std::to_string(parseError.source().begin.line) + ": toml: " +
                 std::string(parseError.description());
         return false;
     } catch (const std::exception& other) {
-        error = label + ":1: " + std::string(other.what());
+        error = label + ":1: toml: " + std::string(other.what());
         return false;
     }
     return ApplyDocument(root, label, isGlobal, expectedTitle, out, debugKeys, error);
@@ -1271,7 +1300,14 @@ bool ParseMemoryLayer(const std::string& text, const std::string& label, bool is
 void RegisterWorkaround(const char* key, WorkaroundType type, WorkaroundValue defaultValue,
                         const char* mechanism) {
     std::lock_guard lock(RegistryMutex());
-    Registry()[key] = {type, std::move(defaultValue), mechanism != nullptr ? mechanism : ""};
+    auto& registry = Registry();
+    // Re-registering one key with a different type is a programming error:
+    // game files could no longer be validated against a single type.
+    const auto existing = registry.find(key);
+    if (existing != registry.end() && existing->second.type != type) {
+        std::abort();
+    }
+    registry[key] = {type, std::move(defaultValue), mechanism != nullptr ? mechanism : ""};
 }
 
 bool Loader::Initialize(const std::string& installDir, const std::string& titleId,
@@ -1357,9 +1393,10 @@ bool Loader::InitializeForTesting(const std::string& globalToml, const std::stri
 }
 
 const ResolvedConfig& Loader::Get() {
-    std::lock_guard lock(InitMutex());
+    std::shared_lock lock(InitMutex());
     // Startup must Initialize once before guest threads start; reading the
     // config earlier is a bug, and aborting beats returning a half object.
+    // Slice 2 routes this through Unsupported() with a log line.
     if (!Instance().has_value()) {
         std::abort();
     }
@@ -1367,7 +1404,7 @@ const ResolvedConfig& Loader::Get() {
 }
 
 bool Loader::IsInitialized() {
-    std::lock_guard lock(InitMutex());
+    std::shared_lock lock(InitMutex());
     return Instance().has_value();
 }
 
@@ -1377,7 +1414,7 @@ void Loader::ResetForTesting() {
 }
 
 std::optional<WorkaroundValue> Loader::GetWorkaround(const std::string& key) {
-    std::lock_guard initLock(InitMutex());
+    std::shared_lock initLock(InitMutex());
     std::lock_guard registryLock(RegistryMutex());
     const auto registered = Registry().find(key);
     if (registered == Registry().end()) {

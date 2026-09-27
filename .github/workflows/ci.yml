@@ -127,7 +127,9 @@ jobs:
           }
 
           # 2. No title hacks in core/
-          $titleHacks = git grep -n -E "PPSA[0-9]{5}|CUSA[0-9]{5}" core/ 2>$null
+          $titleHacks = git grep -n -E "PPSA[0-9]{5}|CUSA[0-9]{5}" core/ 2>$null | Where-Object {
+              $_ -notmatch '/tests/'
+          }
           # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
           $global:LASTEXITCODE = 0
           if ($titleHacks) {
@@ -140,6 +142,8 @@ jobs:
           $aps5Literals = git grep -n '"APS5_' -- core/ 2>$null | Where-Object {
               $_ -notmatch 'core/libs/prx/libc/src/Config\.cpp'
           }
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
           if ($aps5Literals) {
               throw "Forbidden APS5_ string literal outside Config module: $aps5Literals"
           }
@@ -151,6 +155,8 @@ jobs:
           $getenvCalls = git grep -n -E '\bgetenv\s*\(' -- core/ 2>$null | Where-Object {
               $_ -notmatch 'core/libs/prx/libc/src/Config\.cpp' -and $_ -notmatch '/tests/'
           }
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
           if ($getenvCalls) {
               throw "Forbidden getenv() call outside Config module: $getenvCalls"
           }
@@ -167,6 +173,8 @@ jobs:
           } | ForEach-Object {
               if ($_ -match 'PORTPS5_WORKAROUND\(\s*([A-Za-z0-9_]+)') { $Matches[1] }
           } | Sort-Object -Unique
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
           $documented = Select-String -Path docs/workarounds.md -Pattern '^\| `([a-z0-9_]+)`' -AllMatches |
               ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } |
               Sort-Object -Unique

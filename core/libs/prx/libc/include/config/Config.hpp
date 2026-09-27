@@ -160,8 +160,10 @@ public:
     static bool IsInitialized();
     static void ResetForTesting();
 
-    // Workaround accessors. Unregistered keys return nullopt; unset keys
-    // return their registered default.
+    // Workaround accessors. Unregistered keys return nullopt (GetWorkaround)
+    // or the caller fallback (typed getters, including on a type mismatch,
+    // which is a programming error the policy-reviewed call sites avoid).
+    // Unset keys return their registered default.
     static std::optional<WorkaroundValue> GetWorkaround(const std::string& key);
     static bool GetWorkaroundBool(const std::string& key, bool fallback);
     static std::int64_t GetWorkaroundInt(const std::string& key, std::int64_t fallback);

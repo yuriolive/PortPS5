@@ -368,7 +368,7 @@ if(BUILD_TESTING)
         configure_windows_unwind(exception_runtime_tests)
         add_test(NAME exception_runtime COMMAND exception_runtime_tests)
     endif()
-<    # application_heap_tests tests ApplicationHeap allocator routines in isolation.
+    # application_heap_tests tests ApplicationHeap allocator routines in isolation.
     # Note: tests/ApplicationHeap.cpp defines callbacks using APS5_VABI (__attribute__((sysv_abi))).
     # MinGW GCC cannot generate Windows SEH unwind information for sysv_abi functions, requiring
     # -fno-asynchronous-unwind-tables (DWARF unwinding). This in turn references __gxx_personality_v0,

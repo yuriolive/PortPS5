@@ -11,8 +11,10 @@ general mechanisms only.
 - Each entry below lists the key, its type and default (always the general
   behaviour), the mechanism, why no general fix exists yet, the title IDs and
   patch pins that set it, the tracking issue, and the removal condition.
-- The registered keys (via `PORTPS5_WORKAROUND` in code) and this file must
-  match in both directions; the `policy` job enforces that.
+- Entries use one table row per key, `| \`key\` | type, default | mechanism and tracking |`,
+  because the `policy` job parses exactly that row shape. The registered keys
+  (via `PORTPS5_WORKAROUND` in code) and this file must match in both
+  directions; the `policy` job enforces that.
 - A key that no gate title uses at a milestone exit is deleted.
 
 ## Keys
