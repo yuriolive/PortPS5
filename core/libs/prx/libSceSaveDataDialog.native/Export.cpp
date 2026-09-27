@@ -25,18 +25,24 @@ static bool FindExistingSaveDir(char* outName, size_t outSize) {
     if (!std::filesystem::is_directory(root, ec)) return false;
     std::filesystem::file_time_type newestTime{};
     std::string newestName;
-    for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+    std::filesystem::directory_iterator end;
+    for (std::filesystem::directory_iterator it(root, ec); !ec && it != end;) {
+        const auto& entry = *it;
         if (entry.is_directory(ec)) {
+            if (ec) return false;
             auto name = entry.path().filename().string();
             if (!name.empty() && name[0] != '.' && name[0] != '_') {
                 auto time = entry.last_write_time(ec);
+                if (ec) return false;
                 if (newestName.empty() || time > newestTime) {
                     newestTime = time;
                     newestName = std::move(name);
                 }
             }
         }
+        it.increment(ec);
     }
+    if (ec) return false;
     if (!newestName.empty()) {
         std::snprintf(outName, outSize, "%s", newestName.c_str());
         return true;
@@ -109,7 +115,7 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept {
  if (items != nullptr && items->dir_names != nullptr) {
   for (std::uint32_t i = 0; i < items->dir_names_num; i++) {
    const char* name = items->dir_names[i].data;
-   if (name[0] != '\0') {
+   if (std::memchr(name, '\0', sizeof(SaveDataDirName::data)) != nullptr && name[0] != '\0') {
     std::snprintf(g_dir_name, sizeof(g_dir_name), "%s", name);
     break;
    }
@@ -146,6 +152,9 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept {
 int APS5_VABI sceSaveDataDialogClose(const void* closeParam) noexcept {
  (void)closeParam;
  std::lock_guard lock(g_dialogMutex);
+ if (g_status == SAVE_DATA_DIALOG_STATUS_NONE) {
+  return SAVE_DATA_DIALOG_OK;
+ }
  g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;
 }
