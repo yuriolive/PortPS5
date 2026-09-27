@@ -10,10 +10,6 @@ jobs:
   build_and_test:
     name: Build & Test (MinGW GCC 15.2)
     runs-on: windows-latest
-    env:
-      CCACHE_DIR: "${{ runner.temp }}/ccache"
-      CCACHE_BASEDIR: "${{ github.workspace }}"
-      CCACHE_MAXSIZE: "1G"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,6 +44,13 @@ jobs:
         shell: pwsh
         run: |
           "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure ccache environment
+        shell: pwsh
+        run: |
+          "CCACHE_DIR=$env:RUNNER_TEMP\ccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CCACHE_BASEDIR=$env:GITHUB_WORKSPACE" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CCACHE_MAXSIZE=1G" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Cache ccache
         uses: actions/cache@v4
