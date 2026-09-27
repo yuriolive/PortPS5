@@ -8,10 +8,17 @@
 - Function argument names use camelCase.
 - Template parameter names follow the C# style: `TKey`, `TValue`, `TIterator`.
 
----
+### Comments
 
-Comments in code can only be added to indicate areas of [technical debt](TechnicalDebt.md) (only by a human), the end of `#endif`, and the end of namespace.
+- Comment **why, not what**. Code describes the mechanism; comments explain intent, rationale, constraints, and non-obvious invariants.
+- Each hand-encoded byte sequence, magic constant, hardware register offset, and ABI-boundary hack must have a one-line comment explaining the reason.
+- Areas of technical debt point to [TechnicalDebt.md](TechnicalDebt.md).
+- `#endif` and closing namespace braces may include trailing comments indicating their match.
 
-[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)
+### Git Commits
 
-There's no need to add image files to the repository. You can add images to the [gist](https://gist.github.com/boykopovar/0e53f2e1426f29ecd41e3b51540b8a90) comments and paste a link into the md file.
+Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`feat(...)`, `fix(...)`, `chore(...)`, `docs(...)`, etc.). The subject line is at most 72 characters; the commit body explains why.
+
+### Assets and Images
+
+Do not add binary image files to the repository. Reference external links or issue discussions when visual evidence is necessary.
