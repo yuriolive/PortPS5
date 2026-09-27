@@ -427,4 +427,22 @@ if(BUILD_TESTING)
 
     get_property(ALL_LIB_TESTS DIRECTORY PROPERTY TESTS)
     set_property(TEST ${ALL_LIB_TESTS} PROPERTY LABELS "unit")
+# --- slice audio: test registration ---
+add_executable(audio_out2_tests tests/AudioOut2.cpp)
+target_include_directories(audio_out2_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
+target_link_libraries(audio_out2_tests PRIVATE libSceAudioOut libc)
+configure_windows_unwind(audio_out2_tests)
+portps5_add_test(audio_out2 audio_out2_tests)
+add_executable(audio_ajm_tests tests/AudioAjm.cpp)
+target_include_directories(audio_ajm_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(audio_ajm_tests PRIVATE libSceAjm.native libc)
+configure_windows_unwind(audio_ajm_tests)
+portps5_add_test(audio_ajm audio_ajm_tests)
+
+# --- slice offline: test registration ---
+add_executable(offline_stubs_tests tests/OfflineStubs.cpp)
+target_include_directories(offline_stubs_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(offline_stubs_tests PRIVATE libSceNpManager libSceNpAuth libSceNpWebApi2 libSceNpCommerce libSceNpEntitlementAccess libSceNpSessionSignaling libSceNpGameIntent libSceNpTrophy2 libSceNpUniversalDataSystem libSceUserService libSceSystemService libSceMsgDialog libSceSaveDataDialog.native libSceCommonDialog libScePad libkernel libc)
+configure_windows_unwind(offline_stubs_tests)
+portps5_add_test(offline_stubs offline_stubs_tests)
 endif()

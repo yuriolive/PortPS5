@@ -1,9 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <stdexcept>
-#include <chrono>
-#include <thread>
+#include <exception>
 
 #include "SceTypes.hpp"
 #include "prx//libc/include/General.hpp"
@@ -12,29 +10,29 @@
 
 extern "C" {
 
-int APS5_VABI scePadClose_nid_postfix(int handle) {
+int APS5_VABI scePadClose_nid_postfix(int handle) noexcept {
  if (handle != PAD_HANDLE) {
   return PAD_ERROR_INVALID_HANDLE;
  }
  return PAD_OK;
 }
 
-int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) {
+int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) noexcept {
  (void)handle;
  (void)info;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ // Why abort: device-class extended info needs the M2 InputHub (XInput /
+ // DualSense); no offline default exists, so the gap stays loud.
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* class_data) {
+int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* class_data) noexcept {
  (void)handle;
  (void)data;
  (void)class_data;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformation* info) {
+int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformation* info) noexcept {
  if (handle != PAD_HANDLE) {
   return PAD_ERROR_INVALID_HANDLE;
  }
@@ -54,27 +52,31 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  return PAD_OK;
 }
 
-int APS5_VABI scePadGetHandle(int user_id, int type, int index) {
+int APS5_VABI scePadGetHandle(int user_id, int type, int index) noexcept {
  (void)user_id;
  (void)type;
  (void)index;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) {
+int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) noexcept {
  (void)handle;
  (void)info;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadInit_nid_postfix(void) {
- Pad::Initialize();
+int APS5_VABI scePadInit_nid_postfix(void) noexcept {
+ try {
+  Pad::Initialize();
+ } catch (const std::exception&) {
+  // Why abort: input failure means the VideoOut driver failed; no offline
+  // default exists, so the gap stays loud instead of returning wrong input.
+  Unsupported("scePadInit: input failure");
+ }
  return PAD_OK;
 }
 
-int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param) {
+int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void* param) noexcept {
  (void)param;
  if (index != 0) {
   return PAD_ERROR_INVALID_ARG;
@@ -87,90 +89,91 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  return PAD_HANDLE;
 }
 
-int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) {
- (void)handle;
- (void)data;
- (void)num;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+int APS5_VABI scePadReadState(int handle, PadData* data) noexcept;
+
+int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) noexcept {
+ // Why one state per call: the title drains queued states; PR #5 reports one
+ // current state per call so boot never blocks waiting for input.
+ if (data == nullptr || num <= 0) {
+  return PAD_ERROR_INVALID_ARG;
+ }
+ const int result = scePadReadState(handle, data);
+ if (result != 0) {
+  return result;
+ }
+ return 1;
 }
 
-int APS5_VABI scePadReadState(int handle, PadData* data) {
- if (handle != 1) APS5_INVALID_ARG_EX;
- if (data == nullptr) APS5_INVALID_ARG_EX;
-
- *data = Pad::ReadState();
-
- return 0;
-}
-
-int APS5_VABI scePadResetLightBar(int handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI scePadResetOrientation(int handle) {
- (void)handle;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) {
- (void)handle;
- (void)enable;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) {
- (void)handle;
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI scePadSetMotionSensorState(int handle, bool enable) {
- (void)handle;
- (void)enable;
- // if (enable) {
- //  throw std::runtime_error("scePadSetMotionSensorState: motion sensor not supported");
- // }
+int APS5_VABI scePadReadState(int handle, PadData* data) noexcept {
+ if (handle != PAD_HANDLE) {
+  return PAD_ERROR_INVALID_HANDLE;
+ }
+ if (data == nullptr) {
+  return PAD_ERROR_INVALID_ARG;
+ }
+ try {
+  *data = Pad::ReadState();
+ } catch (const std::exception&) {
+  Unsupported("scePadReadState: input failure");
+ }
  return PAD_OK;
 }
 
-int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) {
+int APS5_VABI scePadResetLightBar(int handle) noexcept {
+ (void)handle;
+ Unsupported(__func__);
+}
+
+int APS5_VABI scePadResetOrientation(int handle) noexcept {
+ (void)handle;
+ Unsupported(__func__);
+}
+
+int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) noexcept {
+ (void)handle;
+ (void)enable;
+ Unsupported(__func__);
+}
+
+int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) noexcept {
+ (void)handle;
+ (void)param;
+ Unsupported(__func__);
+}
+
+int APS5_VABI scePadSetMotionSensorState(int handle, bool enable) noexcept {
+ (void)handle;
+ (void)enable;
+ return PAD_OK;
+}
+
+int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) noexcept {
  (void)handle;
  (void)enabled;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) {
+int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) noexcept {
  (void)handle;
  (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) {
+int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) noexcept {
  (void)handle;
  (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadSetVibrationMode(int handle, int mode) {
+int APS5_VABI scePadSetVibrationMode(int handle, int mode) noexcept {
  (void)handle;
  (void)mode;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
-int APS5_VABI scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool enabled) {
+int APS5_VABI scePadSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse(bool enabled) noexcept {
  (void)enabled;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ Unsupported(__func__);
 }
 
 }

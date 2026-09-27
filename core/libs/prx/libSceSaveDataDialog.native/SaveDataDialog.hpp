@@ -12,6 +12,9 @@ constexpr int SAVE_DATA_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000D);
 
 constexpr int SAVE_DATA_DIALOG_STATUS_NONE = 0;
 constexpr int SAVE_DATA_DIALOG_STATUS_INITIALIZED = 1;
+// Why RUNNING: M1 completes on UpdateStatus, not in Open, so titles polling
+// see RUNNING -> FINISHED (docs/spec/save-data.md scripted dialogs).
+constexpr int SAVE_DATA_DIALOG_STATUS_RUNNING = 2;
 constexpr int SAVE_DATA_DIALOG_STATUS_FINISHED = 3;
 
 constexpr int SAVE_DATA_DIALOG_RESULT_OK = 0;

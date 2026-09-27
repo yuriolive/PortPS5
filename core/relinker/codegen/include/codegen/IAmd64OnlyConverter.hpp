@@ -2,6 +2,7 @@
 #define CODEGEN_IAMD64ONLYCONVERTER_HPP
 
 #include <codegen/CodegenTypes.hpp>
+#include <domain/CodeMap.hpp>
 #include <domain/Types.hpp>
 #include <memory>
 #include <vector>
@@ -14,7 +15,8 @@ public:
 
     [[nodiscard]] virtual ConvertResult Convert(
         std::vector<std::uint8_t> fileBytes,
-        const std::vector<Domain::ProgramHeader>& codeSegments
+        const std::vector<Domain::ProgramHeader>& codeSegments,
+        const Domain::CodeMap& codeMap
     ) const = 0;
 };
 

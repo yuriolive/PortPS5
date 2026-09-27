@@ -25,6 +25,10 @@ public:
 }
 
 std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers) const {
+    return CollectDetailed(bytes, headers).Starts;
+}
+
+CollectedCode CodeInstructionCollector::CollectDetailed(const std::vector<std::uint8_t>& bytes, const std::vector<Domain::ProgramHeader>& headers) const {
     const auto range = [&](std::uint64_t offset, std::uint64_t size) {
         if (offset > bytes.size() || size > bytes.size() - offset) throw Domain::RelinkerException("Code analysis: file range exceeds image", offset);
     };
@@ -219,7 +223,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             break;
         }
     }
-    return instructions;
+    return {instructions, functions};
 }
 
 }
