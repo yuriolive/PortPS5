@@ -1,0 +1,173 @@
+# GitHub CodeQL — Static Analysis Security Testing (SAST)
+#
+# Runs on every push to main and every pull request, including those from
+# forks, using only the ephemeral GITHUB_TOKEN (no external secrets needed).
+# Results appear in the GitHub Security → Code scanning alerts tab.
+#
+# CodeQL's C/C++ engine builds a semantic model of the source (call graph,
+# dataflow, type hierarchy) and queries it for: buffer overflows, integer
+# overflows, use-after-free, format-string injections, uninitialized reads,
+# and other CWE-classified vulnerabilities. This is the right level of
+# analysis for a low-level relinker/emulator codebase rather than an
+# SCA/package scanner like Snyk (which targets web-ecosystem CVE databases).
+#
+# The analysis intentionally targets only the source files we write (core/,
+# tools/) and skips third-party submodules (SDL2, Vulkan-Headers, glslang,
+# SPIRV-Tools, LibAtrac9, VulkanMemoryAllocator, tomlplusplus). Those are
+# controlled by pinned commits and verified by checksum; scanning them would
+# produce third-party noise we cannot fix.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly full scan on Monday at 08:00 UTC so that new CodeQL query packs
+    # surface vulnerabilities even when no code changes land that week.
+    - cron: '0 8 * * 1'
+
+jobs:
+  analyze:
+    name: CodeQL C/C++ Analysis
+    runs-on: windows-2022
+    # CodeQL needs read on contents to checkout and write on security-events
+    # to upload SARIF results. Both are available on public repos via the
+    # automatic GITHUB_TOKEN — no personal token or external secret required.
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Cache git submodules
+        uses: actions/cache@v4
+        with:
+          path: .git/modules
+          key: submodules-${{ runner.os }}-${{ hashFiles('.gitmodules') }}
+          restore-keys: |
+            submodules-${{ runner.os }}-
+
+      - name: Update submodules
+        shell: pwsh
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      # ── Toolchain ──────────────────────────────────────────────────────────
+      # CodeQL builds the project using the same MinGW toolchain as CI so
+      # that its compilation database and IR match what ships. The toolchain
+      # pin lives in cmake/toolchains/mingw-gcc15.sha256 and is verified by
+      # the same checksum logic as the main CI job.
+
+      - name: Cache MinGW toolchain
+        id: cache-mingw
+        uses: actions/cache@v4
+        with:
+          path: C:\mingw64
+          key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
+
+      - name: Download and verify MinGW-w64 GCC 15.2
+        if: steps.cache-mingw.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $expectedSha = (Get-Content cmake/toolchains/mingw-gcc15.sha256 | Select-String -Pattern '^[0-9a-f]{64}').Matches.Value
+          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.7z"
+          $archive = "$env:TEMP\winlibs.7z"
+          Write-Host "Downloading MinGW GCC 15.2 from $url..."
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha -ne $expectedSha) {
+              throw "Checksum mismatch — Expected: $expectedSha, got: $actualSha"
+          }
+          Write-Host "Checksum verified. Extracting..."
+          7z x $archive -oC:\ -y
+          Remove-Item $archive
+
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: |
+          "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # ── CodeQL ─────────────────────────────────────────────────────────────
+      # The init step registers the language and creates the CodeQL database
+      # directory. The "build" step compiles the project normally; CodeQL
+      # intercepts the compiler invocations to extract semantic data. The
+      # analyze step runs the suite and uploads SARIF to GitHub.
+      #
+      # Query suite: security-extended includes all security queries in the
+      # standard suite plus additional experimental queries for C/C++. It
+      # covers the OWASP Top 10, CWE/SANS Top 25, and CERT C rules.
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          # security-extended adds pointer arithmetic, numeric overflow, and
+          # format-string injection queries on top of the default security suite.
+          queries: security-extended
+          # Skip third-party submodule directories. CodeQL still sees their
+          # headers when resolving includes during the project build, but it
+          # does not create alerts for code we do not maintain.
+          config: |
+            paths-ignore:
+              - 3rdparty/
+              - SDL2/
+              - Vulkan-Headers/
+              - SPIRV-Headers/
+              - SPIRV-Tools/
+              - glslang/
+              - VulkanMemoryAllocator/
+              - LibAtrac9/
+
+      - name: Build project for CodeQL
+        shell: pwsh
+        run: |
+          # ANYPS5_ENABLE_SPIRV_TOOLS=OFF excludes SPIRV-Tools, glslang and
+          # related third-party submodules from the build entirely. CodeQL
+          # intercepts compiler invocations to build its semantic database;
+          # paths-ignore in the init config filters *alerts* at analysis time
+          # but cannot prevent CodeQL from extracting sources that were
+          # actually compiled. Disabling the SPIRV-Tools build is the only
+          # reliable way to ensure third-party code never enters the database.
+          # The shader recompiler and core/ sources that call into SPIRV-Tools
+          # are still compiled and analysed — only the SPIRV-Tools library
+          # itself is omitted.
+          #
+          # BUILD_TESTING=OFF skips test binary compilation; test sources
+          # share the same code paths as production targets and add no
+          # analysis value.
+          #
+          # CMAKE_BUILD_TYPE=Release instead of RelWithDebInfo: CodeQL
+          # extracts semantic data (AST, call graph, dataflow) at compiler
+          # IR level — before code generation and before debug-info emission.
+          # DWARF/PDB generation is wasted time in the CodeQL context and
+          # skipping it noticeably reduces build duration. Release optimisations
+          # also expose more dataflow paths for CodeQL's taint-tracking queries.
+          #
+          # ccache is intentionally NOT used: CodeQL works by intercepting
+          # compiler invocations live. A ccache hit bypasses the real compiler,
+          # so CodeQL sees no AST for that translation unit and its database
+          # entry for the file stays empty. Every file must be compiled fresh.
+          cmake --preset ci `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER_LAUNCHER="" `
+            -DCMAKE_CXX_COMPILER_LAUNCHER="" `
+            -DANYPS5_ENABLE_SPIRV_TOOLS=OFF `
+            -DBUILD_TESTING=OFF
+          cmake --build --preset ci
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:c-cpp
+          # Upload SARIF to GitHub Security tab. On public repositories this
+          # is free and unlimited; alerts appear inline on pull requests.
+          upload: true

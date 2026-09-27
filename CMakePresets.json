@@ -43,6 +43,22 @@
       "cacheVariables": {
         "PORTPS5_COMPILE_WARNING_AS_ERROR": "ON"
       }
+    },
+    {
+      "name": "asan",
+      "displayName": "ASan / UBSan (local / Linux only)",
+      "description": "Local developer preset: AddressSanitizer + UndefinedBehaviorSanitizer. Not run in CI: the project links executables with -static globally (CMakeLists.txt line 1), and LLVM ASan requires a shared runtime that cannot be injected into a statically linked binary. Additionally, MinGW-w64 GCC does not ship libasan/libubsan for Windows. Use this preset on Linux/WSL with GCC's native libasan, or revisit when the project moves to dynamic linking for test binaries.",
+      "inherits": "ci",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined"
+      },
+      "environment": {
+        "ASAN_OPTIONS": "halt_on_error=1:abort_on_error=1:print_stats=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
+      }
     }
   ],
   "buildPresets": [
@@ -61,6 +77,10 @@
     {
       "name": "ci",
       "configurePreset": "ci"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
     }
   ],
   "testPresets": [
@@ -99,6 +119,20 @@
       "configurePreset": "dev",
       "output": {
         "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "ASan / UBSan Unit Tests",
+      "description": "Runs unit-labeled tests under AddressSanitizer and UndefinedBehaviorSanitizer. Any heap buffer overflow, use-after-free, or undefined behaviour terminates the test immediately with a full stack trace. Run locally with: cmake --preset asan && cmake --build --preset asan && ctest --preset asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
       }
     }
   ]
