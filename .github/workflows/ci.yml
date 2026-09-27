@@ -59,6 +59,8 @@ jobs:
         shell: pwsh
         run: |
           "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # WinLibs curl has no bundled CA certificates; pinned SHA256 hashes ensure integrity
+          "CMAKE_TLS_VERIFY=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure ccache environment
         shell: pwsh
