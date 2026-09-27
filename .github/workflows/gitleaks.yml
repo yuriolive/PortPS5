@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Fetch full history so that Gitleaks can scan all commits in a
           # push, not just the tip. Without this, a key committed and
@@ -44,7 +44,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           # GITHUB_TOKEN is used only to annotate the PR with a summary
           # comment when a finding is detected. It is the automatic token,
@@ -52,7 +52,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # GITLEAKS_LICENSE is required only for private repositories.
           # This is a public repository; leave it unset.
-        with:
           # Point to the project-specific config that adds Sony-specific
           # patterns on top of Gitleaks's built-in ruleset.
-          config-path: .github/gitleaks.toml
+          GITLEAKS_CONFIG: .github/gitleaks.toml

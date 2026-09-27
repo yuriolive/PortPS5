@@ -107,7 +107,7 @@ jobs:
       # covers the OWASP Top 10, CWE/SANS Top 25, and CERT C rules.
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: c-cpp
           # security-extended adds pointer arithmetic, numeric overflow, and
@@ -165,7 +165,7 @@ jobs:
           cmake --build --preset ci
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: /language:c-cpp
           # Upload SARIF to GitHub Security tab. On public repositories this
