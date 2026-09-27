@@ -29,6 +29,10 @@ on:
     # surface vulnerabilities even when no code changes land that week.
     - cron: '0 8 * * 1'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: CodeQL C/C++ Analysis
