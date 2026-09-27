@@ -35,6 +35,7 @@ For complete rules, see [.agents/rules/legal-boundary.md](.agents/rules/legal-bo
 - **[Roadmap to 1.0](docs/ROADMAP.md):** Phased milestones (M0–M6) with measurable exit criteria.
 - **[Subsystem Specifications](docs/spec/README.md):** Technical specs for relinker, shader recompiler, GPU driver, memory, threading, audio, input, and verification.
 - **[Agent & Contributor Rules](AGENTS.md):** Canonical guide for developers and AI agents (Claude Code, opencode, Antigravity).
+- **[Contributing Guide](CONTRIBUTING.md):** Community contribution workflow, pull requests, and verification.
 
 ---
 
