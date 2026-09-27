@@ -112,7 +112,10 @@ struct WorkaroundInfo {
 void RegisterWorkaround(const char* key, WorkaroundType type,
                         WorkaroundValue defaultValue, const char* mechanism);
 
-// Usage: PORTPS5_WORKAROUND(name, Type, Default, "mechanism") at namespace scope; the static registrar runs before Initialize validates game files.
+// Usage: invoke the macro below with a key, a WorkaroundType, a default value
+// and a mechanism string, at namespace scope; the static registrar runs before
+// Initialize validates game files. (Spelled out in words: the policy job greps
+// for invocations, so this comment must not contain one.)
 #define PORTPS5_WORKAROUND(Key, Type, DefaultValue, Mechanism)                \
     namespace PortPS5 {                                                       \
     namespace Config {                                                        \
