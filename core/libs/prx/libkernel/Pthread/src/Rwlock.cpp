@@ -246,19 +246,8 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) noexcept {
             std::uint64_t expected = w;
             if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                             std::memory_order_acquire)) {
-                // Clear stale waiter flags now that the lock is free: the
-                // woken threads re-queue if they still must wait, so no
-                // wakeup is lost and flags do not stick forever.
-                std::uint64_t cur = ref.load(std::memory_order_acquire);
-                while ((cur & (RW::kWritersWaiting | RW::kReadersWaiting)) != 0) {
-                    std::uint64_t exp2 = cur;
-                    const std::uint64_t cleared =
-                        cur & ~(RW::kWritersWaiting | RW::kReadersWaiting);
-                    if (ref.compare_exchange_strong(exp2, cleared, std::memory_order_acq_rel,
-                                                    std::memory_order_acquire))
-                        break;
-                    cur = exp2;
-                }
+                // Writer-waiting flag is preserved across unlock so waking writers
+                // maintain priority over incoming readers (preventing starvation).
                 if (queued)
                     FutexCore::WakeAll(WordPtr(rwlock));
                 return kSceOk;

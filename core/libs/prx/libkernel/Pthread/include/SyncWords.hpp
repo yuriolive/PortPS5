@@ -136,7 +136,7 @@ struct RwlockWord {
     static constexpr unsigned kWriterTidShift = 32;
     static constexpr Storage kWriterTidMask = 0xFFFFFFULL << kWriterTidShift;
     static constexpr Storage kReadersMask = 0x3FFFFFFFULL;  // 30 bits.
-    static constexpr std::uint32_t kMaxReaders = 1u << 30;  // saturates, then EAGAIN.
+    static constexpr std::uint32_t kMaxReaders = (1u << 30) - 1;  // saturates, then EAGAIN.
     static constexpr Storage kDestroyedWord = kInit | kDestroyed;
 
     static constexpr Storage Make(bool writer, std::uint32_t writerTid, std::uint32_t readers,

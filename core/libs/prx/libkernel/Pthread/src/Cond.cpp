@@ -12,10 +12,6 @@
 
 namespace {
 
-// Diagnostics: no-ops in release/dev builds.
-#define TC(...) ((void)0)
-#define TD() ((void)0)
-
 using SyncWords::kSceEbusy;
 using SyncWords::kSceEinval;
 using SyncWords::kSceEperm;
@@ -66,19 +62,17 @@ int CheckHeldMutex(PthreadMutex* mutex, std::uint32_t tid, HeldMutex& out) noexc
 
 // Fully unlock for cond wait (clear owner + recursion, keep type). Wake one
 // waiter if the mutex itself was contended, mirroring Mutex.cpp unlock.
-void MutexUnlockForWait(PthreadMutex* mutex, const HeldMutex& held) noexcept {
+void MutexUnlockForWait(PthreadMutex* mutex, const HeldMutex& held, std::uint32_t tid) noexcept {
     auto ref = MutexRef(mutex);
     while (true) {
         const std::uint64_t w = ref.load(std::memory_order_acquire);
-        if (!MW::IsInit(w) || MW::IsDestroyed(w) || MW::Owner(w) == 0)
+        if (!MW::IsInit(w) || MW::IsDestroyed(w) || MW::Owner(w) != tid)
             return;
-        const bool hadWaiters = MW::IsContended(w);
         const std::uint64_t desired = MW::Make(held.type, 0, 0, false);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
-            if (hadWaiters)
-                FutexCore::WakeSingle(MutexPtr(mutex));
+            FutexCore::WakeSingle(MutexPtr(mutex));
             return;
         }
     }
@@ -131,10 +125,8 @@ int MutexRelockAfterWait(PthreadMutex* mutex, const HeldMutex& held, std::uint32
                 return kSceOk;
             continue;
         }
-        if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline) {
-            TC("mTO0", w);
+        if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
             return kSceTimedOut;
-        }
         const std::uint64_t withContended = w | MW::kContended;
         if (w != withContended) {
             std::uint64_t expected = w;
@@ -148,12 +140,8 @@ int MutexRelockAfterWait(PthreadMutex* mutex, const HeldMutex& held, std::uint32
             continue;
         if (MW::Owner(expect) == 0 || MW::Owner(expect) == tid)
             continue;
-        TC("mSlp", expect);
-        if (!FutexCore::WaitU64(MutexPtr(mutex), expect, deadline)) {
-            TC("mTO2", expect);
+        if (!FutexCore::WaitU64(MutexPtr(mutex), expect, deadline))
             return kSceTimedOut;
-        }
-        TC("mWk", ref.load(std::memory_order_acquire));
     }
 }
 
@@ -203,12 +191,11 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
         std::uint64_t expected = cw;
         if (cref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                          std::memory_order_acquire)) {
-            TC("wait+1", want);
             break;
         }
     }
 
-    MutexUnlockForWait(mutex, held);
+    MutexUnlockForWait(mutex, held, tid);
 
     // Wait while seq is unchanged. A wake with only non-seq bits changed
     // (e.g. a concurrent destroy flag, which we already reject) waits again
@@ -224,21 +211,15 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
             break;
         if (hasDeadline && FutexCore::NowNanos() >= deadline) {
             waitRc = kSceTimedOut;
-            TC("timeout", cur);
-            TD();
             break;
         }
         // Decrement our waiter slot on timeout/invalid before relocking, so
         // Signal's waiters==0 fast path stays accurate. On success the
         // signal/broadcast already dequeued us (signal decrements, broadcast
         // zeroes), so only adjust when we leave without a seq change.
-        TC("sleep", cur);
         const bool woken = FutexCore::WaitU64(CondPtr(cond), cur, deadline);
-        TC(woken ? "wake" : "wakeTO", cref.load(std::memory_order_acquire));
         if (!woken) {
             waitRc = kSceTimedOut;
-            TC("timeout", cur);
-            TD();
             break;
         }
     }
@@ -271,7 +252,6 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
     // the mutex is untimed; the timeout only bounded waiting on the condition.
     const int relock = MutexRelockAfterWait(mutex, held, tid, FutexCore::kInfinite);
     if (relock != kSceOk) {
-        TC("relFail", static_cast<std::uint64_t>(static_cast<std::uint32_t>(relock)));
         return (waitRc == kSceOk) ? relock : waitRc;
     }
     return waitRc;
@@ -320,7 +300,10 @@ int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) noexcept {
 int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
-    (*attr)->_clockid = static_cast<int>(clockId);
+    const int clk = static_cast<int>(clockId);
+    if (clk < 0 || clk > 13)
+        return kSceEinval;
+    (*attr)->_clockid = clk;
     return kSceOk;
 }
 
@@ -384,7 +367,6 @@ int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept {
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
-            TC("signal", want);
             FutexCore::WakeSingle(CondPtr(cond));
             return kSceOk;
         }

@@ -37,10 +37,13 @@ constexpr int kOpRwUnlock = 14;
 constexpr int kOpWaitUintPrivate = 15;
 constexpr int kOpWakePrivate = 16;
 constexpr int kOpMutexWait = 17;
-constexpr int kOpNwakePrivate = 18;
-constexpr int kOpMutexLock2 = 19;
-constexpr int kOpSem2Wait = 20;
-constexpr int kOpSem2Wake = 21;
+constexpr int kOpMutexWake = 18;
+constexpr int kOpSemWait = 19;
+constexpr int kOpSemWake = 20;
+constexpr int kOpNwakePrivate = 21;
+constexpr int kOpMutexLock2 = 22;
+constexpr int kOpSem2Wait = 23;
+constexpr int kOpSem2Wake = 24;
 
 // 32-bit umutex owner word: bit 31 CONTESTED, low 24 owner tid.
 constexpr std::uint32_t kUmutexContested = 1u << 31;
@@ -190,33 +193,72 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         return SyncWords::kSceOk;
     }
     case kOpWake:
-    case kOpWakePrivate: {
+    case kOpWakePrivate:
+    case kOpMutexWake: {
         if (!obj)
             return SyncWords::kSceEinval;
-        // val==0 wakes all; otherwise wake-N via repeated single wakes
-        // (WakeByAddressSingle wakes one waiter per call).
-        if (val == 0) {
-            FutexCore::WakeAll(obj);
+        if (val == 0)
             return SyncWords::kSceOk;
-        }
-        for (std::uint64_t i = 0; i < val; ++i)
+        const std::uint64_t wakeCount = std::min<std::uint64_t>(val, 1024ULL);
+        for (std::uint64_t i = 0; i < wakeCount; ++i)
             FutexCore::WakeSingle(obj);
         return SyncWords::kSceOk;
     }
     case kOpNwakePrivate: {
         if (!obj)
             return SyncWords::kSceEinval;
-        for (std::uint64_t i = 0; i < val; ++i)
-            FutexCore::WakeSingle(obj);
+        if (val == 0)
+            return SyncWords::kSceOk;
+        auto* addresses = static_cast<void* const*>(obj);
+        const std::uint64_t count = std::min<std::uint64_t>(val, 1024ULL);
+        for (std::uint64_t i = 0; i < count; ++i) {
+            if (addresses[i])
+                FutexCore::WakeAll(addresses[i]);
+        }
         return SyncWords::kSceOk;
     }
     case kOpMutexLock:
     case kOpMutexLock2:
-    case kOpLock:
+    case kOpLock: {
+        if (!obj)
+            return SyncWords::kSceEinval;
+        std::uint64_t deadline = FutexCore::kInfinite;
+        if (uaddr) {
+            const auto* ts = static_cast<const KernelTimespec*>(uaddr);
+            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL)
+                deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, false);
+        }
+        return UmutexLock(static_cast<std::uint32_t*>(obj), tid, deadline);
+    }
     case kOpMutexWait: {
         if (!obj)
             return SyncWords::kSceEinval;
-        return UmutexLock(static_cast<std::uint32_t*>(obj), tid, FutexCore::kInfinite);
+        std::uint64_t deadline = FutexCore::kInfinite;
+        if (uaddr) {
+            const auto* ts = static_cast<const KernelTimespec*>(uaddr);
+            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL)
+                deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, false);
+        }
+        // Wait-only: sleep until mutex is available without acquiring it.
+        auto* w = static_cast<std::uint32_t*>(obj);
+        std::atomic_ref<std::uint32_t> ref(*w);
+        while (true) {
+            const std::uint32_t valCurrent = ref.load(std::memory_order_acquire);
+            if ((valCurrent & kUmutexOwnerMask) == 0)
+                return SyncWords::kSceOk;
+            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+                return SyncWords::kSceTimedOut;
+            if ((valCurrent & kUmutexContested) == 0) {
+                std::uint32_t expected = valCurrent;
+                ref.compare_exchange_strong(expected, valCurrent | kUmutexContested,
+                                            std::memory_order_acq_rel, std::memory_order_acquire);
+            }
+            const std::uint32_t expect = ref.load(std::memory_order_acquire);
+            if ((expect & kUmutexOwnerMask) == 0)
+                return SyncWords::kSceOk;
+            if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(w), expect, deadline))
+                return SyncWords::kSceTimedOut;
+        }
     }
     case kOpMutexTrylock: {
         if (!obj)

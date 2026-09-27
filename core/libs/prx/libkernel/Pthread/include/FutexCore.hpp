@@ -39,7 +39,8 @@ inline std::uint64_t NowNanos() noexcept {
     }();
     LARGE_INTEGER c{};
     QueryPerformanceCounter(&c);
-    return static_cast<std::uint64_t>(c.QuadPart) * 1000000000ULL / freq;
+    const std::uint64_t ticks = static_cast<std::uint64_t>(c.QuadPart);
+    return (ticks / freq) * 1000000000ULL + (ticks % freq) * 1000000000ULL / freq;
 }
 
 // Wall-clock nanos since the Unix epoch, for REALTIME absolute deadlines.
@@ -55,10 +56,12 @@ inline std::uint64_t RealtimeNanos() noexcept {
 // When monotonic, abstime shares the boot origin with QPC, so it maps
 // directly; when realtime, remaining = abstime - wallNow, added to QPC now.
 inline std::uint64_t AbsoluteToDeadline(std::int64_t sec, std::int64_t nsec, bool monotonic) noexcept {
-    if (sec < 0 || nsec < 0 || nsec >= 1000000000LL)
-        return 0;  // Invalid; caller returns EINVAL before waiting.
+    if (sec < 0 || sec > 18446744073LL || nsec < 0 || nsec >= 1000000000LL)
+        return 0;  // Invalid or overflow; caller returns EINVAL before waiting.
     const std::uint64_t absNanos =
         static_cast<std::uint64_t>(sec) * 1000000000ULL + static_cast<std::uint64_t>(nsec);
+    if (absNanos == kInfinite)
+        return kInfinite - 1;  // Reserve kInfinite as the no-deadline sentinel.
     if (monotonic)
         return absNanos;
     const std::uint64_t wall = RealtimeNanos();
@@ -169,11 +172,14 @@ inline std::uint64_t RealtimeNanos() noexcept {
 }
 
 inline std::uint64_t AbsoluteToDeadline(std::int64_t sec, std::int64_t nsec, bool monotonic) noexcept {
-    (void)monotonic;
-    if (sec < 0 || nsec < 0 || nsec >= 1000000000LL)
+    if (sec < 0 || sec > 18446744073LL || nsec < 0 || nsec >= 1000000000LL)
         return 0;
     const std::uint64_t absNanos =
         static_cast<std::uint64_t>(sec) * 1000000000ULL + static_cast<std::uint64_t>(nsec);
+    if (absNanos == kInfinite)
+        return kInfinite - 1;
+    if (monotonic)
+        return absNanos;
     const std::uint64_t wall = RealtimeNanos();
     const std::uint64_t now = NowNanos();
     if (absNanos <= wall)
@@ -198,12 +204,15 @@ inline bool WaitOnce(volatile void* addr, const void* expected, std::size_t size
     (void)size;
     if (deadline != kInfinite && NowNanos() >= deadline)
         return false;
-    if (deadline == kInfinite)
+    if (deadline == kInfinite) {
         std::this_thread::yield();
-    else if (deadline - NowNanos() >= 1000000ULL)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    else
-        std::this_thread::yield();
+    } else {
+        const std::uint64_t now = NowNanos();
+        if (now < deadline && deadline - now >= 1000000ULL)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        else
+            std::this_thread::yield();
+    }
     if (deadline != kInfinite && NowNanos() >= deadline)
         return false;
     return true;

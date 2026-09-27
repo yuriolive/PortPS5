@@ -124,9 +124,9 @@ int LockInternal(PthreadMutex* slot, std::uint64_t deadline) noexcept {
                     return kSceOk;
                 continue;
             }
-            // Unlocked but CONTENDED flag stale (waker cleared owner but a
-            // waiter already queued): steal it with CAS to locked.
-            const std::uint64_t desired = MW::Make(type, tid, 0, false);
+            // Unlocked but CONTENDED flag set (waiters queued): steal it with
+            // CAS to locked, preserving CONTENDED so the next unlock wakes them.
+            const std::uint64_t desired = MW::Make(type, tid, 0, true);
             if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
                                             std::memory_order_acquire))
                 return kSceOk;
@@ -337,14 +337,17 @@ int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) noexcept {
     const std::uint32_t owner = MW::Owner(w);
     if (owner == tid) {
         if (type == MW::kRecursive) {
-            const std::uint32_t rec = MW::RecStored(w);
-            if (rec == 0xFFFFu)
-                return kSceEagain;
-            const std::uint64_t desired = MW::Make(type, tid, rec + 1, MW::IsContended(w));
-            if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
-                                            std::memory_order_acquire))
-                return kSceOk;
-            return kSceEbusy;
+            while (true) {
+                const std::uint32_t rec = MW::RecStored(w);
+                if (rec == 0xFFFFu)
+                    return kSceEagain;
+                const std::uint64_t desired = MW::Make(type, tid, rec + 1, MW::IsContended(w));
+                if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
+                                                std::memory_order_acquire))
+                    return kSceOk;
+                if (!MW::IsInit(w) || MW::Type(w) != type || MW::Owner(w) != tid)
+                    return kSceEbusy;
+            }
         }
         return kSceEbusy;  // trylock on owned non-recursive: EBUSY (not EDEADLK).
     }

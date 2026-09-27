@@ -241,7 +241,6 @@ static void TestCondPingPong() {
     REQUIRE(scePthreadCondInit(c, nullptr, nullptr) == SCE_OK);
     constexpr int kRounds = 50000;
     std::atomic<int> turn{0};  // 0 = main signals, 1 = worker signals.
-    std::atomic<bool> stop{false};
     std::thread worker([&] {
         for (int i = 0; i < kRounds; ++i) {
             REQUIRE(scePthreadMutexLock(m) == SCE_OK);
@@ -265,7 +264,6 @@ static void TestCondPingPong() {
         REQUIRE(scePthreadMutexUnlock(m) == SCE_OK);
     }
     worker.join();
-    (void)stop;
     REQUIRE(scePthreadCondDestroy(c) == SCE_OK);
     REQUIRE(scePthreadMutexDestroy(m) == SCE_OK);
     std::printf("PASS cond ping-pong %d rounds\n", kRounds);
@@ -283,11 +281,13 @@ static void TestCondBroadcastStorm() {
     constexpr int kWaiters = 16, kGens = 200;
     std::atomic<int> gen{0};
     std::atomic<int> fails{0};
+    std::atomic<int> ready{0};
     std::vector<std::thread> ts;
     for (int w = 0; w < kWaiters; ++w) {
         ts.emplace_back([&, w] {
             int seen = 0;
             REQUIRE(scePthreadMutexLock(m) == SCE_OK);
+            ready.fetch_add(1, std::memory_order_release);
             while (seen < kGens) {
                 while (gen.load() == seen) {
                     const int rc = scePthreadCondTimedwait(c, m, 5000000);
@@ -299,8 +299,11 @@ static void TestCondBroadcastStorm() {
             REQUIRE(scePthreadMutexUnlock(m) == SCE_OK);
         });
     }
-    // Let waiters block on generation 0.
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Ensure all waiters have spawned, locked m, and queued up on c
+    while (ready.load(std::memory_order_acquire) != kWaiters) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     for (int g = 1; g <= kGens; ++g) {
         REQUIRE(scePthreadMutexLock(m) == SCE_OK);
         gen.store(g);
@@ -362,8 +365,27 @@ static void TestTids() {
     constexpr int kN = 16;
     std::vector<int> ids(kN, 0);
     std::vector<std::thread> ts;
-    for (int i = 0; i < kN; ++i)
-        ts.emplace_back([&, i] { ids[i] = scePthreadGetthreadid(); });
+    std::atomic<bool> hold{true};
+    for (int i = 0; i < kN; ++i) {
+        ts.emplace_back([&, i] {
+            ids[i] = scePthreadGetthreadid();
+            while (hold.load(std::memory_order_acquire))
+                std::this_thread::yield();
+        });
+    }
+    while (true) {
+        bool allSampled = true;
+        for (int id : ids) {
+            if (id == 0) {
+                allSampled = false;
+                break;
+            }
+        }
+        if (allSampled)
+            break;
+        std::this_thread::yield();
+    }
+    hold.store(false, std::memory_order_release);
     for (auto& t : ts)
         t.join();
     for (int id : ids)

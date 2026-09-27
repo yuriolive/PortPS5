@@ -72,9 +72,10 @@ struct PthreadPrivate {
 #endif
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;
+    std::size_t guardSize = 4096;
     std::atomic<bool> _finished;
     void* _retval;
-    bool _detached;
+    std::atomic<bool> _detached;
     std::mutex _join_mtx;
     std::condition_variable _join_cv;
     // Compact guest tid in [1, 2^24), allocated at thread entry and recycled
@@ -82,8 +83,8 @@ struct PthreadPrivate {
     // every futex word and the value scePthreadGetthreadid returns.
     std::uint32_t guestTid = 0;
     // Recorded, never applied (see above).
-    std::uint64_t affinityMask = 0;
-    int schedPriority = 700;
+    std::atomic<std::uint64_t> affinityMask = 0;
+    std::atomic<int> schedPriority = 700;
     char threadName[32] = {};
     std::mutex _name_mtx;
 

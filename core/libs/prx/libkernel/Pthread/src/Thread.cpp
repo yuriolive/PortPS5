@@ -127,7 +127,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) noexcept {
     finishThread(self, ret);
     // Detached threads recycle on exit; joinable threads transfer ownership
     // to join (which recycles after WaitForSingleObject).
-    if (self->_detached && self->guestTid != 0) {
+    if (self->_detached.load(std::memory_order_acquire) && self->guestTid != 0) {
         GuestTid::Recycle(self->guestTid);
         self->guestTid = 0;
     }
@@ -209,16 +209,20 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         return SCE_KERNEL_ERROR_EINVAL;
     if (attr && !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
-    auto p = std::make_unique<PthreadPrivate>();
-    if (!p)
+    std::unique_ptr<PthreadPrivate> p;
+    try {
+        p = std::make_unique<PthreadPrivate>();
+    } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
+    }
     bool detached = false;
     if (attr && *attr)
         detached = ((*attr)->_detachstate == DETACH_DETACHED);
-    p->_detached = detached;
+    p->_detached.store(detached, std::memory_order_release);
     p->stackSize = (attr && *attr) ? (*attr)->_stacksize : DEFAULT_STACK_SIZE;
-    p->schedPriority = (attr && *attr) ? (*attr)->_schedpriority : 700;
-    p->affinityMask = (attr && *attr) ? (*attr)->_affinity : 0;
+    p->guardSize = (attr && *attr) ? (*attr)->_guardsize : 4096;
+    p->schedPriority.store((attr && *attr) ? (*attr)->_schedpriority : 700, std::memory_order_release);
+    p->affinityMask.store((attr && *attr) ? (*attr)->_affinity : 0, std::memory_order_release);
     // Pre-allocate the compact tid for the child (cold path, without
     // touching the creator's thread_local). EAGAIN past 2^24 live threads.
     // Entry adopts it; join recycles it (joinable) or exit recycles it
@@ -228,8 +232,10 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (p->guestTid == 0)
         return SCE_KERNEL_ERROR_EAGAIN;
     std::promise<bool> start;
-    auto targs = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
-    if (!targs) {
+    std::unique_ptr<ThreadArgs> targs;
+    try {
+        targs = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
+    } catch (const std::bad_alloc&) {
         GuestTid::Recycle(p->guestTid);
         return SCE_KERNEL_ERROR_ENOMEM;
     }
@@ -479,7 +485,7 @@ int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) noexcept
     PthreadPrivate* self = thread ? thread : currentThread;
     if (!self)
         return SCE_KERNEL_ERROR_ESRCH;
-    self->affinityMask = mask;
+    self->affinityMask.store(mask, std::memory_order_release);
     return SCE_OK;
 }
 
@@ -501,7 +507,7 @@ int APS5_VABI scePthreadSetprio(Pthread thread, int prio) noexcept {
     PthreadPrivate* self = thread ? thread : currentThread;
     if (!self)
         return SCE_KERNEL_ERROR_ESRCH;
-    self->schedPriority = prio;
+    self->schedPriority.store(prio, std::memory_order_release);
 #ifdef _WIN32
     void* handle = self->nativeHandle ? self->nativeHandle : GetCurrentThread();
     // Never a realtime class: bands only (see MapPriorityToWin32).
