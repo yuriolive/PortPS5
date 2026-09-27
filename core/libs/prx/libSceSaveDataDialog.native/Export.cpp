@@ -31,7 +31,7 @@ static bool FindExistingSaveDir(char* outName, size_t outSize) {
         if (entry.is_directory(ec)) {
             if (ec) return false;
             auto name = entry.path().filename().string();
-            if (!name.empty() && name[0] != '.' && name[0] != '_') {
+            if (!name.empty() && name[0] != '.' && name[0] != '_' && name.size() < outSize) {
                 auto time = entry.last_write_time(ec);
                 if (ec) return false;
                 if (newestName.empty() || time > newestTime) {
@@ -123,14 +123,18 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept {
  }
  // Mode 5 (Load) or Mode 8 (List): find newest existing dir, or cancel if none (docs/spec/save-data.md)
  if (g_mode == 5 || g_mode == 8) {
+  const bool requestedNameValid = g_dir_name[0] != '\0' &&
+   std::strcmp(g_dir_name, ".") != 0 &&
+   std::strcmp(g_dir_name, "..") != 0 &&
+   std::strpbrk(g_dir_name, "/\\") == nullptr;
   bool found = false;
   if (g_dir_name[0] != '\0') {
    std::error_code ec;
-   if (std::filesystem::exists(std::filesystem::path("_sd") / g_dir_name, ec)) {
+   if (requestedNameValid && std::filesystem::is_directory(std::filesystem::path("_sd") / g_dir_name, ec) && !ec) {
     found = true;
    }
   }
-  if (!found) {
+  if (!found && (g_dir_name[0] == '\0' || requestedNameValid)) {
    found = FindExistingSaveDir(g_dir_name, sizeof(g_dir_name));
   }
   if (!found) {
