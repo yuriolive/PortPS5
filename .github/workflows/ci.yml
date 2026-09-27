@@ -107,9 +107,9 @@ jobs:
           }
           Write-Host "Policy pass: No title-IDs found in core/"
 
-          # 3. Hardware descriptions must strictly refer to reference tier
-          $hwViolations = git grep -n -i -E "RTX 4090|RTX 3080|Ryzen 9 5950X|i9-13900K" docs/ 2>$null
-          if ($hwViolations) {
-              throw "Personal contributor machine name found in docs: $hwViolations"
+          # 3. No personal machine phrasing in docs (must use generic reference tier)
+          $personalHw = git grep -n -i -E "my (machine|pc|gpu|rig|setup|desktop|laptop)" docs/ 2>$null
+          if ($personalHw) {
+              throw "Personal machine reference found in docs (use generic reference tier): $personalHw"
           }
-          Write-Host "Policy pass: No personal hardware names found in docs/"
+          Write-Host "Policy pass: No personal machine references found in docs/"
