@@ -134,15 +134,21 @@ struct IWriteTracker {
 
 ## Tests
 
-- **Unit** (`ctest`, hosted `unit` job):
+- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
   - Extent tree differential-tested against a reference linear first-fit with 10^6 random operations, with identical addresses required.
-  - Heap class boundaries and alignment.
+  - Heap class boundaries, alignment invariants, and flexible memory pools.
   - Registry pin, wait and release, with the waiter observed to run with the lock released.
   - Generation bumps only on map, unmap, protect and decommit.
   - `sceKernelVirtualQuery` exact and find-next cases.
   - Write-watch collect and unchanged cases, and `MarkWritten` versus CPU stamps.
   - Page-state table differential against `VirtualQuery`.
   - Alias detection moving both views to the section window.
+  - Death tests (`EXPECT_DEATH`): verify that memory allocation attempts violating the 1 TiB boundary contract fail cleanly without memory corruption.
+- **Ported Ecosystem Test Suites:**
+  - **KytyPS5 `VirtualMemoryAllocationTests`:** 16 KB page rounding, direct-memory allocations (`sceKernelAllocateDirectMemory`), alignment constraints, protection transitions (`PROT_READ`, `PROT_WRITE`, `PROT_EXEC`), and out-of-memory error codes (`SCE_KERNEL_ERROR_ENOMEM`).
+  - **KytyPS5 `MemoryTrackerTests`:** write-watch tracking mechanics, multi-threaded dirty-page collecting, generation advancement, and aliased memory tracking.
+  - **FreeBSD 12 `mmap`/`mprotect` Suites:** POSIX address-space layout and page-permission semantics.
+  - **Wine / Proton Virtual Memory Suites:** Win32 `VirtualAlloc`/`VirtualProtect`/`GetWriteWatch` state transitions under concurrent queries.
 - **Microbenchmarks:**
   - `malloc`/`free` throughput per size class, with no registry lock on the small path.
   - Arena allocation with 10^5 live ranges, O(log n).

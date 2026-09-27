@@ -71,12 +71,15 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 
 ## Tests
 
-- **Unit (hosted CI):**
-  - The downmix matrix, the LFE fold and the limiter, on synthetic buffers.
-  - `data_format` channel decoding.
-  - Resampler length and phase.
-  - AJM job parsing, with synthetic batches and no game data.
-  - ATRAC9 decode of a project-generated stream, if an encoder licence allows. Otherwise this is local-only.
+- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
+  - Downmix matrix, LFE fold, and soft-limiter headroom on synthetic multi-channel buffers.
+  - `data_format` channel decoding and interleaving.
+  - Resampler length, phase interpolation, and drift compensation.
+  - AJM job parsing with synthetic command batches (no game assets).
+  - ATRAC9 header and frame decoding of project-generated bitstreams.
+  - Death tests (`EXPECT_DEATH`): verify that malformed AJM batches trigger an immediate abort via `Unsupported()` rather than corrupting audio ring buffers.
+- **Ported Ecosystem Test Suites:**
+  - **KytyPS5 `AudioOut2PortTests`:** AudioOut2 port lifecycle (open, configure, push, close), port attribute ID validation, volume scale clamping, and ring-buffer starvation handling.
 - **Driverless mixer test:** a dummy SDL audio driver consumes at a fixed rate. It asserts 0 underruns over 10 simulated minutes at a steady push rate, and that exactly N underruns are counted when N gaps are injected.
 - **Local regression:** every gate run reports `audio_underruns`. The pass is ≤ 1 per 10 minutes, pro-rated over the run.
 
