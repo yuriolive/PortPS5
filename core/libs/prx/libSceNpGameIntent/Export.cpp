@@ -1,7 +1,6 @@
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -16,23 +15,25 @@ constexpr int NpGameIntentUserIdInvalid = -1;
 
 extern "C" {
 
-int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize) {
+int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData* intentData, const char* key, char* valueBuf, size_t bufSize) noexcept {
  if (intentData == nullptr || key == nullptr || valueBuf == nullptr || bufSize == 0) {
-  APS5_INVALID_ARG_EX;
+  // Why return, not throw: invalid args are real console errors; noexcept
+  // forbids throwing across the guest boundary.
+  return NpGameIntentErrorInvalidArgument;
  }
 
  valueBuf[0] = '\0';
  return NpGameIntentErrorValueNotFound;
 }
 
-int APS5_VABI sceNpGameIntentInitialize(const void* initParam) {
+int APS5_VABI sceNpGameIntentInitialize(const void* initParam) noexcept {
  (void)initParam;
  return 0;
 }
 
-int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo) {
+int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo) noexcept {
  if (intentInfo == nullptr) {
-  APS5_INVALID_ARG_EX;
+  return NpGameIntentErrorInvalidArgument;
  }
 
  intentInfo->user_id = NpGameIntentUserIdInvalid;
@@ -42,7 +43,7 @@ int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo* intentInfo) {
  return NpGameIntentErrorIntentNotFound;
 }
 
-int APS5_VABI sceNpGameIntentTerminate(void) {
+int APS5_VABI sceNpGameIntentTerminate(void) noexcept {
  return 0;
 }
 

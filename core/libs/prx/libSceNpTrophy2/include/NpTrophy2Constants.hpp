@@ -5,6 +5,11 @@
 
 static constexpr int SCE_NP_TROPHY2_OK = 0;
 static constexpr int SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND = -2141898479;
+// Why placeholder in Sony range: offline has no trophy service to validate
+// args; null outputs are real console errors, so they return a code instead
+// of throwing across the guest boundary. Exact code refined when a gate title
+// needs it.
+static constexpr int SCE_NP_TROPHY2_ERROR_INVALID_ARGUMENT = -2141898495;
 
 static constexpr int NP_TROPHY2_CONTEXT_DEFAULT = 1;
 static constexpr int NP_TROPHY2_HANDLE_DEFAULT = 1;

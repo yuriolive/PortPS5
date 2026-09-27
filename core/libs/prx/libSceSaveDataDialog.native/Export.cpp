@@ -6,6 +6,9 @@
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/General.hpp"
 
+// Why scripted-OK with RUNNING->FINISHED: Open records the first dir name and
+// reports RUNNING; the next UpdateStatus completes to FINISHED so titles that
+// poll see the console sequence instead of blocking inside Open.
 static int g_status = SAVE_DATA_DIALOG_STATUS_NONE;
 static int g_mode = 0;
 static void* g_user_data = nullptr;
@@ -13,7 +16,7 @@ static char g_dir_name[32] = {};
 
 extern "C" {
 
-int APS5_VABI sceSaveDataDialogInitialize(void) {
+int APS5_VABI sceSaveDataDialogInitialize(void) noexcept {
  if (g_status != SAVE_DATA_DIALOG_STATUS_NONE) {
   return SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED;
  }
@@ -24,15 +27,18 @@ int APS5_VABI sceSaveDataDialogInitialize(void) {
  return SAVE_DATA_DIALOG_OK;
 }
 
-int APS5_VABI sceSaveDataDialogGetStatus(void) {
+int APS5_VABI sceSaveDataDialogGetStatus(void) noexcept {
  return g_status;
 }
 
-int APS5_VABI sceSaveDataDialogUpdateStatus(void) {
+int APS5_VABI sceSaveDataDialogUpdateStatus(void) noexcept {
+ if (g_status == SAVE_DATA_DIALOG_STATUS_RUNNING) {
+  g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
+ }
  return g_status;
 }
 
-int APS5_VABI sceSaveDataDialogGetResult(void* result) {
+int APS5_VABI sceSaveDataDialogGetResult(void* result) noexcept {
  if (result == nullptr) {
   return SAVE_DATA_DIALOG_ERROR_ARG_NULL;
  }
@@ -48,7 +54,7 @@ int APS5_VABI sceSaveDataDialogGetResult(void* result) {
  return SAVE_DATA_DIALOG_OK;
 }
 
-int APS5_VABI sceSaveDataDialogOpen(const void* param) {
+int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept {
  if (g_status != SAVE_DATA_DIALOG_STATUS_INITIALIZED && g_status != SAVE_DATA_DIALOG_STATUS_FINISHED) {
   return SAVE_DATA_DIALOG_ERROR_INVALID_STATE;
  }
@@ -69,21 +75,21 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) {
    }
   }
  }
- g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
+ g_status = SAVE_DATA_DIALOG_STATUS_RUNNING;
  return SAVE_DATA_DIALOG_OK;
 }
 
-int APS5_VABI sceSaveDataDialogClose(const void* closeParam) {
+int APS5_VABI sceSaveDataDialogClose(const void* closeParam) noexcept {
  (void)closeParam;
  g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
  return SAVE_DATA_DIALOG_OK;
 }
 
-int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) {
+int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) noexcept {
  return 1;
 }
 
-int APS5_VABI sceSaveDataDialogTerminate(void) {
+int APS5_VABI sceSaveDataDialogTerminate(void) noexcept {
  g_status = SAVE_DATA_DIALOG_STATUS_NONE;
  g_mode = 0;
  g_user_data = nullptr;
@@ -91,13 +97,13 @@ int APS5_VABI sceSaveDataDialogTerminate(void) {
  return SAVE_DATA_DIALOG_OK;
 }
 
-int APS5_VABI sceSaveDataDialogProgressBarInc(int target, std::uint32_t delta) {
+int APS5_VABI sceSaveDataDialogProgressBarInc(int target, std::uint32_t delta) noexcept {
  (void)target;
  (void)delta;
  return SAVE_DATA_DIALOG_OK;
 }
 
-int APS5_VABI sceSaveDataDialogProgressBarSetValue(int target, std::uint32_t rate) {
+int APS5_VABI sceSaveDataDialogProgressBarSetValue(int target, std::uint32_t rate) noexcept {
  (void)target;
  (void)rate;
  return SAVE_DATA_DIALOG_OK;
