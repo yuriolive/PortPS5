@@ -13,7 +13,7 @@ function(add_shader_recompiler target runtimeTarget)
         add_subdirectory("${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Tools" "${CMAKE_BINARY_DIR}/3rdparty/SPIRV-Tools" EXCLUDE_FROM_ALL)
     endif()
 
-    if(NOT TARGET glslang)
+    if(BUILD_TESTING AND NOT TARGET glslang)
         set(BUILD_SHARED_LIBS OFF)
         set(BUILD_EXTERNAL OFF)
         set(GLSLANG_TESTS OFF)
@@ -132,8 +132,6 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvTypes.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvEmitterHelpers.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvMemoryInstructions.cpp
-
-            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/DummyShaders.cpp
     )
 
     target_include_directories(${target} PUBLIC
@@ -145,10 +143,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/include
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/include
             ${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
-            ${PROJECT_SOURCE_DIR}/3rdparty/glslang
     )
-
-    target_compile_features(${target} PUBLIC cxx_std_20)
 
     set_target_properties(${target} PROPERTIES
             POSITION_INDEPENDENT_CODE ON
@@ -157,9 +152,28 @@ function(add_shader_recompiler target runtimeTarget)
 
     target_link_libraries(${target} PRIVATE
             ${runtimeTarget}
+    )
+
+    if(BUILD_TESTING AND NOT TARGET dummy_shaders)
+        add_library(dummy_shaders STATIC EXCLUDE_FROM_ALL
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/DummyShaders.cpp
+        )
+        target_include_directories(dummy_shaders PUBLIC
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests
+            ${PROJECT_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
+            ${PROJECT_SOURCE_DIR}/3rdparty/glslang
+        )
+        target_link_libraries(dummy_shaders PUBLIC
+            ${target}
             glslang
             SPIRV
-    )
+        )
+        set_target_properties(dummy_shaders PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            CXX_EXTENSIONS OFF
+        )
+    endif()
 
     if(ANYPS5_ENABLE_SPIRV_TOOLS)
         target_sources(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvOptimizer.cpp)

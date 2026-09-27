@@ -66,3 +66,13 @@ target_include_directories(agc_command_tests PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(agc_command_tests PRIVATE libSceAgc libc)
 configure_windows_unwind(agc_command_tests)
 configure_windows_unwind(libSceAgc)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_command_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_command COMMAND agc_command_tests)
+    if(WIN32)
+        set_tests_properties(agc_command PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    set_tests_properties(agc_command PROPERTIES LABELS "unit")
+endif()

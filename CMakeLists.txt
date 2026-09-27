@@ -1,14 +1,18 @@
 cmake_minimum_required(VERSION 3.20)
-project(Relinker CXX)
+project(PortPS5 CXX)
 
-option(BUILD_TESTING "Build and register relinker tests" OFF)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+option(BUILD_TESTING "Build and register tests" OFF)
 if(BUILD_TESTING)
     enable_testing()
+    include(PortPS5Testing)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
 endif()
 
 option(ANYPS5_ENABLE_SPIRV_TOOLS "Enable SPIRV-Tools validation and optimization" OFF)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")

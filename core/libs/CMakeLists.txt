@@ -14,7 +14,6 @@ add_executable(nid_patcher
         ${CMAKE_CURRENT_SOURCE_DIR}/nid/src/main.cpp
 )
 target_include_directories(nid_patcher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/nid/include)
-target_compile_features(nid_patcher PRIVATE cxx_std_20)
 
 if(MINGW)
     add_compile_options(-fno-asynchronous-unwind-tables)
@@ -107,6 +106,19 @@ foreach(LIB_DIR ${LIBS_DIRS})
 endforeach()
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+
+if(WIN32 AND MINGW)
+    get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    add_custom_command(TARGET libs POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+            "${MINGW_BIN_DIR}/libstdc++-6.dll"
+            "${MINGW_BIN_DIR}/libwinpthread-1.dll"
+            "${PATCHED_DIR}"
+        COMMENT "Copying MinGW runtime DLLs to patched libs directory"
+        VERBATIM
+    )
+endif()
 
 if(BUILD_TESTING)
     add_executable(guest_rendering_wait_tests tests/GuestRenderingWait.cpp)
@@ -355,18 +367,30 @@ if(BUILD_TESTING)
         set_tests_properties(exception_runtime PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-endif()
+    add_executable(application_heap_tests tests/ApplicationHeap.cpp prx/libc/src/ApplicationHeap.cpp)
+    target_include_directories(application_heap_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    set_target_properties(application_heap_tests PROPERTIES CXX_EXTENSIONS OFF)
+    add_test(NAME application_heap COMMAND application_heap_tests)
+    if(WIN32)
+        set_tests_properties(application_heap PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
-add_executable(application_heap_tests EXCLUDE_FROM_ALL tests/ApplicationHeap.cpp prx/libc/src/ApplicationHeap.cpp)
-target_include_directories(application_heap_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-set_target_properties(application_heap_tests PROPERTIES CXX_EXTENSIONS OFF)
+    if(MINGW)
+        foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
+            string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+        endforeach()
+        add_executable(windows_exception_tests tests/WindowsExceptions.cpp)
+        set_target_properties(windows_exception_tests PROPERTIES CXX_EXTENSIONS OFF)
+        target_link_libraries(windows_exception_tests PRIVATE libc)
+        configure_windows_unwind(windows_exception_tests)
+        add_test(NAME windows_exception COMMAND windows_exception_tests)
+        if(WIN32)
+            set_tests_properties(windows_exception PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
 
-if(MINGW)
-    foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
-        string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
-    endforeach()
-    add_executable(windows_exception_tests EXCLUDE_FROM_ALL tests/WindowsExceptions.cpp)
-    set_target_properties(windows_exception_tests PROPERTIES CXX_EXTENSIONS OFF)
-    target_link_libraries(windows_exception_tests PRIVATE libc)
-    configure_windows_unwind(windows_exception_tests)
+    get_property(ALL_LIB_TESTS DIRECTORY PROPERTY TESTS)
+    set_property(TEST ${ALL_LIB_TESTS} PROPERTY LABELS "unit")
 endif()
