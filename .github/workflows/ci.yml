@@ -127,10 +127,68 @@ jobs:
           }
 
           # 2. No title hacks in core/
-          $titleHacks = git grep -n -E "PPSA[0-9]{5}|CUSA[0-9]{5}" core/ 2>$null
+          $titleHacks = git grep -n -E "PPSA[0-9]{5}|CUSA[0-9]{5}" core/ 2>$null | Where-Object {
+              $_ -notmatch '/tests/'
+          }
           # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
           $global:LASTEXITCODE = 0
           if ($titleHacks) {
               throw "Forbidden title-ID found in core/: $titleHacks"
           }
           Write-Host "Policy pass: No title-IDs found in core/"
+
+          # 3. No APS5_ string literals outside the Config module. The Config
+          # module alone may name the prefix to warn about stale variables.
+          $aps5Literals = git grep -n '"APS5_' -- core/ 2>$null | Where-Object {
+              $_ -notmatch 'core/libs/prx/libc/src/Config\.cpp'
+          }
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
+          if ($aps5Literals) {
+              throw "Forbidden APS5_ string literal outside Config module: $aps5Literals"
+          }
+          Write-Host "Policy pass: No APS5_ literals outside the Config module"
+
+          # 4. No getenv() calls in production code outside the Config module.
+          # Test sources under */tests/ are exempt: they verify environment
+          # behavior without changing runtime behavior (see spec/verification.md).
+          $getenvCalls = git grep -n -E '\bgetenv\s*\(' -- core/ 2>$null | Where-Object {
+              $_ -notmatch 'core/libs/prx/libc/src/Config\.cpp' -and $_ -notmatch '/tests/'
+          }
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
+          if ($getenvCalls) {
+              throw "Forbidden getenv() call outside Config module: $getenvCalls"
+          }
+          Write-Host "Policy pass: No getenv() calls outside the Config module"
+
+          # 5. Workaround registry matches docs/workarounds.md in both
+          # directions, and key names describe mechanisms (snake_case, no
+          # title names or title-ID patterns). Test sources are exempt: their
+          # keys never ship. git grep prints path:line:content (no -h), so the
+          # filters below see the file path; the macro definition itself is
+          # excluded by name.
+          $registered = git grep -E 'PORTPS5_WORKAROUND\(' -- core/ 2>$null | Where-Object {
+              $_ -notmatch '/tests/' -and $_ -notmatch '#define PORTPS5_WORKAROUND'
+          } | ForEach-Object {
+              if ($_ -match 'PORTPS5_WORKAROUND\(\s*([A-Za-z0-9_]+)') { $Matches[1] }
+          } | Sort-Object -Unique
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
+          $documented = Select-String -Path docs/workarounds.md -Pattern '^\| `([a-z0-9_]+)`' -AllMatches |
+              ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } |
+              Sort-Object -Unique
+          foreach ($key in $registered) {
+              if ($documented -notcontains $key) {
+                  throw "Workaround '$key' is registered in code but missing from docs/workarounds.md"
+              }
+              if ($key -notmatch '^[a-z][a-z0-9_]*$' -or $key -match '(PPSA|CUSA)[0-9]') {
+                  throw "Workaround key '$key' must be snake_case and free of title references"
+              }
+          }
+          foreach ($key in $documented) {
+              if ($registered -notcontains $key) {
+                  throw "Workaround '$key' is documented but not registered in code"
+              }
+          }
+          Write-Host "Policy pass: Workaround registry matches docs/workarounds.md"
