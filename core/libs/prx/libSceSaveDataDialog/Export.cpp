@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
@@ -17,6 +18,31 @@ static int g_result = SAVE_DATA_DIALOG_RESULT_OK;
 static int g_button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
 static void* g_user_data = nullptr;
 static char g_dir_name[32] = {};
+
+static bool FindExistingSaveDir(char* outName, size_t outSize) {
+    std::error_code ec;
+    std::filesystem::path root("_sd");
+    if (!std::filesystem::is_directory(root, ec)) return false;
+    std::filesystem::file_time_type newestTime{};
+    std::string newestName;
+    for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+        if (entry.is_directory(ec)) {
+            auto name = entry.path().filename().string();
+            if (!name.empty() && name[0] != '.' && name[0] != '_') {
+                auto time = entry.last_write_time(ec);
+                if (newestName.empty() || time > newestTime) {
+                    newestTime = time;
+                    newestName = std::move(name);
+                }
+            }
+        }
+    }
+    if (!newestName.empty()) {
+        std::snprintf(outName, outSize, "%s", newestName.c_str());
+        return true;
+    }
+    return false;
+}
 
 extern "C" {
 
@@ -84,10 +110,26 @@ int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept {
    }
   }
  }
- // Mode 5 (Load) or Mode 8 (List): if no dir was found, script Cancel per spec
- if ((g_mode == 5 || g_mode == 8) && g_dir_name[0] == '\0') {
-  g_result = 1; // user cancel
-  g_button_id = 2; // cancel
+ // Mode 5 (Load) or Mode 8 (List): find newest existing dir, or cancel if none (docs/spec/save-data.md)
+ if (g_mode == 5 || g_mode == 8) {
+  bool found = false;
+  if (g_dir_name[0] != '\0') {
+   std::error_code ec;
+   if (std::filesystem::exists(std::filesystem::path("_sd") / g_dir_name, ec)) {
+    found = true;
+   }
+  }
+  if (!found) {
+   found = FindExistingSaveDir(g_dir_name, sizeof(g_dir_name));
+  }
+  if (!found) {
+   g_dir_name[0] = '\0';
+   g_result = 1; // user cancel
+   g_button_id = 2; // cancel
+  } else {
+   g_result = SAVE_DATA_DIALOG_RESULT_OK;
+   g_button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;
+  }
  } else {
   g_result = SAVE_DATA_DIALOG_RESULT_OK;
   g_button_id = SAVE_DATA_DIALOG_BUTTON_ID_OK;

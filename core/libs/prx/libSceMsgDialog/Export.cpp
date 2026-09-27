@@ -19,15 +19,6 @@ static constexpr int MSG_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x8
 static constexpr int MSG_DIALOG_ERROR_INVALID_STATE = static_cast<int>(0x80B80006);
 static constexpr int MSG_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000D);
 
-struct MsgDialogResultLayout {
-    std::int32_t mode = 0;
-    std::int32_t result = 0;
-    std::int32_t button_id = 1; // YES / OK
-    std::uint32_t pad0 = 0;
-    void* user_data = nullptr;
-    char reserved[32] = {};
-};
-
 static std::mutex g_dialogMutex;
 static bool g_initialized = false;
 static int g_status = MSG_DIALOG_STATUS_NONE;
@@ -56,11 +47,10 @@ int APS5_VABI sceMsgDialogGetResult(void* result) noexcept {
     if (g_status != MSG_DIALOG_STATUS_FINISHED) {
         return MSG_DIALOG_ERROR_INVALID_STATE;
     }
-    auto* r = static_cast<MsgDialogResultLayout*>(result);
-    r->mode = g_mode;
-    r->result = 0;
-    r->button_id = 1; // Yes / OK default button
-    r->user_data = g_userData;
+    // Write 4-byte button ID (1 = Yes/OK). The API takes an untyped void*,
+    // so writing only the 32-bit primary result avoids overflowing callers
+    // passing an int while satisfying callers expecting the OK button ID.
+    *static_cast<std::int32_t*>(result) = 1;
     return MSG_DIALOG_OK;
 }
 
