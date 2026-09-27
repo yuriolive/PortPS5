@@ -3,6 +3,8 @@
 #include <elfpatcher/windows/WindowsTlsTemplateBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <relinker/analysis/CodeInstructionCollector.hpp>
+#include <relinker/analysis/CodeMap.hpp>
+#include <domain/CodeMap.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <bit>
@@ -40,12 +42,17 @@ void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, cons
 }
 
 PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva) const {
+    const auto codeMap = Relinker::BuildCodeMap(source, headers);
+    return BuildWithCodeMap(source, headers, image, sections, relocations, nextRva, codeMap, tlsIndexRva);
+}
+
+PeDirectory WindowsTlsBuilder::BuildWithCodeMap(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, const Domain::CodeMap& codeMap, std::uint32_t* tlsIndexRva) const {
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
 
     std::vector<TlsAccess> accesses;
     std::set<std::uint32_t> branchTargets;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers);
+    const auto& instructions = codeMap.Starts;
 
     for (const auto& header : headers) {
         if (header.Type == 7) {

@@ -1,14 +1,16 @@
 # PortPS5 — Spec: Relinker
 
-Status: draft v1 · 2026-09-27
+Status: draft v2 · 2026-09-27 (M1 relinker item implemented)
 
 ## Scope
 
-`core/relinker`: ELF-to-PE conversion of a decrypted guest executable, import (NID) binding, the hand-emitted Windows entry and loader stub, guest TLS, relocations, `.eh_frame` metadata hand-off, instruction discovery (`InstructionScanner`, `CodeInstructionCollector`, `UnusedNidFilter` CFG), `--to-intel` (`Amd64OnlyConverter`), the `sce_module` guest-module path and the CLI. The export-side NID renaming (`core/libs/nid`, `nid_patcher`) is specified in [build-toolchain.md](build-toolchain.md); this spec owns only the import-side contract. Guest code is never recompiled (the decision table in [README.md](README.md#subsystem-specs) §Execution model).
+`core/relinker`: ELF-to-PE conversion of a decrypted guest executable, import (NID) binding, the hand-emitted Windows entry and loader stub, guest TLS, relocations, `.eh_frame` metadata hand-off, instruction discovery (`CodeMap` from `CodeInstructionCollector`), `--to-intel` (`Amd64OnlyConverter`), the `sce_module` guest-module path and the CLI. The export-side NID renaming (`core/libs/nid`, `nid_patcher`) is specified in [build-toolchain.md](build-toolchain.md); this spec owns only the import-side contract. Guest code is never recompiled (the decision table in [README.md](README.md#subsystem-specs) §Execution model).
 
 ## Current state
 
 File references are `core/relinker/...` unless marked `libs/` (= `core/libs/`). "main" = `e06dbff`, "PR #5" = `29b4601`.
+
+**M1 implementation** (`feat/m1-relinker-codemap`): `Domain::CodeMap` (`domain/include/domain/CodeMap.hpp`) built once per image by `Relinker::BuildCodeMap` (`relinker/src/analysis/CodeMap.cpp`) from `CodeInstructionCollector::CollectDetailed` (`relinker/include/relinker/analysis/CodeInstructionCollector.hpp`); `Amd64OnlyConverter` matches only at `Starts` with branch checks against `BranchTargets` (`codegen/src/Amd64OnlyConverter.cpp`), register forms leave bytes as `Residual` (`codegen/src/x86/Amd64OnlyInstructionMatcher.cpp`), trampolines emitted by `WindowsTrampolineBuilder` (`elfpatcher/src/windows/WindowsTrampolineBuilder.cpp`) and Linux extra-block stubs (`elfpatcher/src/linux/LinuxElfPatcher.cpp`); conversion report (`relinker/src/output/ConversionReport.cpp`) with NIDs in/out, stubs and residual sites written as `.conversion.json` next to `--registry` output (`main.cpp`).
 
 **Pipeline on main** (`main.cpp:28-129`):
 
@@ -121,14 +123,15 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 
 ## Tests
 
-- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
-  - Legacy tests migrated to GoogleTest: `strict_nid_filter`, `optional_plt`, `empty_tls`, `tls_function_coverage` (Python), `windows_dependency_diagnostics`. From PR #5: `amd64_only_converter`, `amd64_only_windows`.
-  - Jump table and literal pool inside `.text`: linear sweep desyncs, `CodeMap` does not.
-  - SSE4a register form: relink succeeds and site appears in `Residual`.
-  - Branch into a stub site: expected failure.
-  - Relocation-table consistency: every type `ValidationPolicy` accepts is emitted by the builder.
-  - Golden bytes for `.startup`/`.entry` and the `UNWIND_INFO` block.
-  - Libc trap: call the SSE4a emulator directly on a synthetic `CONTEXT`, host-CPU independent.
+- **GoogleTest Unit Suites & Unit Tests** (`ctest -L unit`, hosted `unit` job):
+  - Legacy tests migrated to GoogleTest: `strict_nid_filter`, `optional_plt`, `empty_tls`, `tls_function_coverage` (Python), `windows_dependency_diagnostics`. From PR #5 (ported, general mechanisms only): `amd64_only_converter` (`codegen/tests/Amd64OnlyConverterTests.cpp`), `amd64_only_windows` (`elfpatcher/tests/Amd64OnlyWindowsTests.cpp`, PE builder only, no libc dep).
+  - New unit tests on synthetic ELFs: `codemap` (`relinker/tests/CodeMapTests.cpp`):
+    - Jump table and literal pool inside `.text`: linear sweep desyncs, `CodeMap` does not.
+    - SSE4a register form: relink succeeds and site appears in `Residual`.
+    - Branch into a stub site: expected failure.
+    - Relocation-table consistency: every type `ValidationPolicy` accepts is emitted by the builder.
+    - Golden bytes for `.startup`/`.entry` and the `UNWIND_INFO` block.
+    - Libc trap: call the SSE4a emulator directly on a synthetic `CONTEXT`, host-CPU independent.
 - **Ported Ecosystem Test Suites:**
   - **Wine / Proton PE Construction Patterns:** PE base relocation table generation, section header alignment rules, and export directory table formatting.
 - **Local regression** ([verification.md](verification.md) §2): each gate title converts with `--to-intel` and without, and the conversion report is recorded.

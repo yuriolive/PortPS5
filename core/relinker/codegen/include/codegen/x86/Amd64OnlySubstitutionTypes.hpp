@@ -8,10 +8,20 @@
 
 namespace Codegen {
 
+enum class Amd64OnlyLowering : std::uint8_t {
+    InPlace,
+    Trampoline,
+    Residual,
+    Unsupported
+};
+
 struct Amd64OnlyMatch {
     std::string InstructionName;
     std::size_t Length;
+    Amd64OnlyLowering Lowering;
     std::vector<std::uint8_t> ReplacementBytes;
+    std::vector<std::uint8_t> StubBody;
+    std::size_t ReturnBranchOffset;
 };
 
 struct Amd64OnlySubstitutionReport {
@@ -19,6 +29,14 @@ struct Amd64OnlySubstitutionReport {
     Domain::FileByteOffset Offset;
     std::size_t OriginalLength;
     std::size_t ReplacementLength;
+    Amd64OnlyLowering Lowering;
+};
+
+struct ResidualSite {
+    Domain::FileByteOffset FileOffset;
+    Domain::VirtualAddress Address;
+    std::string Mnemonic;
+    std::size_t Length;
 };
 
 }
