@@ -46,8 +46,8 @@
     },
     {
       "name": "asan",
-      "displayName": "ASan / UBSan",
-      "description": "AddressSanitizer + UndefinedBehaviorSanitizer. In CI this is run via MSYS2 CLANG64 (LLVM compiler-rt ships clang_rt.asan on Windows; MinGW-w64 GCC does not ship libasan). For local use on Linux/WSL, cmake --preset asan works with GCC's native libasan. The asan CI job (.github/workflows/asan.yml) configures cmake directly, bypassing this preset's inherited GCC toolchain file.",
+      "displayName": "ASan / UBSan (local / Linux only)",
+      "description": "Local developer preset: AddressSanitizer + UndefinedBehaviorSanitizer. Not run in CI: the project links executables with -static globally (CMakeLists.txt line 1), and LLVM ASan requires a shared runtime that cannot be injected into a statically linked binary. Additionally, MinGW-w64 GCC does not ship libasan/libubsan for Windows. Use this preset on Linux/WSL with GCC's native libasan, or revisit when the project moves to dynamic linking for test binaries.",
       "inherits": "ci",
       "cacheVariables": {
         "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",

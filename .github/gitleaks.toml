@@ -32,11 +32,12 @@ useDefault = true
 [[rules]]
 id          = "ps5-idps"
 description = "Possible PS5 IDPS (console identity) key — 32-byte hex string in a context suggesting a device identity. Committing a real IDPS would expose a user's console to Sony's ban system."
-# 64 hex characters with optional space or colon separators between each
-# nibble-pair (common dump-tool formats such as "AA:BB:CC..." or "AA BB CC...").
-# Previously used {64} which required 64 *consecutive* hex chars and missed
-# the separated formats the description claimed to support.
-regex       = '''(?i)(idps|console.?id|device.?id)\s*[=:]\s*["']?[0-9a-f]([:\s]?[0-9a-f]){63}["']?'''
+# Matches ini-style (idps = "..."), shell (idps="..."), and JSON-style
+# ("idps": "...") by allowing an optional closing quote between the label
+# and the = / : delimiter.
+# Separators between hex digit pairs (spaces or colons, common in dump-tool
+# output) are allowed: [0-9a-f]([:\s]?[0-9a-f]){63} instead of {64}.
+regex       = '''(?i)(idps|console.?id|device.?id)["']?\s*[=:]\s*["']?[0-9a-f]([:\s]?[0-9a-f]){63}["']?'''
 tags        = ["legal-boundary", "ps5", "identity"]
 severity    = "critical"
 
@@ -71,7 +72,10 @@ severity    = "critical"
 [[rules]]
 id          = "ps5-rap-rif"
 description = "Possible PS5 .rap or .rif licence file content — base64 blocks whose length and surrounding context suggest a content licence. These tie a title to a specific PSN account."
-regex       = '''(?i)(\.rap|\.rif|content.?id|license.?key)\s*[=:]\s*["']?[A-Za-z0-9+/]{32,}={0,2}["']?'''
+# Allow an optional closing quote between the label word and the = / :
+# delimiter to catch JSON-style fields: "content_id": "..." as well as
+# ini-style content_id = "...".
+regex       = '''(?i)(\.rap|\.rif|content.?id|license.?key)["']?\s*[=:]\s*["']?[A-Za-z0-9+/]{32,}={0,2}["']?'''
 tags        = ["legal-boundary", "ps5", "drm"]
 severity    = "critical"
 
@@ -88,13 +92,15 @@ severity    = "critical"
 [[rules]]
 id          = "ps5-firmware-path"
 description = "Absolute path referencing PS5 firmware directories (/system, /system_ex, /update). Firmware file paths must never be hardcoded or referenced in source."
-regex       = '''["'`](/system(?:_ex)?|/update)/[^"'`\s]{4,}["'`]'''
+# Child path is optional so bare /system, /update, /system_ex are also
+# caught. Previously required at least 4 non-whitespace chars after the
+# trailing slash, missing "/system", "/update", and "/system/a" literals.
+regex       = '''["'`](/system(_ex)?|/update)(/[^"'`\s]+)?["'`]'''
 tags        = ["legal-boundary", "ps5", "firmware"]
 severity    = "warning"
 
     # Spec and test helpers reference these paths by name to describe what is
-    # forbidden, or as path-validation test inputs. These are not live firmware
-    # references.
+    # forbidden, or as path-validation test inputs.
     [[rules.allowlists]]
     description = "Spec docs and path-validation tests reference firmware paths by name"
     paths = [
@@ -106,7 +112,9 @@ severity    = "warning"
 [[rules]]
 id          = "aes-128-key-material"
 description = "Potential AES-128 key (16-byte hex literal). Common format for content encryption keys in decryption tools. Must not appear in source."
-regex       = '''(?i)(aes.{0,10}key|key.{0,10}aes)\s*[=:]\s*["']?[0-9a-f]{32}["']?'''
+# Allow an optional closing quote between the label word and the = / :
+# delimiter to catch JSON-style: "aes_key": "..." as well as aes_key = "...".
+regex       = '''(?i)(aes.{0,10}key|key.{0,10}aes)["']?\s*[=:]\s*["']?[0-9a-f]{32}["']?'''
 tags        = ["legal-boundary", "crypto"]
 severity    = "warning"
 

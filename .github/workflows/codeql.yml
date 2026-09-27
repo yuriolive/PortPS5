@@ -130,7 +130,20 @@ jobs:
       - name: Build project for CodeQL
         shell: pwsh
         run: |
-          cmake --preset ci
+          # ANYPS5_ENABLE_SPIRV_TOOLS=OFF excludes SPIRV-Tools, glslang and
+          # related third-party submodules from the build entirely. CodeQL
+          # intercepts compiler invocations to build its semantic database;
+          # paths-ignore in the init config filters *alerts* at analysis time
+          # but cannot prevent CodeQL from extracting sources that were
+          # actually compiled. Disabling the SPIRV-Tools build is the only
+          # reliable way to ensure third-party code never enters the database.
+          # The shader recompiler and core/ sources that call into SPIRV-Tools
+          # are still compiled and analysed — only the SPIRV-Tools library
+          # itself is omitted.
+          #
+          # BUILD_TESTING=OFF reduces build time further; test binaries contain
+          # the same source as production targets and do not add analysis value.
+          cmake --preset ci -DANYPS5_ENABLE_SPIRV_TOOLS=OFF -DBUILD_TESTING=OFF
           cmake --build --preset ci
 
       - name: Perform CodeQL Analysis
