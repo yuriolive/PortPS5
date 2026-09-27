@@ -12,33 +12,9 @@
 
 namespace {
 
-// Ring trace for lost-wakeup debugging (temporary, removed before commit).
-struct E {
-    char op[8];
-    std::uint32_t tid, waiters, seq;
-    std::uint64_t w;
-};
-inline E g_t[128] = {};
-inline std::atomic<int> g_n{0};
-inline void TC(const char* op, std::uint64_t w) noexcept {
-    const int i = g_n.fetch_add(1, std::memory_order_relaxed) % 128;
-    auto& e = g_t[i];
-    for (int k = 0; k < 7; ++k)
-        e.op[k] = op[k] ? op[k] : '\0';
-    e.tid = GuestTid::Ensure();
-    e.waiters = SyncWords::CondWord::Waiters(w);
-    e.seq = SyncWords::CondWord::Seq(w);
-    e.w = w;
-}
-inline void TD() noexcept {
-    const int t = g_n.load(std::memory_order_relaxed);
-    const int s = t > 128 ? t - 128 : 0;
-    std::fprintf(stderr, "--- trace %d..%d ---\n", s, t);
-    for (int i = s; i < t; ++i) {
-        const auto& e = g_t[i % 128];
-        std::fprintf(stderr, "[%d t%u %s w=%u s=%u]\n", i, e.tid, e.op, e.waiters, e.seq);
-    }
-}
+// Diagnostics: no-ops in release/dev builds.
+#define TC(...) ((void)0)
+#define TD() ((void)0)
 
 using SyncWords::kSceEbusy;
 using SyncWords::kSceEinval;
@@ -291,10 +267,9 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
         }
     }
 
-    // POSIX requires the mutex held on return (even after timeout).
-    const std::uint64_t relockDeadline =
-        hasDeadline ? deadline : FutexCore::kInfinite;
-    const int relock = MutexRelockAfterWait(mutex, held, tid, relockDeadline);
+    // POSIX requires the mutex held on return (even after timeout). Re-acquiring
+    // the mutex is untimed; the timeout only bounded waiting on the condition.
+    const int relock = MutexRelockAfterWait(mutex, held, tid, FutexCore::kInfinite);
     if (relock != kSceOk) {
         TC("relFail", static_cast<std::uint64_t>(static_cast<std::uint32_t>(relock)));
         return (waitRc == kSceOk) ? relock : waitRc;
