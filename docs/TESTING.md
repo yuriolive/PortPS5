@@ -77,6 +77,45 @@ SharpEMU (GPL-2.0-or-later) provides targeted verification for guest sandbox con
 | `VideoOutFlipStatusTests.cs` & `VideoOutLatencyTests.cs` | `tests/video/VideoOutTests.cpp` | Presentation flip queue state transitions, latency calculation, and pixel format conversions. |
 | `KernelAioWaitTests.cs` & `KernelPosixSocketOptionTests.cs` | `tests/kernel/KernelNetworkAioTests.cpp` | Kernel AIO completion wait queues and POSIX socket option handling (`SO_REUSEADDR`, non-blocking I/O). |
 
+### 3.3 FreeBSD Official Test Suite (Kernel & Libc)
+Because the PS5 kernel and userland are derived from FreeBSD 12, FreeBSD’s official test suite (`lib/libc/tests` and `sys/tests`) provides authoritative verification:
+
+| FreeBSD Test Suite | Target PortPS5 Suite | Key Coverage |
+| :--- | :--- | :--- |
+| `sys/kqueue/` (`kqueue_test.c`) | `tests/kernel/KqueueEventTests.cpp` | `kqueue`/`kevent` semantics underlying `sceKernelCreateEqueue`: multiple concurrent waiters, user triggers (`EVFILT_USER`), timer intervals (`EVFILT_TIMER`), socket readiness (`EVFILT_READ`/`WRITE`), and EOF delivery. |
+| `sys/kern/` (`umtx_test.c`) | `tests/kernel/UmtxSyncTests.cpp` | `umtx` futex sleep/wake semantics, priority inheritance, lock handoff, and timeout accuracy under CPU preemption. |
+| `sys/vm/` (`mmap_test.c`, `mprotect_test.c`) | `tests/memory/PosixVmTests.cpp` | 16 KB page boundary rounding, `MAP_FIXED`, `MAP_ANON`, `PROT_NONE/READ/WRITE/EXEC` transition matrix, and partial unmapping. |
+| `lib/libc/` (`stdio_test.c`, `string_test.c`, `gen/`) | `tests/libc/PosixLibcTests.cpp` | `readv`, `writev`, `fstat`, path resolution, non-blocking socket pairs, locale-independent formatting, and edge-case libc corner cases. |
+
+### 3.4 Mesa ACO (AMD RDNA2 GFX10.3 Shader Compiler Tests)
+Valve’s ACO compiler in Mesa (`src/amd/compiler/tests/`) provides the industry reference test vectors for AMD RDNA2 (Navi 2x / GFX10.3):
+
+| ACO Test Suite | Target PortPS5 Suite | Key Coverage |
+| :--- | :--- | :--- |
+| `test_insert_NOPs.cpp`, `test_assembler.cpp` | `tests/shader/AcoInstructionEncodingTests.cpp` | Full bit-accurate RDNA2 instruction decoding: VOP1, VOP2, VOP3, VOPC, SOPK, SMEM, and scalar memory reads. |
+| `test_optimizer.cpp` | `tests/shader/AcoDppSdwaTests.cpp` | Data Parallel Primitives (DPP) lane swizzling, Sub-Dword Addressing (SDWA) bit packing, and float16 conversion modes. |
+| `test_divergent_control_flow.cpp` | `tests/shader/AcoControlFlowTests.cpp` | Exec mask save/restore (`s_and_saveexec`), divergent branch reconvergence, break/continue structurization, and loop phi resolution. |
+| `test_lds_atomics.cpp` | `tests/shader/AcoLdsAtomicsTests.cpp` | 32-bit and 64-bit Local Data Share (LDS) read/write, shared memory barriers, and atomic memory operations. |
+
+### 3.5 Wine / Proton Conformance Tests (Windows Host & Relinker)
+Wine’s test suites (`dlls/*/tests`) verify Windows API translation and PE relinking edge cases:
+
+| Wine Test Suite | Target PortPS5 Suite | Key Coverage |
+| :--- | :--- | :--- |
+| `dlls/ntdll/tests/sync.c` | `tests/kernel/NtdllSyncTests.cpp` | `WaitOnAddress`, `WakeByAddressSingle`, `WakeByAddressAll`, keyed event behavior, and lock fairness under heavy thread contention. |
+| `dlls/ntdll/tests/virtual.c` | `tests/memory/NtdllVirtualMemoryTests.cpp` | `VirtualAlloc`, `VirtualProtect`, guard pages (`PAGE_GUARD`), write tracking (`GetWriteWatch`), and memory reset behavior. |
+| `dlls/kernel32/tests/path.c` | `tests/filesystem/WindowsPathTests.cpp` | Path canonicalization, long paths (`\\?\`), relative path navigation, and case-insensitivity on Windows host filesystems. |
+| `dlls/ntdll/tests/relay.c` & `loader.c` | `tests/relinker/PeRelocationTests.cpp` | PE section alignment, TLS callback execution, and base relocation application. |
+
+### 3.6 shadPS4, RPCS3 & DXVK (Containers, Media & Vulkan Caches)
+Specialized emulator and graphics layer tests covering Sony container formats, audio decoders, and Vulkan caches:
+
+| Project & Suite | Target PortPS5 Suite | Key Coverage |
+| :--- | :--- | :--- |
+| **shadPS4** (`tests/`) | `tests/filesystem/SfoContainerTests.cpp` | Param SFO parsing, PFS package header verification, and user-space heap allocation (`mspace`). |
+| **RPCS3 / LibAtrac9** (`tests/`) | `tests/audio/Atrac9ConformanceTests.cpp` | Conformance test bitstreams for ATRAC9 audio decoding, grain processing, and multi-channel PCM ring-buffer queuing. |
+| **DXVK** (`tests/dxvk/`) | `tests/video/VulkanBufferCacheTests.cpp` | Vulkan buffer cache range tracking, partial buffer updates, staging buffers, and render-target detiling. |
+
 ---
 
 ## 4. Advanced Testing Methodologies
