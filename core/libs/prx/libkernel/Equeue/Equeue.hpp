@@ -85,6 +85,14 @@ private:
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
 extern "C" {
 
+int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
+int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
+int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
+int APS5_VABI sceKernelAddUserEvent(KernelEqueue eq, int id);
+int APS5_VABI sceKernelAddUserEventEdge(KernelEqueue eq, int id);
+int APS5_VABI sceKernelTriggerUserEvent(KernelEqueue eq, int id, void* udata);
+int APS5_VABI sceKernelDeleteUserEvent(KernelEqueue eq, int id);
+
 KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq);
 int APS5_VABI EqueueAddEvent_nid_postfix(KernelEqueue eq, const KernelEqueueEvent& event);
 int APS5_VABI EqueueTriggerEvent_nid_postfix(KernelEqueue eq, uintptr_t ident, int16_t filter, void* triggerData);

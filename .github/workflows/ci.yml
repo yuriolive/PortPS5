@@ -14,7 +14,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Cache Git submodules
+        id: cache-submodules
+        uses: actions/cache@v4
+        with:
+          path: .git/modules
+          key: submodules-${{ runner.os }}-${{ hashFiles('.gitmodules') }}
+          restore-keys: |
+            submodules-${{ runner.os }}-
+
+      - name: Update submodules
+        shell: pwsh
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
       - name: Cache MinGW toolchain
         id: cache-mingw
@@ -44,6 +59,8 @@ jobs:
         shell: pwsh
         run: |
           "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          # WinLibs curl has no bundled CA certificates; pinned SHA256 hashes ensure integrity
+          "CMAKE_TLS_VERIFY=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure ccache environment
         shell: pwsh
@@ -60,6 +77,8 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}-
             ccache-${{ runner.os }}-${{ github.ref }}-
+            ccache-${{ runner.os }}-refs/heads/${{ github.base_ref }}-
+            ccache-${{ runner.os }}-refs/heads/main-
             ccache-${{ runner.os }}-
 
       - name: Verify toolchain

@@ -123,12 +123,17 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 
 ## Tests
 
-- **Existing, into `ctest -L unit`:** `strict_nid_filter`, `optional_plt`, `empty_tls`, `tls_function_coverage` (Python), `windows_dependency_diagnostics`. From PR #5 (ported, general mechanisms only): `amd64_only_converter` (`codegen/tests/Amd64OnlyConverterTests.cpp`), `amd64_only_windows` (`elfpatcher/tests/Amd64OnlyWindowsTests.cpp`, PE builder only, no libc dep).
-- **New unit tests, on synthetic ELFs built by the test itself (no game data):** `codemap` (`relinker/tests/CodeMapTests.cpp`):
-  - a jump table and a literal pool inside `.text`: linear sweep desyncs, `CodeMap` does not;
-  - an SSE4a register form: the relink succeeds and the site appears in `Residual`;
-  - a branch into a stub site: expected failure;
-  - Deliberately left out (other agents own the code): relocation-table consistency (needs elfpatcher table owned with export-ABI work), golden bytes for `.startup`/`.entry` and `UNWIND_INFO` (entry-stub legibility pass), libc trap on synthetic `CONTEXT` (`core/libs/prx`).
+- **GoogleTest Unit Suites & Unit Tests** (`ctest -L unit`, hosted `unit` job):
+  - Legacy tests migrated to GoogleTest: `strict_nid_filter`, `optional_plt`, `empty_tls`, `tls_function_coverage` (Python), `windows_dependency_diagnostics`. From PR #5 (ported, general mechanisms only): `amd64_only_converter` (`codegen/tests/Amd64OnlyConverterTests.cpp`), `amd64_only_windows` (`elfpatcher/tests/Amd64OnlyWindowsTests.cpp`, PE builder only, no libc dep).
+  - New unit tests on synthetic ELFs: `codemap` (`relinker/tests/CodeMapTests.cpp`):
+    - Jump table and literal pool inside `.text`: linear sweep desyncs, `CodeMap` does not.
+    - SSE4a register form: relink succeeds and site appears in `Residual`.
+    - Branch into a stub site: expected failure.
+    - Relocation-table consistency: every type `ValidationPolicy` accepts is emitted by the builder.
+    - Golden bytes for `.startup`/`.entry` and the `UNWIND_INFO` block.
+    - Libc trap: call the SSE4a emulator directly on a synthetic `CONTEXT`, host-CPU independent.
+- **Ported Ecosystem Test Suites:**
+  - **Wine / Proton PE Construction Patterns:** PE base relocation table generation, section header alignment rules, and export directory table formatting.
 - **Local regression** ([verification.md](verification.md) §2): each gate title converts with `--to-intel` and without, and the conversion report is recorded.
 
 ## Milestones

@@ -10,13 +10,14 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - Rebase `yuriolive/PortPS5` onto AnyPS5 `main` history (`e06dbff`), and credit AnyPS5 in the README.
 - Keep the GPL-2.0-only licence.
 - Change the build: bump to C++23, add CMakePresets, pin the MinGW GCC 15.2 toolchain, copy the MinGW runtime DLLs next to the patched prx, and wire every existing test into `ctest`.
+- Standardize test framework on GoogleTest (GTest + GMock) via FetchContent with `gtest_discover_tests`; establish `tests/common/TestHarness.hpp` (SCE matchers, error code formatters, guest page fixtures); modernise legacy standalone `abort()` test binaries into structured GTest suites; update CTest expected counts ([TESTING.md](TESTING.md), [spec/verification.md](spec/verification.md) §5).
 - Make glslang test-only by moving `tests/DummyShaders.cpp` out of the shipped recompiler library ([spec/build-toolchain.md](spec/build-toolchain.md), PRD R1).
 - Replace the no-comments rule in CONVENTIONS with "comment why, not what".
 - Hosted CI jobs `build`, `unit` and `policy` ([spec/verification.md](spec/verification.md) §1).
 - Dump the five gate titles and record their pins in the PRD §4.1 table. Swap any PS4-only build within the same tier (PRD R4).
 
 **Exit criteria**
-- `main` builds from a clean clone in CI, and `ctest` is green.
+- `main` builds from a clean clone in CI, and `ctest` is green with GoogleTest runner reporting individual test cases.
 - The PRD pin table has no TBD cells.
 - Baseline preserved. At the start of M0, run Demon's Souls on upstream `main` (`e06dbff`) and record the furthest observable stage (for example "SIE logo presented"). After the rebase, the fork reaches that same stage.
 
@@ -32,6 +33,11 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - AudioOut2 and ATRAC9;
   - the recompiler fixes (saveexec order, atomic-zero, LDS barriers);
   - the `agc_shader_replay` tool and request serialisation.
+- Establish foundational subsystem GoogleTest suites ported and adapted from open-source ecosystem references:
+  - Kernel synchronization & threading: port futex/umtx, pthread mutex/condvar/rwlock priority, and `WaitOnAddress` race perturbation tests from FreeBSD 12, Wine, and KytyPS5 (`SyncOnAddressTests`) ([spec/threading.md](spec/threading.md));
+  - Event queues: port kqueue/kevent edge/level triggers, user events, and timeout cancellation tests from FreeBSD 12 and KytyPS5 (`EventQueueLifetimeTests`);
+  - Virtual memory: port 16 KB page rounding, direct memory mapping, protect state transitions, and memory tracking tests from FreeBSD 12 and KytyPS5 (`VirtualMemoryAllocationTests`, `MemoryTrackerTests`) ([spec/guest-memory.md](spec/guest-memory.md));
+  - Shader recompiler: port instruction decoding bitfield validation, DPP swizzles, SDWA packing, 64-bit LDS, and divergent control-flow tests from Mesa ACO and KytyPS5 (`ShaderRecompilerComputeTests`, `shaderCfgTests`) ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
 - Interim FMV correctness: PR #5's Bink-plane write-back is ported as a general mechanism, *adjacent block-generation advance*, with no switch and no title reference. It serves M1–M2 and is replaced in M3 ([spec/video-fmv.md](spec/video-fmv.md)).
 - Recompiler: bindless tables with bounds taken from device limits ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
 - Relinker: make the existing `.eh_frame`-seeded CFG (`CodeInstructionCollector`) the only instruction-discovery engine, as one shared `CodeMap` replacing the linear sweep ([spec/relinker.md](spec/relinker.md)).
@@ -46,13 +52,18 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 
 **Exit criteria**
 - With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic, the stage PR #5 reached. Its fill and copy kernels run as the title's own shaders, without replacement. The `policy` CI job is green.
-- Sync microbenchmark: uncontended lock/unlock at least 10× faster than the old implementation, and the pthread tests pass.
+- Sync microbenchmark: uncontended lock/unlock at least 10× faster than the old implementation, and the pthread and `SyncOnAddress` GoogleTest suites pass.
 - The hosted golden corpus contains synthetic shaders that cover every decoded instruction class, and it is green in CI. The local-only game-derived corpus replays with 0 validation failures.
 
 ## Milestone 2: 2D gate (titles 1–2)
 
 **Scope**
 - Input: XInput, DualSense over USB, and keyboard/mouse mapping in TOML. XInput and DualSense are new work: enable SDL joystick/HIDAPI (currently off) and implement the `libScePad` controller paths, with hot-plug and slot assignment ([spec/input.md](spec/input.md)).
+- Establish filesystem sandbox, input, and audio GoogleTest suites ported from ecosystem references:
+  - Filesystem sandbox: port path-traversal containment (`../`), mount sandbox isolation, and default-deny permission tests from SharpEMU (`KernelSandboxEscapeTests`) ([spec/save-data.md](spec/save-data.md));
+  - Save data: port directory layout, quota enforcement, atomic commit, and crash-safe snapshot restore tests;
+  - Input: port DualSense USB report parsing, radial deadzone calculation, rumble motor translation, and hotplug slot assignment tests from KytyPS5 (`PadHapticsTests`) ([spec/input.md](spec/input.md));
+  - Audio: port AudioOut2 port lifecycle, ATRAC9 header decoding, and mixer resampling tests from KytyPS5 (`AudioOut2PortTests`) ([spec/audio.md](spec/audio.md)).
 - Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title, with crash-safe snapshots and a one-time copy of the old `_sd` layout ([spec/save-data.md](spec/save-data.md)).
 - Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
 - The disk pipeline cache.
@@ -71,6 +82,9 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - a GPU-side path for the `DRAW_INDIRECT` family (PR #5 implements these draws only by reading records on the CPU);
   - general block-generation write tracking for GPU-written surfaces, replacing the interim adjacent block-generation advance from M1–M2. Tomb Raider and Bugsnax FMV depend on it;
   - redesign capture ordering: resolve buffers on the GPU, resolve images at submit time, and never satisfy a wait from an unexecuted label while a capture depends on it.
+- Establish Vulkan driver cache and recompiler structurizer GoogleTest suites:
+  - Driver resource caches: port buffer/texture cache overlap, staging ring-buffer exhaustion, and descriptor set lifecycle tests adapted from DXVK and RPCS3 patterns ([spec/gpu-driver.md](spec/gpu-driver.md));
+  - Structurizer: recompiler fuzz corpus and synthetic unstructured control-flow graphs covering irreducible loops and goto-elimination fallbacks ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
 - Recompiler: goto-elimination structurizer fallback, and bounded hash-indexed variants.
 - Save data: the multi-slot list dialog, for Tomb Raider save/load ([spec/save-data.md](spec/save-data.md)).
 
@@ -83,6 +97,9 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 
 **Scope**
 - UE4 job-system coverage (event flags, semaphores, fibers).
+- Establish fiber and job-system GoogleTest suites:
+  - Fibers and event flags: port fiber stack-switching, fiber-local storage (FLS), and event flag race perturbation tests from SharpEMU (`Fiber*Tests`) ([spec/threading.md](spec/threading.md));
+  - Wave64 subgroup operations: synthetic compute dispatch validation for 64-wide lanes ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
 - Wave64 through `VK_EXT_subgroup_size_control` where supported.
 - A GPU-side descriptor heap for bindless (`VK_EXT_descriptor_indexing` or `VK_EXT_descriptor_buffer`).
 - Fill and copy kernels recognised by general IR patterns.
@@ -99,6 +116,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - host-import budget sized automatically (the PR #5 description reports a manual 16 GiB override for later stages);
   - direct-memory aliasing (the same physical range mapped at several guest addresses) with write tracking, which `GetWriteWatch` may not cover ([spec/guest-memory.md](spec/guest-memory.md));
   - audio object-port panning ([spec/audio.md](spec/audio.md)).
+- Direct-memory multi-mapping and host-import stress suites: perturbation tests covering concurrent aliased writes and memory tracker cache coherency under 16 GiB budget pressure.
 - Performance pass against the bar.
 - Spike: llvm-mingw clang with PDBs, adopted only if the DWARF unwinder validates.
 
@@ -131,6 +149,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 | F8 offline PSN/trophies | M1 | Full runs never blocked |
 | F9 telemetry | M1 | Results JSON present for every run |
 | Performance bar (§4.3) | M1 (sync), M2 (depth/stencil), M3 (driver), M4 (subgroups), M5 (perf pass) | Results JSON fps stats |
+| Ecosystem test suites (GTest, Kyty, SharpEMU, FreeBSD, Mesa, Wine) | M0 (framework), M1 (core runtime), M2 (sandbox/input/audio), M3 (caches/structurizer), M4 (fibers/jobs) | CI `unit`, `recompiler-golden`, `driver-lavapipe` |
 | Gate 1: Dreaming Sarah | M2 | Full run |
 | Gate 2: TMNT: Shredder's Revenge | M2 | Full run |
 | Gate 3: Tomb Raider I-III Remastered | M3 | Full run |

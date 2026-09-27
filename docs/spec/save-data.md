@@ -98,7 +98,19 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 ## Tests
 
-- **Unit (hosted):** mount modes (create, create2, rdonly, rdwr) with their exists, not-found and busy errors; write, umount, remount and read; snapshot restore after a simulated kill; memory blob swap; `dir_name_match` wildcards `%` and `_` (`Export.cpp:45-73`); param and icon round-trip; dialog state sequences; the NP signed-out list, including that no call throws.
+- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
+  - Isolated temporary directory fixtures guaranteeing test hermeticity across runs.
+  - Mount modes (create, create2, rdonly, rdwr) with their exists, not-found and busy errors.
+  - Write, unmount, remount, and read consistency.
+  - Snapshot restore and atomic file swapping after a simulated process kill.
+  - Memory blob swap and quota enforcement (`SCE_SAVE_DATA_ERROR_NO_SPACE`).
+  - Wildcard pattern matching (`dir_name_match` with `%` and `_`).
+  - Param and icon metadata binary round-trip.
+  - Dialog state sequence transitions and non-blocking return values.
+  - Death tests (`EXPECT_DEATH`): verify that unknown or corrupt `mount_mode` bits trigger an abort through `Unsupported()`.
+- **Ported Ecosystem Test Suites:**
+  - **SharpEMU `KernelSandboxEscapeTests`:** path traversal attack containment (e.g. `../` sequences, symlink traversal escaping container roots, Windows absolute path injection), default-deny write permission checks, and guest mount namespace isolation.
+  - **Atomic Persistence Suites:** power-cut / process-termination simulation verifying that partial writes never corrupt previous valid snapshots.
 - **Local regression:** the save round-trip per gate title (save, quit, relaunch, load), plus checkpoint loads from stored saves.
 - **Full run:** every run ends with the round-trip, and `save_roundtrip = pass` is required.
 
