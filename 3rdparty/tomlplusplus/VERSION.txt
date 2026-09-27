@@ -1,0 +1,13 @@
+toml++ (https://github.com/marzer/tomlplusplus) vendored single header.
+
+Why vendored instead of a submodule: the parser is one self-contained
+header with no build step, so a submodule would add fetch weight for no
+benefit. Only toml.hpp and LICENSE are tracked; the rest of upstream
+(tests, build files) is intentionally omitted.
+
+Pin (see docs/spec/build-toolchain.md):
+  version: v3.4.0
+  commit:  30172438cee64926dc41fdd9c11fb3ba5b2ba9de
+  sha256:  6b5172ad4dd6519aec67b919181fa7a38a2234131e5b2afa232dfe444819783e
+           (toml.hpp as committed, LF line endings)
+  licence: MIT (LICENSE)

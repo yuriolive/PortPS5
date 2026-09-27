@@ -115,9 +115,8 @@ Tests are progressively consolidated from standalone single-function executables
 **Dependency pins.** Every dependency the specs add is pinned here, by submodule commit or by a vendored release with its version and SHA-256 recorded next to it. Exact versions are chosen when each lands:
 
 | Dependency | Licence | Used by | Form | Lands |
-|---|---|---|---|---|
 | GoogleTest (GTest + GMock) | BSD-3-Clause | [verification.md](verification.md) (unit/integration test suites, death testing, mocking) | CMake FetchContent / pinned submodule | M0 / M1 |
-| toml++ | MIT, header-only | [configuration.md](configuration.md) | pinned submodule or vendored release header | M1 |
+| toml++ | MIT, header-only | [configuration.md](configuration.md) | vendored single header `3rdparty/tomlplusplus/toml.hpp` at v3.4.0 (commit `30172438cee64926dc41fdd9c11fb3ba5b2ba9de`, SHA-256 `6b5172ad4dd6519aec67b919181fa7a38a2234131e5b2afa232dfe444819783e` of the committed LF bytes, see `3rdparty/tomlplusplus/VERSION.txt`) | M1 |
 | xxHash (XXH3-64/128) | BSD-2 | [shader-recompiler.md](shader-recompiler.md) (hashed keys), [pipeline-cache.md](pipeline-cache.md) (keys and record checksums) | vendored single header at a pinned release | M1 |
 | `llvm-mc` (AMDGPU target, `gfx10.3`) | Apache-2.0 with LLVM exception | [shader-recompiler.md](shader-recompiler.md) synthetic corpus | **build-time tool only**, never linked. It regenerates the checked-in `.req` and `.spvasm` from `.s` sources; the LLVM release is pinned, and CI verifies it before use | M1 |
 | SDL2 | zlib | [input.md](input.md), [audio.md](audio.md) | existing submodule. **Pin check:** confirm that commit `4b69833` has the HIDAPI PS5 driver (*inference:* SDL 2.0.14 or later), or bump the pin | M2 |
