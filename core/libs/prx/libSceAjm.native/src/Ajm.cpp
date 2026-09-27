@@ -482,7 +482,12 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
             return SCE_AJM_ERROR_INVALID_PARAMETER;
         }
         const auto* buffers = reinterpret_cast<const AjmBuffer*>(cursor + sizeof(AjmJobHeader));
-        Execute(job, buffers, buffers + job.inputCount);
+        try {
+            Execute(job, buffers, buffers + job.inputCount);
+        } catch (const std::bad_alloc&) {
+            if (error) std::memset(error, 0, sizeof(*error));
+            return SCE_AJM_ERROR_OUT_OF_RESOURCES;
+        }
         cursor += job.bytes;
     }
     if (error) std::memset(error, 0, sizeof(*error));

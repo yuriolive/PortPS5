@@ -230,14 +230,18 @@ static std::uint32_t Render(AudioOut2Context& context) {
     if (queuedBytes == 0) {
         // The queue ran dry since the last push: the device starved, so this
         // push counts one underrun for telemetry as well as repriming the
-        // cushion.
-        static const std::vector<float> silence(static_cast<std::size_t>(CUSHION_MS) * AUDIO_OUT2_SAMPLE_RATE / 1000 * AUDIO_OUT2_OUTPUT_CHANNELS, 0.0f);
+        // cushion. Pre-allocated static buffer never throws bad_alloc.
+        static constexpr std::size_t kSilenceSamples =
+            static_cast<std::size_t>(CUSHION_MS) * AUDIO_OUT2_SAMPLE_RATE / 1000 * AUDIO_OUT2_OUTPUT_CHANNELS;
+        static const std::array<float, kSilenceSamples> silence = {};
         context.underruns++;
         g_telemetryUnderruns.fetch_add(1, std::memory_order_relaxed);
         SDL_QueueAudio(context.device, silence.data(), static_cast<Uint32>(silence.size() * sizeof(float)));
     }
-    SDL_QueueAudio(context.device, context.mix.data(), GrainBytes(context));
-    return mixed;
+    if (SDL_QueueAudio(context.device, context.mix.data(), GrainBytes(context)) < 0) {
+        return 0;
+    }
+    return mixed ? mixed : 1;
 }
 
 static void TraceSummary(AudioOut2Context& context, Clock::time_point now) {
@@ -362,9 +366,12 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
     if (QueueLevel(*context, now) >= context->queueDepth) {
         return SCE_AUDIO_OUT2_ERROR_QUEUE_FULL;
     }
+    const auto mixed = Render(*context);
+    if (context->device != 0 && mixed == 0) {
+        return static_cast<int>(0x80260501);
+    }
     context->queued++;
     context->playHead += GrainDuration(*context);
-    const auto mixed = Render(*context);
     context->pushes++;
     context->summaryPushes++;
     if (blocking) context->blockingPushes++;
