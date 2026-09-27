@@ -118,7 +118,12 @@ if(WIN32 AND MINGW)
             "${MINGW_BIN_DIR}/libstdc++-6.dll"
             "${MINGW_BIN_DIR}/libwinpthread-1.dll"
             "${PATCHED_DIR}"
-        COMMENT "Copying MinGW runtime DLLs to patched libs directory"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+            "${MINGW_BIN_DIR}/libstdc++-6.dll"
+            "${MINGW_BIN_DIR}/libwinpthread-1.dll"
+            "${UNPATCHED_DIR}"
+        COMMENT "Copying MinGW runtime DLLs to patched and unpatched libs directories"
         VERBATIM
     )
 endif()

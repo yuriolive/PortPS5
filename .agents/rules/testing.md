@@ -9,6 +9,9 @@ The protocol is in `docs/spec/verification.md`.
   - Their only output is the results JSON (use the `compat-result` skill).
 - **Every bug fix** adds a test that fails without the fix, wherever it can run without game data.
 - **Every new or changed PS5 library function** gets a unit test for its return codes and edge cases.
-- **Tests are wired into `ctest`.** Don't add targets that only build under `EXCLUDE_FROM_ALL`.
+- **Standard framework is GoogleTest (GTest + GMock).**
+  - Use `EXPECT_EQ`, `EXPECT_NE`, `ASSERT_TRUE`, etc. Never use bare `abort()` or custom unformatted `Require()` in new tests.
+  - Verify fatal error paths (`APS5_ABORT`) using GoogleTest death tests (`EXPECT_DEATH`).
+- **Tests are wired into `ctest`.** Use `portps5_add_test` or `gtest_discover_tests`. Don't add targets that only build under `EXCLUDE_FROM_ALL`.
 - **Never** weaken or delete an assertion to make a test pass without explaining why in the PR.
 - **Performance claims** (fps, ms per frame) need a before/after measurement taken with the same build flags and the same run protocol.

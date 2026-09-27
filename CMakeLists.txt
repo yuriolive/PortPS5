@@ -7,6 +7,7 @@ option(BUILD_TESTING "Build and register tests" OFF)
 if(BUILD_TESTING)
     enable_testing()
     include(PortPS5Testing)
+    include(PortPS5GTest)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
 endif()
 
@@ -59,4 +60,8 @@ endif()
 add_subdirectory(core/shader/recompiler)
 add_subdirectory(core/libs)
 add_subdirectory(core/relinker)
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
