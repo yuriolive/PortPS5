@@ -114,7 +114,11 @@ int main() {
     } catch (const std::runtime_error& error) {
         if (std::strcmp(error.what(), "native own unwind") || destroyed != 2) return 2;
     }
-    try { NotImplemented_nid_no_patch("cross DLL"); }
+    // NotImplemented_nid_no_patch no longer throws: unimplemented states abort
+    // via Unsupported(), which an in-process catch cannot observe (a death
+    // test covers it with the export-macro migration). The unwinder mechanics
+    // below rethrow a locally raised error instead.
+    try { throw std::runtime_error("cross DLL not implemented"); }
     catch (const std::runtime_error& error) {
         if (std::strcmp(error.what(), "cross DLL not implemented")) return 3;
         try {
@@ -138,7 +142,7 @@ int main() {
                 if (value != 42) return 8;
             }
         }
-        std::puts("Own Windows exceptions: typed catch, base catch, catch-all, rethrow, destructors, cross DLL passed");
+        std::puts("Own Windows exceptions: typed catch, base catch, catch-all, rethrow, destructors passed");
         return 0;
     }
     return 9;

@@ -122,7 +122,7 @@ Tests currently unregistered are classified into these labels at M0 by running e
 
 **SDL options.** `SDL_AUDIO` with the WASAPI backend stays on. From M2, `SDL_JOYSTICK` and `SDL_HIDAPI` are on, as [input.md](input.md) decides; `SDL_HAPTIC` and `SDL_SENSOR` stay off in 1.0.
 
-**Export macro.** A new `APS5_EXPORT_FN` declares the function with `APS5_VABI` and `noexcept`, so no throw crosses the boundary ([threading.md](threading.md) §Error policy), and emits the alias together ([relinker.md](relinker.md) §Target design). `policy` rejects a raw `APS5_EXPORT(` outside `general/ExportMacros.hpp` once migration is done.
+**Export macro.** A new `APS5_EXPORT_FN` declares the function with `APS5_VABI` and `noexcept`, so no throw crosses the boundary ([threading.md](threading.md) §Error policy), with a `static_assert` proving `sysv_abi` is part of the declared type on MinGW. The NID alias keeps flowing through the existing `APS5_EXPORT` mechanism, so export names stay byte-identical; the macro only guards the declaration. `policy` rejects a raw `APS5_EXPORT(` outside `general/ExportMacros.hpp` once migration is done.
 
 **Conventions.** CONVENTIONS.md keeps the naming rules and Conventional Commits, and replaces the comment rule with "comment why, not what". Each hand-encoded byte sequence, magic constant and ABI-boundary hack needs a one-line reason. TechnicalDebt.md stays human-maintained, gets a `Milestone` tag per item, and loses stale items at M0.
 

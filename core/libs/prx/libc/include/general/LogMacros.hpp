@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_LOGMACROS_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_LOGMACROS_HPP
 
+#include <cstdio>
 #include <cstring>
 
 inline const char* TrimNidPostfix(const char* func) {
