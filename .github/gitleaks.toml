@@ -1,0 +1,76 @@
+# Gitleaks configuration for PortPS5
+# https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+#
+# This file extends Gitleaks's built-in rules with patterns specific to the
+# legal boundary documented in .agents/rules/legal-boundary.md.
+#
+# Rule anatomy:
+#   id          — unique identifier shown in the alert and SARIF output
+#   description — human-readable explanation shown to the reviewer
+#   regex       — Go RE2 pattern matched against the diff content
+#   tags        — free-form labels (used for filtering and triage)
+#   severity    — informational only; Gitleaks always fails on any match
+#
+# All built-in Gitleaks rules still run. These additions cover Sony-specific
+# patterns that the built-in ruleset does not detect.
+
+title = "PortPS5 Gitleaks Configuration"
+
+# ── Extend, not replace, the built-in Gitleaks rule set ───────────────────
+[extend]
+useDefault = true
+
+# ── Project-specific rules ─────────────────────────────────────────────────
+
+[[rules]]
+id          = "ps5-idps"
+description = "Possible PS5 IDPS (console identity) key — 32-byte hex string in a context suggesting a device identity. Committing a real IDPS would expose a user's console to Sony's ban system."
+# 64 hex characters, optionally separated by spaces or colons (common
+# dump-tool formats), not inside a comment block.
+regex       = '''(?i)(idps|console.?id|device.?id)\s*[=:]\s*["']?[0-9a-f]{64}["']?'''
+tags        = ["legal-boundary", "ps5", "identity"]
+severity    = "critical"
+
+[[rules]]
+id          = "sony-rsa-private-key"
+description = "RSA/EC private key that may be a Sony firmware signing key. Private signing keys must never enter the repository."
+regex       = '''-----BEGIN (RSA |EC )?PRIVATE KEY-----'''
+tags        = ["legal-boundary", "ps5", "crypto"]
+severity    = "critical"
+
+[[rules]]
+id          = "ps5-rap-rif"
+description = "Possible PS5 .rap or .rif licence file content — base64 blocks whose length and surrounding context suggest a content licence. These tie a title to a specific PSN account."
+regex       = '''(?i)(\.rap|\.rif|content.?id|license.?key)\s*[=:]\s*["']?[A-Za-z0-9+/]{32,}={0,2}["']?'''
+tags        = ["legal-boundary", "ps5", "drm"]
+severity    = "critical"
+
+[[rules]]
+id          = "ps5-firmware-path"
+description = "Absolute path referencing PS5 firmware directories (/system, /system_ex, /update). Firmware file paths must never be hardcoded or referenced in source."
+regex       = '''["'`](/system(?:_ex)?|/update)/[^"'`\s]{4,}["'`]'''
+tags        = ["legal-boundary", "ps5", "firmware"]
+severity    = "warning"
+
+[[rules]]
+id          = "aes-128-key-material"
+description = "Potential AES-128 key (16-byte hex literal). Common format for content encryption keys in decryption tools. Must not appear in source."
+regex       = '''(?i)(aes.{0,10}key|key.{0,10}aes)\s*[=:]\s*["']?[0-9a-f]{32}["']?'''
+tags        = ["legal-boundary", "crypto"]
+severity    = "warning"
+
+# ── Allowlisted paths ──────────────────────────────────────────────────────
+# These directories contain test fixtures, documentation, or generated data
+# that legitimately contain patterns matched by the rules above.
+# All entries are relative to the repository root.
+
+[allowlist]
+description = "Paths that may contain benign pattern matches"
+paths = [
+    # Synthetic test shaders and fixtures use known-safe hex constants.
+    '''tests/''',
+    # Documentation may quote example patterns to explain what is forbidden.
+    '''docs/''',
+    # The Gitleaks config itself contains the regex patterns.
+    '''.github/gitleaks.toml''',
+]

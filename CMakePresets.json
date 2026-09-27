@@ -1,0 +1,139 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-gcc15.cmake"
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "description": "User build (Release, no tests, no SPIRV-Tools)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "ANYPS5_ENABLE_SPIRV_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Development",
+      "description": "Development and local regression (RelWithDebInfo, tests, SPIRV-Tools)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "BUILD_TESTING": "ON",
+        "ANYPS5_ENABLE_SPIRV_TOOLS": "ON"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI",
+      "description": "Hosted CI (inherits dev, warnings as errors for PortPS5 targets)",
+      "inherits": "dev",
+      "cacheVariables": {
+        "PORTPS5_COMPILE_WARNING_AS_ERROR": "ON"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "ASan / UBSan",
+      "description": "Memory-safety CI job: AddressSanitizer + UndefinedBehaviorSanitizer on every unit test. Inherits ci so warnings-as-errors and SPIRV-Tools are on. Kept separate from the main ci preset so sanitizer overhead does not slow the primary build job.",
+      "inherits": "ci",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined"
+      },
+      "environment": {
+        "ASAN_OPTIONS": "halt_on_error=1:abort_on_error=1:print_stats=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "targets": [
+        "relinker",
+        "libs"
+      ]
+    },
+    {
+      "name": "dev",
+      "configurePreset": "dev"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "ci",
+      "displayName": "CI Unit Tests",
+      "description": "Runs all unit tests in CI",
+      "configurePreset": "ci",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
+      }
+    },
+    {
+      "name": "unit",
+      "displayName": "Unit Tests",
+      "description": "Runs all unit-labeled tests",
+      "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "All Local Dev Tests",
+      "description": "Runs all tests in development",
+      "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "ASan / UBSan Unit Tests",
+      "description": "Runs unit-labeled tests under AddressSanitizer and UndefinedBehaviorSanitizer. Any heap buffer overflow, use-after-free, or undefined behaviour terminates the test immediately with a full stack trace. Run locally with: cmake --preset asan && cmake --build --preset asan && ctest --preset asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^unit$"
+        }
+      }
+    }
+  ]
+}

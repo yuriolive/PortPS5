@@ -1,0 +1,111 @@
+# ASan / UBSan — Runtime Memory Safety
+#
+# Compiles and runs all unit tests under AddressSanitizer (heap overflow,
+# stack overflow, use-after-free, use-after-return, use-after-scope) and
+# UndefinedBehaviorSanitizer (signed integer overflow, misaligned pointer
+# access, null pointer dereference, array out-of-bounds).
+#
+# Why a separate job and not a flag on the main CI job?
+#   Sanitizer builds are 2–4× slower to compile and 2–5× slower to link
+#   because the compiler instruments every memory access and every integer
+#   operation. Running them in a second parallel job keeps the primary CI
+#   job's feedback loop short while still catching memory bugs on every PR.
+#
+# Why this matters for PortPS5?
+#   The relinker manipulates raw ELF sections in guest-supplied memory. The
+#   guest-memory subsystem manages GuestArena and GuestHeap via raw pointer
+#   arithmetic. The threading subsystem uses futex words and tid tables.
+#   These are exactly the areas where spatial and temporal memory errors are
+#   most likely and most dangerous. ASan catches them at the test boundary
+#   before they become exploitable in a shipped binary.
+#
+# No external tokens required. The job uses the automatic GITHUB_TOKEN.
+# On fork PRs the job still runs because it builds from the checked-out
+# source tree; it does not read any repository secret.
+
+name: ASan / UBSan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sanitize:
+    name: AddressSanitizer + UBSan (unit tests)
+    runs-on: windows-2022
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ── Submodule cache ────────────────────────────────────────────────────
+      - name: Cache git submodules
+        id: cache-submodules
+        uses: actions/cache@v4
+        with:
+          path: .git/modules
+          key: submodules-${{ hashFiles('.gitmodules') }}
+
+      - name: Update submodules (from cache if possible)
+        shell: pwsh
+        run: git submodule update --init --recursive
+
+      # ── Toolchain ──────────────────────────────────────────────────────────
+      # ASan and UBSan are built into MinGW-w64 GCC 15.2 as libasan and
+      # libubsan. No separate installation step is needed.
+
+      - name: Cache MinGW toolchain
+        id: cache-mingw
+        uses: actions/cache@v4
+        with:
+          path: C:\mingw64
+          key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
+
+      - name: Download and verify MinGW-w64 GCC 15.2
+        if: steps.cache-mingw.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $expectedSha = (Get-Content cmake/toolchains/mingw-gcc15.sha256 | Select-String -Pattern '^[0-9a-f]{64}').Matches.Value
+          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.7z"
+          $archive = "$env:TEMP\winlibs.7z"
+          Write-Host "Downloading MinGW GCC 15.2..."
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha -ne $expectedSha) {
+              throw "Checksum mismatch — Expected: $expectedSha, got: $actualSha"
+          }
+          7z x $archive -oC:\ -y
+          Remove-Item $archive
+
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: |
+          "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # ── Build under sanitizers ─────────────────────────────────────────────
+      # The `asan` preset (CMakePresets.json) passes:
+      #   -fsanitize=address,undefined -fno-omit-frame-pointer
+      # to both the compiler and linker. ASAN_OPTIONS and UBSAN_OPTIONS are
+      # set in the preset environment so that ctest inherits them.
+      #
+      # halt_on_error=1 — terminate the process immediately on the first
+      #   sanitizer finding rather than accumulating errors. This keeps the
+      #   log readable and prevents the finding from being masked by a
+      #   subsequent crash.
+      # abort_on_error=1 — exit via abort() so ctest marks the test as
+      #   FAILED (non-zero exit) rather than letting it continue.
+
+      - name: Configure (asan preset)
+        run: cmake --preset asan
+
+      - name: Build (asan preset)
+        run: cmake --build --preset asan
+
+      - name: Run unit tests under ASan / UBSan
+        run: ctest --preset asan

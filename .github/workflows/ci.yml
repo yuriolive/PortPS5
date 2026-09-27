@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test:
+    name: Build & Test (MinGW GCC 15.2)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Cache Git submodules
+        id: cache-submodules
+        uses: actions/cache@v4
+        with:
+          path: .git/modules
+          key: submodules-${{ runner.os }}-${{ hashFiles('.gitmodules') }}
+          restore-keys: |
+            submodules-${{ runner.os }}-
+
+      - name: Update submodules
+        shell: pwsh
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Cache MinGW toolchain
+        id: cache-mingw
+        uses: actions/cache@v4
+        with:
+          path: C:\mingw64
+          key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
+
+      - name: Download and verify MinGW-w64 GCC 15.2
+        if: steps.cache-mingw.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $expectedSha = (Get-Content cmake/toolchains/mingw-gcc15.sha256 | Select-String -Pattern '^[0-9a-f]{64}').Matches.Value
+          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.7z"
+          $archive = "$env:TEMP\winlibs.7z"
+          Write-Host "Downloading MinGW GCC 15.2 from $url..."
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha -ne $expectedSha) {
+              throw "Checksum verification failed! Expected: $expectedSha, got: $actualSha"
+          }
+          Write-Host "Checksum verified. Extracting..."
+          7z x $archive -oC:\ -y
+          Remove-Item $archive
+
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: |
+          "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure ccache environment
+        shell: pwsh
+        run: |
+          "CCACHE_DIR=$env:RUNNER_TEMP\ccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CCACHE_BASEDIR=$env:GITHUB_WORKSPACE" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CCACHE_MAXSIZE=1G" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}-
+            ccache-${{ runner.os }}-${{ github.ref }}-
+            ccache-${{ runner.os }}-refs/heads/${{ github.base_ref }}-
+            ccache-${{ runner.os }}-refs/heads/main-
+            ccache-${{ runner.os }}-
+
+      - name: Verify toolchain
+        shell: pwsh
+        run: |
+          gcc --version
+          g++ --version
+          ninja --version
+          cmake --version
+          python --version
+          ccache --version
+          ccache -z
+          ccache -s
+
+      - name: Configure CMake (ci preset)
+        run: cmake --preset ci
+
+      - name: Build (ci preset)
+        run: cmake --build --preset ci
+
+      - name: Show ccache stats
+        shell: pwsh
+        run: ccache -s
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}-${{ github.run_attempt }}
+
+      - name: Run Unit Tests (ctest --preset ci)
+        run: ctest --preset ci
+
+      - name: Gate test count
+        shell: pwsh
+        run: |
+          $expectedCount = [int](Get-Content tests/expected-count).Trim()
+          $testList = ctest --preset ci -N
+          $match = [regex]::Match($testList, 'Total Tests: (\d+)')
+          if ($match.Success) {
+              $actualCount = [int]$match.Groups[1].Value
+              Write-Host "Found $actualCount tests (expected at least $expectedCount)"
+              if ($actualCount -lt $expectedCount) {
+                  throw "Test count shrunk! Expected at least $expectedCount, but found $actualCount"
+              }
+          } else {
+              throw "Could not determine test count from ctest output"
+          }
+
+      - name: Policy checks
+        shell: pwsh
+        run: |
+          Write-Host "Running policy checks..."
+          
+          # 1. No glslang symbols in libSceAgcDriver.prx
+          $driverPrx = "build/ci/core/libs/libs/libSceAgcDriver.prx"
+          if (Test-Path $driverPrx) {
+              $symbols = & nm -D $driverPrx 2>$null
+              $glslangSyms = $symbols | Select-String -Pattern "glslang"
+              if ($glslangSyms) {
+                  throw "glslang symbol found in release libSceAgcDriver.prx: $glslangSyms"
+              }
+              Write-Host "Policy pass: glslang is absent from libSceAgcDriver.prx"
+          }
+
+          # 2. No title hacks in core/
+          $titleHacks = git grep -n -E "PPSA[0-9]{5}|CUSA[0-9]{5}" core/ 2>$null | Where-Object {
+              $_ -notmatch '/tests/'
+          }
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
+          if ($titleHacks) {
+              throw "Forbidden title-ID found in core/: $titleHacks"
+          }
+          Write-Host "Policy pass: No title-IDs found in core/"
+
+          # 3. No APS5_ string literals outside the Config module. The Config
+          # module alone may name the prefix to warn about stale variables.
+          $aps5Literals = git grep -n '"APS5_' -- core/ 2>$null | Where-Object {
+              $_ -notmatch 'core/libs/prx/libc/src/Config\.cpp'
+          }
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
+          if ($aps5Literals) {
+              throw "Forbidden APS5_ string literal outside Config module: $aps5Literals"
+          }
+          Write-Host "Policy pass: No APS5_ literals outside the Config module"
+
+          # 4. No getenv() calls in production code outside the Config module.
+          # Test sources under */tests/ are exempt: they verify environment
+          # behavior without changing runtime behavior (see spec/verification.md).
+          $getenvCalls = git grep -n -E '\bgetenv\s*\(' -- core/ 2>$null | Where-Object {
+              $_ -notmatch 'core/libs/prx/libc/src/Config\.cpp' -and $_ -notmatch '/tests/'
+          }
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
+          if ($getenvCalls) {
+              throw "Forbidden getenv() call outside Config module: $getenvCalls"
+          }
+          Write-Host "Policy pass: No getenv() calls outside the Config module"
+
+          # 5. Workaround registry matches docs/workarounds.md in both
+          # directions, and key names describe mechanisms (snake_case, no
+          # title names or title-ID patterns). Test sources are exempt: their
+          # keys never ship. git grep prints path:line:content (no -h), so the
+          # filters below see the file path; the macro definition itself is
+          # excluded by name, and commented-out lines (// or # comments) are
+          # not real registrations.
+          $registered = git grep -E 'PORTPS5_WORKAROUND\(' -- core/ 2>$null | Where-Object {
+              $_ -notmatch '/tests/' -and $_ -notmatch '#define PORTPS5_WORKAROUND' -and
+                  $_ -notmatch ':[0-9]+:\s*(//|#)'
+          } | ForEach-Object {
+              if ($_ -match 'PORTPS5_WORKAROUND\(\s*([A-Za-z0-9_]+)') { $Matches[1] }
+          } | Sort-Object -Unique
+          # git grep exits with 1 when no matches are found; reset exit code as this represents policy pass.
+          $global:LASTEXITCODE = 0
+          $documented = Select-String -Path docs/workarounds.md -Pattern '^\| `([a-z0-9_]+)`' -AllMatches |
+              ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } |
+              Sort-Object -Unique
+          foreach ($key in $registered) {
+              if ($documented -notcontains $key) {
+                  throw "Workaround '$key' is registered in code but missing from docs/workarounds.md"
+              }
+              if ($key -notmatch '^[a-z][a-z0-9_]*$' -or $key -match '(PPSA|CUSA)[0-9]') {
+                  throw "Workaround key '$key' must be snake_case and free of title references"
+              }
+          }
+          foreach ($key in $documented) {
+              if ($registered -notcontains $key) {
+                  throw "Workaround '$key' is documented but not registered in code"
+              }
+          }
+          Write-Host "Policy pass: Workaround registry matches docs/workarounds.md"

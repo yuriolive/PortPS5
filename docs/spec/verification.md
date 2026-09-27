@@ -6,7 +6,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 
 ## 1. Hosted CI (GitHub Actions, every PR and every push to `main`)
 
-- **Environment:** Windows runner with the pinned MinGW-w64 GCC 15.2 toolchain, downloaded and verified by checksum.
+- **Environment:** Windows runner (pinned `windows-2022`) with the pinned MinGW-w64 GCC 15.2 toolchain, downloaded and verified by checksum.
 - **Jobs:**
 
 | Job | Contents |
@@ -14,8 +14,10 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | build | Full configure and build (relinker, every prx module, tools) from a clean tree. |
 | unit | `ctest` over libc, libkernel and relinker tests, including the futex sync tests (Milestone 1). |
 | recompiler-golden | Replays serialised shader requests through the recompiler. It diffs SPIR-V against golden files and validates each module with SPIRV-Tools `spirv-val`. The hosted corpus holds only **synthetic or hand-assembled RDNA2 shaders** written for the project, with no game bytecode. Game-derived shader requests are captured into a local-only corpus on the maintainer machine and replayed by local regression (§2). |
-| driver-lavapipe | Small driver tests (Recorder ordering, detile round-trip, buffer and texture cache invalidation) on lavapipe, Mesa's software Vulkan driver. |
-| policy | Fails on new title-specific code patterns and stray switches: no `APS5_` string literals and no `getenv` outside the `Config` module (which alone may name the `APS5_` prefix, to warn about stale variables) ([configuration.md](configuration.md)); no title-ID literals in `core/`; no hash-matched kernel tables. It also checks that the docs never name personal hardware. |
+| policy | Fails on new title-specific code patterns and stray switches: no `APS5_` string literals and no `getenv` outside the `Config` module (which alone may name the `APS5_` prefix, to warn about stale variables); test sources under `*/tests/` are exempt from the `getenv` check because they verify environment behavior without changing runtime behavior ([configuration.md](configuration.md)); no title-ID literals in `core/` except `*/tests/`, which need realistic IDs as fixture data; no hash-matched kernel tables; the `PORTPS5_WORKAROUND` registry matches `docs/workarounds.md` in both directions with mechanism-only key names. Compliance with the rule that docs describe hardware only as the generic reference tier is enforced via PR review checklist. |
+| **codeql** | GitHub CodeQL SAST (C/C++, `security-extended` query suite). Performs semantic dataflow analysis of the project's own source (`core/`, `tools/`) for buffer overflows, integer overflows, use-after-free, and format-string bugs. Third-party submodules are excluded — controlled by pinned commits and checksums. Results appear in the GitHub Security → Code scanning tab as inline SARIF alerts on PRs. No external service account or token required; uses the automatic `GITHUB_TOKEN`. Also runs on a weekly schedule so new query packs surface vulnerabilities even with no code changes. |
+| **asan** | Unit tests compiled and run under AddressSanitizer + UndefinedBehaviorSanitizer (`cmake --preset asan && ctest --preset asan`). Catches spatial and temporal memory errors (heap overflow, stack overflow, use-after-free, misaligned pointer reads, signed integer overflow) at the test boundary. Runs in parallel with `build_and_test` so the 2–5× sanitizer compile overhead does not lengthen the primary feedback loop. `ASAN_OPTIONS=halt_on_error=1:abort_on_error=1` ensures ctest marks the test `FAILED` on the first finding. Contributors can run `cmake --preset asan && cmake --build --preset asan && ctest --preset asan` locally. |
+| **gitleaks** | Secret and legal-boundary scan of every push and PR diff. Detects private keys, API tokens, and Sony-specific patterns (IDPS keys, `.rap`/`.rif` licence content, firmware paths, AES-128 key material) as defined in `.github/gitleaks.toml`. Extends Gitleaks's built-in provider ruleset. No external token required. |
 
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
@@ -79,13 +81,13 @@ Results are uploaded by a local script as a PR to `compat/results/`, or as a rel
 
 - **Pass rule:** `debug_keys_set` is empty, and in warm-cache runs `spirv_compilations` = 0 and `pipeline_creations_after_warmup` = 0. A run that fails any of these reports `result: "fail"`.
 - The results JSON carries no personally identifying hardware detail beyond GPU vendor, driver and tier.
-- The compatibility list tiers are generated from these files:
 
-| Tier | Meaning |
-|---|---|
-| Nothing | Fails to convert. |
-| Boots | Reaches the title screen. |
-| Menus | Title screen and menus work. |
-| In-game | Gameplay reached. |
-| Playable | Full run completed, but below the bar. |
-| Perfect | Full run completed, meeting the bar. |
+## 5. Test Framework Architecture (GoogleTest & GMock)
+
+PortPS5 standardizes on **GoogleTest (GTest) and GMock** for all unit, integration, and subsystem tests, replacing ad-hoc standalone `main()` executables.
+
+- **Unified Test Suites:** Instead of separate executables for every individual test function, tests are grouped into cohesive suite binaries (`kernel_tests`, `libc_tests`, `relinker_tests`, `shader_recompiler_tests`, `audio_tests`) linked against `GTest::gtest` and `GTest::gmock`.
+- **Expression Decomposition:** All test assertions use GoogleTest macros (`EXPECT_EQ`, `EXPECT_NE`, `ASSERT_TRUE`, `EXPECT_THAT`) so that failures report file, line, expression, and actual vs expected values (including formatted SCE/errno error codes).
+- **Death Testing (`EXPECT_DEATH`):** Fatal errors in `core/` call the logging abort path (`APS5_ABORT`). GoogleTest death tests verify that invalid guest pointers, misaligned addresses, or unsupported parameters abort cleanly with the expected log message without crashing the test runner process.
+- **Hardware/System Mocking (`GMock`):** Subsystems depending on external hardware (Vulkan physical devices, SDL2 audio streams, DualSense gamepad endpoints) use GMock classes to simulate device state, timing, and error conditions deterministically.
+- **Reference Test Porting & Ecosystem Ingestion:** Over 55,000 lines of subsystem tests from KytyPS5, sandbox security/threading tests from SharpEMU, FreeBSD 12 kernel/libc tests (`kqueue`, `umtx`, `mmap`), Mesa ACO RDNA2 instruction vectors, Wine NTDLL synchronization/memory tests, and shadPS4/RPCS3 container and ATRAC9 media suites are systematically adapted into PortPS5 GoogleTest suites. All Title IDs are scrubbed to generic synthetic constants (e.g. `PPSA00000`) per legal and policy rules ([TESTING.md](../TESTING.md)).
