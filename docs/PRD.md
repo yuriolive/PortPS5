@@ -14,8 +14,9 @@ PortPS5 is a GPL-2.0-only hard fork of [AnyPS5](https://github.com/boykopovar/An
 - Existing PS5 translation projects are research-grade. AnyPS5 reaches Demon's Souls' intro cinematic, but:
   - the path there relies on per-title kernel matching and about 300 `APS5_*` environment switches (PR #5; `main` has none);
   - there is no CI;
-  - guest locking is serialized;
-  - depth/stencil and indirect draws are missing.
+  - on `main`, guest locking is serialized through a process-global mutex (PR #5 removes that lock);
+  - depth/stencil is rejected, and indirect draws exist only in PR #5, as a CPU record-reading fallback;
+  - there is no gamepad input (XInput/DualSense), and all AvPlayer exports throw.
 - Nobody has shown a PS5 title completed start-to-credits.
 
 ## 3. Users
@@ -108,7 +109,7 @@ To keep the tier fixed over time, it is anchored by benchmark floors: CPU Cinebe
 
 | ID | Risk | Impact | Mitigation |
 |---|---|---|---|
-| R1 | **License compatibility.** The project is GPL-2.0-only. SPIRV-Tools (Apache-2.0) is statically linked into the recompiler when `ANYPS5_ENABLE_SPIRV_TOOLS` is on. That option defaults to off, but the planned validation path relies on it. Linking it may be incompatible with GPLv2-only distribution. glslang is a build-time tool only and is not shipped. Vulkan-Headers is headers only. | Blocks public binary releases that include SPIRV-Tools if unresolved. | Documented only, with no action for now. Options on record: ship release builds without SPIRV-Tools (validate only in CI and dev builds), run it out of process, or ask the AnyPS5 authors for a GPL-2.0-or-later grant. |
+| R1 | **License compatibility.** The project is GPL-2.0-only. SPIRV-Tools (Apache-2.0) is statically linked into the recompiler when `ANYPS5_ENABLE_SPIRV_TOOLS` is on. That option defaults to off, but the planned validation path relies on it. Linking it may be incompatible with GPLv2-only distribution. glslang (mixed BSD/Apache/MIT) is linked into the recompiler static library through `tests/DummyShaders.cpp`, which nothing calls. It probably doesn't reach shipped binaries, but that is unverified; Milestone 0 moves it to a test target and adds a CI symbol check. Vulkan-Headers is headers only. | Blocks public binary releases that include SPIRV-Tools if unresolved. | Documented only, with no action for now. Options on record: ship release builds without SPIRV-Tools (validate only in CI and dev builds), run it out of process, or ask the AnyPS5 authors for a GPL-2.0-or-later grant. |
 | R2 | Demon's Souls may not be reachable without title-specific code. | Gate title 5 slips. | The general mechanisms are scheduled early: GPU-side resource resolution, depth/stencil, indirect draws. Workarounds go only in per-game TOML. |
 | R3 | CPU-side capture of guest memory at record time races with guest CPU writes and with other queues. | Intermittent hangs and corruption. | Redesign in Milestone 3, before the first 3D gate title (spec §GPU driver). |
 | R4 | A gate title's dump is a PS4 build or otherwise unsupported. | Gate title must be swapped. | Verify the title ID at dump time, before any work on that title, and swap within the same tier. |
@@ -124,6 +125,6 @@ To keep the tier fixed over time, it is anchored by benchmark floors: CPU Cinebe
 
 ## 9. Related documents
 
-- [spec/architecture.md](spec/architecture.md): subsystem decisions and target design.
+- [spec/README.md](spec/README.md): subsystem index and decisions, with one spec file per subsystem.
 - [spec/verification.md](spec/verification.md): CI, local regression, full-run protocol and results schema.
-- [roadmap.md](roadmap.md): milestones, exit criteria and traceability.
+- [ROADMAP.md](ROADMAP.md): milestones, exit criteria and traceability.

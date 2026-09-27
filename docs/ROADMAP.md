@@ -9,7 +9,8 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 **Scope**
 - Rebase `yuriolive/PortPS5` onto AnyPS5 `main` history (`e06dbff`), and credit AnyPS5 in the README.
 - Keep the GPL-2.0-only licence.
-- Change the build: bump to C++23, add CMakePresets, pin the MinGW GCC 15.2 toolchain, and wire every existing test into `ctest`.
+- Change the build: bump to C++23, add CMakePresets, pin the MinGW GCC 15.2 toolchain, copy the MinGW runtime DLLs next to the patched prx, and wire every existing test into `ctest`.
+- Make glslang test-only by moving `tests/DummyShaders.cpp` out of the shipped recompiler library ([spec/build-toolchain.md](spec/build-toolchain.md), PRD R1).
 - Replace the no-comments rule in CONVENTIONS with "comment why, not what".
 - Hosted CI jobs `build`, `unit` and `policy` ([spec/verification.md](spec/verification.md) §1).
 - Dump the five gate titles and record their pins in the PRD §4.1 table. Swap any PS4-only build within the same tier (PRD R4).
@@ -31,10 +32,15 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - AudioOut2 and ATRAC9;
   - the recompiler fixes (saveexec order, atomic-zero, LDS barriers);
   - the `agc_shader_replay` tool and request serialisation.
+- Interim FMV correctness: PR #5's Bink-plane write-back is ported as a general mechanism, *adjacent block-generation advance*, with no switch and no title reference. It serves M1–M2 and is replaced in M3 ([spec/video-fmv.md](spec/video-fmv.md)).
+- Recompiler: bindless tables with bounds taken from device limits ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
+- Relinker: make the existing `.eh_frame`-seeded CFG (`CodeInstructionCollector`) the only instruction-discovery engine, as one shared `CodeMap` replacing the linear sweep ([spec/relinker.md](spec/relinker.md)).
+- Export ABI: the `APS5_EXPORT_FN` export macro, which declares every export `APS5_VABI` and `noexcept` ([spec/build-toolchain.md](spec/build-toolchain.md)).
+- Guest memory: replace the arena's O(n) first-fit scan with a free-list allocator; add explicit pins, the registry-owned page-state table, and return codes in place of throws ([spec/guest-memory.md](spec/guest-memory.md)).
 - Offline behaviour for NP/PSN, trophies, store and user-service dialogs, so no gate title blocks on them at boot.
-- Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex, and make errno returns correct.
-- Per-game TOML config. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
-- Runtime telemetry: frame-time log, watchdog, structured logs.
+- Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
+- Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
+- Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`).
 - Hosted CI jobs `recompiler-golden` and `driver-lavapipe`.
 - Inventory each gate title's imports (NIDs, audio and video codecs, dialogs).
 
@@ -46,11 +52,12 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 ## Milestone 2: 2D gate (titles 1–2)
 
 **Scope**
-- Input: XInput, DualSense over USB, keyboard/mouse mapping in TOML.
-- Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title.
+- Input: XInput, DualSense over USB, and keyboard/mouse mapping in TOML. XInput and DualSense are new work: enable SDL joystick/HIDAPI (currently off) and implement the `libScePad` controller paths, with hot-plug and slot assignment ([spec/input.md](spec/input.md)).
+- Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title, with crash-safe snapshots and a one-time copy of the old `_sd` layout ([spec/save-data.md](spec/save-data.md)).
+- Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
 - The disk pipeline cache.
-- Driver: depth/stencil and conditional colour-write state (`State.cpp:318-322` currently rejects them), because 2D engines also set them.
-- `tools/regress` local regression plus results JSON upload.
+- Driver: depth/stencil and conditional colour-write state, because 2D engines also set them. They are currently rejected at `State.cpp:152` on `main` and `State.cpp:318-322` in PR #5.
+- `tools/regress` local regression plus results JSON upload, with the config hash and the "FMV played" rule.
 
 **Exit criteria**
 - Dreaming Sarah and TMNT: Shredder's Revenge pass the full-run protocol (average ≥30 fps, 1% low ≥20 fps, 1080p, 0 crashes and 0 softlocks, save round-trip).
@@ -61,10 +68,11 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 **Scope**
 - Driver:
   - split into CommandProcessor, Recorder, Buffer/Texture/Pipeline caches, Rasterizer and Presenter;
-  - the `DRAW_INDIRECT` family;
-  - general block-generation write tracking for GPU-written surfaces, replacing PR #5's Bink-plane "adjacent-generation" special case. Tomb Raider and Bugsnax FMV depend on it;
+  - a GPU-side path for the `DRAW_INDIRECT` family (PR #5 implements these draws only by reading records on the CPU);
+  - general block-generation write tracking for GPU-written surfaces, replacing the interim adjacent block-generation advance from M1–M2. Tomb Raider and Bugsnax FMV depend on it;
   - redesign capture ordering: resolve buffers on the GPU, resolve images at submit time, and never satisfy a wait from an unexecuted label while a capture depends on it.
 - Recompiler: goto-elimination structurizer fallback, and bounded hash-indexed variants.
+- Save data: the multi-slot list dialog, for Tomb Raider save/load ([spec/save-data.md](spec/save-data.md)).
 
 **Exit criteria**
 - Tomb Raider I-III Remastered passes the full-run protocol.
@@ -88,7 +96,9 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 **Scope**
 - Demon's Souls from the first level to credits:
   - streaming and resource aliasing at full size;
-  - host-import budget sized automatically (the PR #5 description reports a manual 16 GiB override for later stages).
+  - host-import budget sized automatically (the PR #5 description reports a manual 16 GiB override for later stages);
+  - direct-memory aliasing (the same physical range mapped at several guest addresses) with write tracking, which `GetWriteWatch` may not cover ([spec/guest-memory.md](spec/guest-memory.md));
+  - audio object-port panning ([spec/audio.md](spec/audio.md)).
 - Performance pass against the bar.
 - Spike: llvm-mingw clang with PDBs, adopted only if the DWARF unwinder validates.
 
@@ -112,9 +122,9 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 | 1.0 goal (PRD) | Delivered in | Verified by |
 |---|---|---|
 | F1 local CLI conversion | M0 (existing), M1 (`--to-intel`) | CI build, M2 full runs |
-| F2 save/load | M2 | Save round-trip in regression and full run |
-| F3 audio | M1 (AudioOut2, ATRAC9), M1 codec inventory | Full runs |
-| F4 FMV | M1 (saveexec fix), M3 (general block tracking) | FMV frame checks, A/V offset telemetry, full runs |
+| F2 save/load | M2 (per-title storage, scripted dialogs), M3 (multi-slot list dialog) | Save round-trip in regression and full run |
+| F3 audio | M1 (AudioOut2, ATRAC9, codec inventory), M2 (single mixer, resampler, limiter), M5 (object-port panning) | Underrun telemetry, full runs |
+| F4 FMV | M1 (saveexec fix, interim adjacent block-generation advance), M3 (general block tracking) | FMV frame checks, A/V offset telemetry, full runs |
 | F5 input (XInput, DualSense, keyboard) | M2 | Full runs |
 | F6 per-game TOML | M1 | `policy` CI job, `docs/workarounds.md` |
 | F7 disk pipeline cache | M2 | Warm-cache full runs |

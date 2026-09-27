@@ -15,7 +15,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | unit | `ctest` over libc, libkernel and relinker tests, including the futex sync tests (Milestone 1). |
 | recompiler-golden | Replays serialised shader requests through the recompiler. It diffs SPIR-V against golden files and validates each module with SPIRV-Tools `spirv-val`. The hosted corpus holds only **synthetic or hand-assembled RDNA2 shaders** written for the project, with no game bytecode. Game-derived shader requests are captured into a local-only corpus on the maintainer machine and replayed by local regression (§2). |
 | driver-lavapipe | Small driver tests (Recorder ordering, detile round-trip, buffer and texture cache invalidation) on lavapipe, Mesa's software Vulkan driver. |
-| policy | Fails on new title-specific code patterns: `APS5_` environment reads outside the debug config, title-ID literals in `core/`, and hash-matched kernel tables. It also checks that the docs never name personal hardware. |
+| policy | Fails on new title-specific code patterns and stray switches: no `APS5_` string literals and no `getenv` outside the `Config` module (which alone may name the `APS5_` prefix, to warn about stale variables) ([configuration.md](configuration.md)); no title-ID literals in `core/`; no hash-matched kernel tables. It also checks that the docs never name personal hardware. |
 
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
@@ -57,7 +57,16 @@ Results are uploaded by a local script as a PR to `compat/results/`, or as a rel
   "pipeline_cache": "warm | cold",
   "fps": { "avg": 41.2, "p1_low": 27.5, "min": 18.0, "stalls": 3 },
   "av_offset_ms_max": 42,
+  "audio_underruns_per_10min": 0.2,
+  "audio_device": "wasapi-default | none",
+  "spirv_compilations": 0,
   "pipeline_creations_after_warmup": 0,
+  "warmup_ms": 4200,
+  "capture_split": 12,
+  "write_faults": 3100,
+  "config_sha256": "<hash of the resolved config>",
+  "workarounds_set": [ "copy_kernel_linear_match" ],
+  "debug_keys_set": [],
   "crashes": 0,
   "softlocks": 0,
   "checkpoints": [ { "name": "boss-2", "result": "pass", "frame_hash_ok": true } ],
@@ -68,6 +77,7 @@ Results are uploaded by a local script as a PR to `compat/results/`, or as a rel
 }
 ```
 
+- **Pass rule:** `debug_keys_set` is empty, and in warm-cache runs `spirv_compilations` = 0 and `pipeline_creations_after_warmup` = 0. A run that fails any of these reports `result: "fail"`.
 - The results JSON carries no personally identifying hardware detail beyond GPU vendor, driver and tier.
 - The compatibility list tiers are generated from these files:
 
