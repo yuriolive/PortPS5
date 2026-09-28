@@ -25,25 +25,25 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 
 **Scope**
 - [ ] Port from PR #5 onto the fork, without its title-specific code:
-  - the Recorder;
-  - host import with a staging fallback;
-  - GPU detile;
-  - GuestArena/GuestHeap behind `IWriteTracker`;
-  - `--to-intel` SSE4a lowering;
-  - AudioOut2 and ATRAC9;
-  - the recompiler fixes (saveexec order, atomic-zero, LDS barriers);
-  - the `agc_shader_replay` tool and request serialisation.
+  - [ ] the Recorder;
+  - [ ] host import with a staging fallback;
+  - [x] GPU detile;
+  - [ ] GuestArena/GuestHeap behind `IWriteTracker`;
+  - [x] `--to-intel` SSE4a lowering;
+  - [x] AudioOut2 and ATRAC9;
+  - [x] the recompiler fixes (saveexec order, atomic-zero, LDS barriers);
+  - [ ] the `agc_shader_replay` tool and request serialisation.
 - [ ] Establish foundational subsystem GoogleTest suites ported and adapted from open-source ecosystem references:
-  - Kernel synchronization & threading: port futex/umtx, pthread mutex/condvar/rwlock priority, and `WaitOnAddress` race perturbation tests from FreeBSD 12, Wine, and KytyPS5 (`SyncOnAddressTests`) ([spec/threading.md](spec/threading.md));
-  - Event queues: port kqueue/kevent edge/level triggers, user events, and timeout cancellation tests from FreeBSD 12 and KytyPS5 (`EventQueueLifetimeTests`);
-  - Virtual memory: port 16 KB page rounding, direct memory mapping, protect state transitions, and memory tracking tests from FreeBSD 12 and KytyPS5 (`VirtualMemoryAllocationTests`, `MemoryTrackerTests`) ([spec/guest-memory.md](spec/guest-memory.md));
-  - Shader recompiler: port instruction decoding bitfield validation, DPP swizzles, SDWA packing, 64-bit LDS, and divergent control-flow tests from Mesa ACO and KytyPS5 (`ShaderRecompilerComputeTests`, `shaderCfgTests`) ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
+  - [x] Kernel synchronization & threading: port futex/umtx, pthread mutex/condvar/rwlock priority, and `WaitOnAddress` race perturbation tests from FreeBSD 12, Wine, and KytyPS5 (`SyncOnAddressTests`) ([spec/threading.md](spec/threading.md));
+  - [x] Event queues: port kqueue/kevent edge/level triggers, user events, and timeout cancellation tests from FreeBSD 12 and KytyPS5 (`EventQueueLifetimeTests`);
+  - [x] Virtual memory: port 16 KB page rounding, direct memory mapping, protect state transitions, and memory tracking tests from FreeBSD 12 and KytyPS5 (`VirtualMemoryAllocationTests`, `MemoryTrackerTests`) ([spec/guest-memory.md](spec/guest-memory.md));
+  - [ ] Shader recompiler: port instruction decoding bitfield validation, DPP swizzles, SDWA packing, 64-bit LDS, and divergent control-flow tests from Mesa ACO and KytyPS5 (`ShaderRecompilerComputeTests`, `shaderCfgTests`) ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
 - [ ] Interim FMV correctness: PR #5's Bink-plane write-back is ported as a general mechanism, *adjacent block-generation advance*, with no switch and no title reference. It serves M1–M2 and is replaced in M3 ([spec/video-fmv.md](spec/video-fmv.md)).
 - [ ] Recompiler: bindless tables with bounds taken from device limits ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
-- [ ] Relinker: make the existing `.eh_frame`-seeded CFG (`CodeInstructionCollector`) the only instruction-discovery engine, as one shared `CodeMap` replacing the linear sweep ([spec/relinker.md](spec/relinker.md)).
-- [ ] Export ABI: the `APS5_EXPORT_FN` export macro, which declares every export `APS5_VABI` and `noexcept` ([spec/build-toolchain.md](spec/build-toolchain.md)).
+- [x] Relinker: make the existing `.eh_frame`-seeded CFG (`CodeInstructionCollector`) the only instruction-discovery engine, as one shared `CodeMap` replacing the linear sweep ([spec/relinker.md](spec/relinker.md)).
+- [x] Export ABI: the `APS5_EXPORT_FN` export macro, which declares every export `APS5_VABI` and `noexcept` ([spec/build-toolchain.md](spec/build-toolchain.md)).
 - [ ] Guest memory: replace the arena's O(n) first-fit scan with a free-list allocator; add explicit pins, the registry-owned page-state table, and return codes in place of throws ([spec/guest-memory.md](spec/guest-memory.md)).
-- [ ] Offline behaviour for NP/PSN, trophies, store and user-service dialogs, so no gate title blocks on them at boot.
+- [x] Offline behaviour for NP/PSN, trophies, store and user-service dialogs, so no gate title blocks on them at boot.
 - [ ] Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
 - [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
 - [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`).
