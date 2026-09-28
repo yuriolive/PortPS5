@@ -70,8 +70,8 @@ struct UmtxTime {
 
 constexpr std::uint32_t kUmtxAbstime = 0x01;
 
-int ParseUmtxTimeout(const void* uaddr, const void* uaddr2, std::uint64_t& outDeadline) noexcept {
-    outDeadline = FutexCore::kInfinite;
+int ParseUmtxTimeout(const void* uaddr, const void* uaddr2, FutexCore::Deadline& outDeadline) noexcept {
+    outDeadline = FutexCore::Deadline{FutexCore::kInfinite};
     const void* timePtr = nullptr;
     std::size_t size = 0;
     if (uaddr2 != nullptr) {
@@ -116,21 +116,21 @@ int ParseUmtxTimeout(const void* uaddr, const void* uaddr2, std::uint64_t& outDe
     } else {
         constexpr std::uint64_t kMaxSec = (UINT64_MAX - 1000000000ULL) / 1000000000ULL;
         if (static_cast<std::uint64_t>(ts.tv_sec) > kMaxSec) {
-            outDeadline = FutexCore::kInfinite;
+            outDeadline = FutexCore::Deadline{FutexCore::kInfinite};
         } else {
             const std::uint64_t relNanos = static_cast<std::uint64_t>(ts.tv_sec) * 1000000000ULL +
                                            static_cast<std::uint64_t>(ts.tv_nsec);
             const std::uint64_t now = FutexCore::NowNanos();
             if (UINT64_MAX - now <= relNanos)
-                outDeadline = FutexCore::kInfinite;
+                outDeadline = FutexCore::Deadline{FutexCore::kInfinite};
             else
-                outDeadline = now + relNanos;
+                outDeadline = FutexCore::Deadline{now + relNanos, false};
         }
     }
     return SyncWords::kSceOk;
 }
 
-int UmutexLock(std::uint32_t* word, std::uint32_t tid, std::uint64_t deadline,
+int UmutexLock(std::uint32_t* word, std::uint32_t tid, FutexCore::Deadline deadline,
                bool isUmutexStruct) noexcept {
     if (!word)
         return SyncWords::kSceEinval;
@@ -178,7 +178,7 @@ int UmutexLock(std::uint32_t* word, std::uint32_t tid, std::uint64_t deadline,
                 // Normal mutex: self-relock waits (per FreeBSD spec).
             }
         }
-        if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+        if (deadline.targetNanos != FutexCore::kInfinite && deadline.IsExpired())
             return SyncWords::kSceTimedOut;
         if ((w & kUmutexContested) == 0) {
             std::uint32_t expected = w;
@@ -313,7 +313,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         std::atomic_ref<std::uint64_t> ref(*w);
         if (ref.load(std::memory_order_acquire) != val)
             return SyncWords::kSceEbusy;  // value already changed.
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
@@ -330,7 +330,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         std::atomic_ref<std::uint32_t> ref(*w);
         if (ref.load(std::memory_order_acquire) != static_cast<std::uint32_t>(val))
             return SyncWords::kSceEbusy;
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
@@ -388,7 +388,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
     case kOpMutexLock2: {
         if (!obj)
             return SyncWords::kSceEinval;
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
@@ -397,7 +397,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
     case kOpLock: {
         if (!obj)
             return SyncWords::kSceEinval;
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
@@ -406,7 +406,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
     case kOpMutexWait: {
         if (!obj)
             return SyncWords::kSceEinval;
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
@@ -417,7 +417,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             const std::uint32_t valCurrent = ref.load(std::memory_order_acquire);
             if ((valCurrent & kUmutexOwnerMask) == 0)
                 return SyncWords::kSceOk;
-            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+            if (deadline.targetNanos != FutexCore::kInfinite && deadline.IsExpired())
                 return SyncWords::kSceTimedOut;
             if ((valCurrent & kUmutexContested) == 0) {
                 std::uint32_t expected = valCurrent;
@@ -627,12 +627,14 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
     case kOpRwRdlock: {
         if (!obj)
             return SyncWords::kSceEinval;
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
         auto* rwWord = static_cast<std::uint32_t*>(obj);
         std::atomic_ref<std::uint32_t> stateRef(rwWord[0]);
+        std::atomic_ref<std::uint32_t> writeWaitersRef(rwWord[2]);
+        std::atomic_ref<std::uint32_t> readWaitersRef(rwWord[3]);
         constexpr std::uint32_t kRwWriteOwner = 0x80000000u;
         constexpr std::uint32_t kRwWriteWaiters = 0x40000000u;
         constexpr std::uint32_t kRwReadWaiters = 0x20000000u;
@@ -651,16 +653,44 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                     return SyncWords::kSceEagain;
                 std::uint32_t expected = state;
                 if (stateRef.compare_exchange_strong(expected, state + 1, std::memory_order_acq_rel,
-                                                     std::memory_order_acquire))
+                                                     std::memory_order_acquire)) {
+                    // Decrement reader waiter count if we were registered as waiting.
+                    if ((state & kRwReadWaiters) != 0) {
+                        std::uint32_t rw = readWaitersRef.load(std::memory_order_acquire);
+                        while (rw > 0) {
+                            std::uint32_t expectedRw = rw;
+                            if (readWaitersRef.compare_exchange_strong(expectedRw, rw - 1,
+                                                                       std::memory_order_acq_rel,
+                                                                       std::memory_order_acquire))
+                                break;
+                            rw = expectedRw;
+                        }
+                        // Clear read waiters bit if no more reader waiters.
+                        if (rw == 1) {
+                            std::uint32_t s = stateRef.load(std::memory_order_acquire);
+                            while ((s & kRwReadWaiters) != 0) {
+                                std::uint32_t exp = s;
+                                if (stateRef.compare_exchange_strong(exp, s & ~kRwReadWaiters,
+                                                                     std::memory_order_acq_rel,
+                                                                     std::memory_order_acquire))
+                                    break;
+                                s = exp;
+                            }
+                        }
+                    }
                     return SyncWords::kSceOk;
+                }
                 continue;
             }
-            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+            if (deadline.targetNanos != FutexCore::kInfinite && deadline.IsExpired())
                 return SyncWords::kSceTimedOut;
             if ((state & kRwReadWaiters) == 0) {
                 std::uint32_t expected = state;
-                stateRef.compare_exchange_strong(expected, state | kRwReadWaiters,
-                                                 std::memory_order_acq_rel, std::memory_order_acquire);
+                if (stateRef.compare_exchange_strong(expected, state | kRwReadWaiters,
+                                                     std::memory_order_acq_rel, std::memory_order_acquire)) {
+                    // Increment reader waiter count.
+                    readWaitersRef.fetch_add(1, std::memory_order_acq_rel);
+                }
             }
             const std::uint32_t expect = stateRef.load(std::memory_order_acquire);
             if ((expect & wrflags) == 0)
@@ -672,12 +702,13 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
     case kOpRwWrlock: {
         if (!obj)
             return SyncWords::kSceEinval;
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
         auto* rwWord = static_cast<std::uint32_t*>(obj);
         std::atomic_ref<std::uint32_t> stateRef(rwWord[0]);
+        std::atomic_ref<std::uint32_t> writeWaitersRef(rwWord[2]);
         constexpr std::uint32_t kRwWriteOwner = 0x80000000u;
         constexpr std::uint32_t kRwWriteWaiters = 0x40000000u;
         constexpr std::uint32_t kRwReadWaiters = 0x20000000u;
@@ -685,15 +716,29 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
 
         auto cleanupWaitersOnTimeout = [&]() noexcept {
             while (true) {
-                std::uint32_t s = stateRef.load(std::memory_order_acquire);
-                if ((s & kRwWriteWaiters) == 0)
+                std::uint32_t ww = writeWaitersRef.load(std::memory_order_acquire);
+                if (ww == 0)
                     break;
-                std::uint32_t exp = s;
-                if (stateRef.compare_exchange_strong(exp, s & ~kRwWriteWaiters,
-                                                     std::memory_order_acq_rel,
-                                                     std::memory_order_acquire)) {
-                    // Wake potential readers blocked on kRwWriteWaiters.
-                    FutexCore::WakeAll(rwWord);
+                std::uint32_t expWw = ww;
+                if (writeWaitersRef.compare_exchange_strong(expWw, ww - 1,
+                                                            std::memory_order_acq_rel,
+                                                            std::memory_order_acquire)) {
+                    // If no more writer waiters, clear the kRwWriteWaiters bit.
+                    if (ww == 1) {
+                        while (true) {
+                            std::uint32_t s = stateRef.load(std::memory_order_acquire);
+                            if ((s & kRwWriteWaiters) == 0)
+                                break;
+                            std::uint32_t exp = s;
+                            if (stateRef.compare_exchange_strong(exp, s & ~kRwWriteWaiters,
+                                                                 std::memory_order_acq_rel,
+                                                                 std::memory_order_acquire)) {
+                                // Wake potential readers blocked on kRwWriteWaiters.
+                                FutexCore::WakeAll(rwWord);
+                                break;
+                            }
+                        }
+                    }
                     break;
                 }
             }
@@ -713,18 +758,45 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                                              (tid & kUmutexOwnerMask);
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
+                    // Decrement writer waiter count if we were registered as waiting.
+                    std::uint32_t ww = writeWaitersRef.load(std::memory_order_acquire);
+                    while (ww > 0) {
+                        std::uint32_t expWw = ww;
+                        if (writeWaitersRef.compare_exchange_strong(expWw, ww - 1,
+                                                                    std::memory_order_acq_rel,
+                                                                    std::memory_order_acquire))
+                            break;
+                        ww = expWw;
+                    }
+                    // Clear write waiters bit if no more writer waiters.
+                    if (ww == 1) {
+                        std::uint32_t s = stateRef.load(std::memory_order_acquire);
+                        while ((s & kRwWriteWaiters) != 0) {
+                            std::uint32_t exp = s;
+                            if (stateRef.compare_exchange_strong(exp, s & ~kRwWriteWaiters,
+                                                                 std::memory_order_acq_rel,
+                                                                 std::memory_order_acquire)) {
+                                FutexCore::WakeAll(rwWord);
+                                break;
+                            }
+                            s = exp;
+                        }
+                    }
                     return SyncWords::kSceOk;
                 }
                 continue;
             }
-            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline) {
+            if (deadline.targetNanos != FutexCore::kInfinite && deadline.IsExpired()) {
                 cleanupWaitersOnTimeout();
                 return SyncWords::kSceTimedOut;
             }
             if ((state & kRwWriteWaiters) == 0) {
                 std::uint32_t expected = state;
-                stateRef.compare_exchange_strong(expected, state | kRwWriteWaiters,
-                                                 std::memory_order_acq_rel, std::memory_order_acquire);
+                if (stateRef.compare_exchange_strong(expected, state | kRwWriteWaiters,
+                                                     std::memory_order_acq_rel, std::memory_order_acquire)) {
+                    // Increment writer waiter count.
+                    writeWaitersRef.fetch_add(1, std::memory_order_acq_rel);
+                }
             }
             const std::uint32_t expect = stateRef.load(std::memory_order_acquire);
             if ((expect & (kRwWriteOwner | kRwMaxReaders)) == 0)
