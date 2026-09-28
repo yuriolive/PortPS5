@@ -66,6 +66,12 @@ struct WorkerContext {
     int unlockResult = 0;
 };
 
+// Worker thread entry: records its own handle, attempts to unlock the main
+// thread's held mutex (expecting EPERM), and exits with WorkerRetval.
+// Role: provides the foreign-thread half of the identity/lifecycle checks.
+// Parameters: arg — pointer to the test's WorkerContext.
+// Returns: never (exits via scePthreadExit); the trailing return only
+// satisfies the PthreadEntry signature.
 static void* APS5_VABI Worker(void* arg) {
     auto& context = *static_cast<WorkerContext*>(arg);
     context.selfFromWorker = scePthreadSelf();

@@ -55,6 +55,11 @@ struct Context {
     std::atomic<bool> acquired{false};
 };
 
+// Contender thread entry: locks the shared mutex (blocking until the main
+// test thread unlocks), flags acquisition, unlocks, and exits.
+// Role: provides the waiter half of the timedwait-slice scenario.
+// Parameters: arg — pointer to the test's Context (mutex + acquired flag).
+// Returns: always nullptr; lock/unlock failures surface via EXPECT_*.
 static void* APS5_VABI Contender(void* arg) {
     auto& context = *static_cast<Context*>(arg);
     EXPECT_EQ(scePthreadMutexLock(&context.mutex), ::PortPS5::Testing::SCE_OK);
