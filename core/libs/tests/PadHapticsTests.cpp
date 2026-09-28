@@ -83,15 +83,9 @@ static void TestSlotLifecycle() {
     int h0 = scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 0, nullptr);
     REQUIRE(h0 == 1);
 
-    // Invalid index
-    REQUIRE(scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, -1, nullptr) == PAD_ERROR_INVALID_ARG);
-    REQUIRE(scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 4, nullptr) == PAD_ERROR_INVALID_ARG);
-
-    // Additional slots (slots 1, 2, 3)
-    int h1 = scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 1, nullptr);
-    REQUIRE(h1 == 2);
-    int h2 = scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 2, nullptr);
-    REQUIRE(h2 == 3);
+    // Unwired slots (index 1-3) should not allocate handles without an active controller
+    REQUIRE(scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 1, nullptr) == PAD_ERROR_RESOURCE_ALLOCATION_FAILED);
+    REQUIRE(scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 2, nullptr) == PAD_ERROR_RESOURCE_ALLOCATION_FAILED);
 
     // Controller info on valid and invalid handles
     PadControllerInformation info{};
@@ -102,10 +96,11 @@ static void TestSlotLifecycle() {
     REQUIRE(scePadGetControllerInformation(99, &info) == PAD_ERROR_INVALID_HANDLE);
     REQUIRE(scePadGetControllerInformation(h0, nullptr) == PAD_ERROR_INVALID_ARG);
 
-    // Close slots
-    REQUIRE(scePadClose_nid_postfix(h1) == PAD_OK);
-    REQUIRE(scePadClose_nid_postfix(h2) == PAD_OK);
+    // Close slot
+    REQUIRE(scePadClose_nid_postfix(h0) == PAD_OK);
     REQUIRE(scePadClose_nid_postfix(99) == PAD_ERROR_INVALID_HANDLE);
+    // Re-open slot 0
+    REQUIRE(scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 0, nullptr) == 1);
 }
 
 static void TestMonotonicTimestampAdvancement() {

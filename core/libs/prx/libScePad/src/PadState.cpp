@@ -34,6 +34,10 @@ PadManager::PadManager() {
 void PadManager::Initialize() {
     std::lock_guard lock(mutex);
     if (failure) std::rethrow_exception(failure);
+    InitializeInternal();
+}
+
+void PadManager::InitializeInternal() {
     if (!initialized) {
         processStartTime = sceKernelGetProcessTime();
         slots[0].lastTimestamp = processStartTime;
@@ -46,10 +50,12 @@ int PadManager::Open(int userId, int type, int index, int& outHandle) {
     std::lock_guard lock(mutex);
     if (failure) std::rethrow_exception(failure);
     if (!initialized) {
-        Initialize();
+        InitializeInternal();
     }
-    if (index < 0 || index >= PAD_MAX_SLOTS) {
-        return PAD_ERROR_INVALID_ARG;
+    // Only slot 0 is currently wired to host input in 1.0 (PRD single player / keyboard-mouse virtual pad).
+    // Disallow opening higher slots until multi-device InputHub is attached, preventing handles with no input stream.
+    if (index != 0) {
+        return PAD_ERROR_RESOURCE_ALLOCATION_FAILED;
     }
     const bool personalPort = (type == PAD_PORT_TYPE_STANDARD || type == PAD_PORT_TYPE_SPECIAL);
     const bool systemRemote = (userId == PAD_USER_ID_SYSTEM && type == PAD_PORT_TYPE_REMOTE);

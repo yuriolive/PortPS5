@@ -47,6 +47,8 @@ public:
 private:
     PadManager();
 
+    void InitializeInternal();
+
     std::mutex mutex;
     bool initialized = false;
     std::exception_ptr failure;
