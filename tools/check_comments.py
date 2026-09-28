@@ -110,8 +110,11 @@ def is_attribute_line(line):
 
 
 def read_source_lines(path):
-    """Read a source file and return its lines (keeping line endings)."""
-    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+    """Read a source file and return its lines (keeping line endings).
+
+    Uses utf-8-sig encoding to transparently strip any leading Byte Order Mark (BOM).
+    """
+    with open(path, 'r', encoding='utf-8-sig', errors='replace') as f:
         return f.readlines()
 
 
@@ -161,11 +164,7 @@ def is_statically_false_condition(cond):
     cond = re.sub(r'//.*$', '', cond)
     cond = re.sub(r'/\*.*?\*/', '', cond)
     cond = cond.strip()
-    if cond in ('0', '(0)', 'false', 'FALSE', '!1', '(!1)', '!true', '(!true)'):
-        return True
-    if re.match(r'^(?:0|\(0\)|false|FALSE)\b', cond):
-        return True
-    return False
+    return cond in ('0', '(0)', 'false', 'FALSE', '!1', '(!1)', '!true', '(!true)')
 
 
 @dataclass

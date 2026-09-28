@@ -30,6 +30,8 @@ from check_comments import (  # noqa: E402
     is_attribute_line,
     find_first_non_empty,
     extract_func_name,
+    is_statically_false_condition,
+    read_source_lines,
     Violation,
     VABI_FUNC_RE,
     TEST_RE,
@@ -598,6 +600,32 @@ class TestPreprocessorAndLiterals(unittest.TestCase):
         violations = check_vabi_docs('core/foo.cpp', lines)
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].line, 2)
+
+    def test_preprocessor_or_condition_not_statically_false(self):
+        # Conditions with || (e.g. 0 || ENABLE_EXPORTS) are not statically false;
+        # declarations inside must be checked.
+        lines = [
+            '#if 0 || ENABLE_EXPORTS\n',
+            'int APS5_VABI export_func();\n',
+            '#endif\n',
+        ]
+        violations = check_vabi_docs('core/foo.cpp', lines)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line, 2)
+        self.assertIn('export_func', violations[0].message)
+
+    def test_read_source_lines_strips_utf8_bom(self):
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.cpp', delete=False) as f:
+            # UTF-8 with BOM: \xef\xbb\xbf
+            f.write(b'\xef\xbb\xbf// First header line\n// Second header line\n#include <cstdint>\n')
+            temp_path = f.name
+        try:
+            lines = read_source_lines(temp_path)
+            self.assertTrue(lines[0].startswith('//'))
+            violations = check_file_header('core/foo.cpp', lines)
+            self.assertEqual(violations, [])
+        finally:
+            os.unlink(temp_path)
 
 
 if __name__ == '__main__':
