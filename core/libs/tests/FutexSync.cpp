@@ -752,6 +752,35 @@ static void TestUmtx() {
         REQUIRE(rtElapsedMs >= 35); // Waited approximately 50ms
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
+
+        // Huge relative CV timeout (exceeding signed std::chrono::nanoseconds range):
+        // Must clamp to max duration and block rather than immediately returning/spinning with negative duration.
+        // A concurrent thread signals the condition variable after 30ms to verify wake from blocked state.
+        alignas(4) std::uint32_t cvLarge[4] = {0, 0, 0, 0};
+        alignas(4) std::uint32_t mLarge[4] = {0, 0, 0, 0};
+        KernelTimespec hugeTs{10000000000LL, 0}; // ~317 years relative timeout
+        std::atomic<bool> cvStarted{false};
+        std::atomic<int> cvResult{-1};
+        std::thread waiterThread([&] {
+            REQUIRE(_umtx_op_nid_postfix(mLarge, 4, 0, nullptr, nullptr) == SCE_OK);
+            cvStarted.store(true);
+            cvResult.store(_umtx_op_nid_postfix(cvLarge, 8, 0 /* relative */, mLarge, &hugeTs));
+            // Sycall returned: mutex MUST be unlocked. Unlocking directly returns EPERM.
+            REQUIRE(_umtx_op_nid_postfix(mLarge, 6, 0, nullptr, nullptr) == SCE_EPERM);
+            // Reacquire mutex in userland:
+            REQUIRE(_umtx_op_nid_postfix(mLarge, 4, 0, nullptr, nullptr) == SCE_OK);
+            REQUIRE(_umtx_op_nid_postfix(mLarge, 6, 0, nullptr, nullptr) == SCE_OK);
+        });
+        while (!cvStarted.load()) {
+            std::this_thread::yield();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        // Verify thread is still blocked in cv wait and has not spun out:
+        REQUIRE(cvResult.load() == -1);
+        // Signal condition variable:
+        REQUIRE(_umtx_op_nid_postfix(cvLarge, 9, 0, nullptr, nullptr) == SCE_OK);
+        waiterThread.join();
+        REQUIRE(cvResult.load() == SCE_OK);
     }
     {
         // Priority ceiling validation and UMTX_OP_SET_CEILING (op 7):

@@ -550,6 +550,10 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                     break;
                 }
                 std::uint64_t waitSlice = deadline.RemainingNanos();
+                constexpr auto maxWait = static_cast<std::uint64_t>(std::chrono::nanoseconds::max().count());
+                if (waitSlice > maxWait) {
+                    waitSlice = maxWait;
+                }
                 if (deadline.isRealtime && waitSlice > 100'000'000ULL) {
                     waitSlice = 100'000'000ULL; // Slice to 100ms so wall-clock changes are noticed
                 }
