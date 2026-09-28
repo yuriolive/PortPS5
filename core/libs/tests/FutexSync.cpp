@@ -668,7 +668,7 @@ static void TestUmtx() {
             REQUIRE(_umtx_op_nid_postfix(mMulti1, 4, 0, nullptr, nullptr) == SCE_OK);
             REQUIRE(_umtx_op_nid_postfix(mMulti1, 6, 0, nullptr, nullptr) == SCE_OK);
         });
-        while (!w1Waiting.load() || mMulti1[0] != 0)
+        while (!w1Waiting.load() || std::atomic_ref<std::uint32_t>(mMulti1[0]).load(std::memory_order_acquire) != 0)
             std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         // Verify w1 is still waiting and has not spuriously awakened.
@@ -681,7 +681,7 @@ static void TestUmtx() {
             REQUIRE(_umtx_op_nid_postfix(mMulti2, 4, 0, nullptr, nullptr) == SCE_OK);
             REQUIRE(_umtx_op_nid_postfix(mMulti2, 6, 0, nullptr, nullptr) == SCE_OK);
         });
-        while (!w2Waiting.load() || mMulti2[0] != 0)
+        while (!w2Waiting.load() || std::atomic_ref<std::uint32_t>(mMulti2[0]).load(std::memory_order_acquire) != 0)
             std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         // Neither w1 nor w2 should have woken up yet!
@@ -825,6 +825,9 @@ static void TestUmtx() {
         alignas(4) std::uint32_t rwTest[4] = {0, 0x02u /* URWLOCK_PREFER_READER */, 0x12345678u, 0x87654321u};
         // Acquire write lock:
         REQUIRE(_umtx_op_nid_postfix(rwTest, 13, 0, nullptr, nullptr) == SCE_OK);
+        // Verify rw_state has URWLOCK_WRITE_OWNER (0x80000000u) and reader count is 0 (low 29 bits untouched):
+        REQUIRE((rwTest[0] & 0x80000000u) == 0x80000000u);
+        REQUIRE((rwTest[0] & 0x1FFFFFFFu) == 0u);
         // Verify rw_blocked_readers and rw_blocked_writers remain untouched:
         REQUIRE(rwTest[2] == 0x12345678u);
         REQUIRE(rwTest[3] == 0x87654321u);
@@ -864,6 +867,41 @@ static void TestUmtx() {
         REQUIRE(timedOutRc.load() == SCE_TIMEDOUT);
         // kRwWriteWaiters must have been cleared on timeout, so word state is just 1 (1 reader):
         REQUIRE(rwTest[0] == 1u);
+
+        // Multiple queued writers test: when one writer times out, remaining writer must keep
+        // kRwWriteWaiters set so new readers cannot starve it.
+        UmtxTime mediumTimeout{};
+        mediumTimeout.timeout.tv_sec = 0;
+        mediumTimeout.timeout.tv_nsec = 150 * 1000 * 1000; // 150ms
+        mediumTimeout.flags = 0;
+        mediumTimeout.clockid = 0;
+
+        std::atomic<bool> w1Started{false};
+        std::atomic<bool> w2Started{false};
+        std::atomic<int> w1Rc{0};
+        std::atomic<int> w2Rc{0};
+
+        std::thread w1Thread([&] {
+            w1Started.store(true);
+            w1Rc.store(_umtx_op_nid_postfix(rwTest, 13, 0,
+                       reinterpret_cast<void*>(sizeof(UmtxTime)), &shortTimeout)); // 10ms
+        });
+        std::thread w2Thread([&] {
+            w2Started.store(true);
+            w2Rc.store(_umtx_op_nid_postfix(rwTest, 13, 0,
+                       reinterpret_cast<void*>(sizeof(UmtxTime)), &mediumTimeout)); // 150ms
+        });
+
+        w1Thread.join();
+        REQUIRE(w1Rc.load() == SCE_TIMEDOUT);
+        // w1 timed out, but w2 is still queued: kRwWriteWaiters must still be set!
+        REQUIRE((rwTest[0] & 0x40000000u) != 0);
+
+        w2Thread.join();
+        REQUIRE(w2Rc.load() == SCE_TIMEDOUT);
+        // Both writers timed out: now kRwWriteWaiters must be cleared!
+        REQUIRE((rwTest[0] & 0x40000000u) == 0);
+
         // Unlock reader:
         REQUIRE(_umtx_op_nid_postfix(rwTest, 14, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(rwTest[0] == 0u);
