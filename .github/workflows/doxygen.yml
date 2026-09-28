@@ -1,0 +1,102 @@
+# PortPS5 — Doxygen Documentation Gate
+#
+# Purpose: Runs Doxygen on every PR and push to main to catch undocumented
+#   public APIs (missing doc comments, missing @param/@return tags, or
+#   malformed Doxygen markup) in core/libs/prx and core/relinker.
+#
+# Relationship to ci.yml:
+#   This is a separate, lightweight job.  It does not build the project and
+#   does not need the MinGW toolchain.  It installs Doxygen via Chocolatey
+#   (pre-installed on windows-2022 runners), runs 'doxygen docs/Doxyfile',
+#   and fails if Doxygen emits any WARNING (WARN_AS_ERROR = YES in Doxyfile).
+#
+# On failure:
+#   The build/doxygen_warnings.log file is uploaded as a CI artifact named
+#   'doxygen-warnings' so contributors can download and triage without
+#   re-running the job locally.
+#
+# Doxygen version pinned via 'choco install' to keep the gate deterministic.
+# Update the --version flag here and in the choco install step together.
+
+name: Doxygen API Documentation Gate
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'core/libs/prx/**'
+      - 'core/libs/SceTypes.hpp'
+      - 'core/libs/SceShaders.hpp'
+      - 'core/relinker/**'
+      - 'docs/Doxyfile'
+      - '.github/workflows/doxygen.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'core/libs/prx/**'
+      - 'core/libs/SceTypes.hpp'
+      - 'core/libs/SceShaders.hpp'
+      - 'core/relinker/**'
+      - 'docs/Doxyfile'
+      - '.github/workflows/doxygen.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  doxygen_doc_gate:
+    name: Doxygen API Doc Gate
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      # windows-2022 runners ship with Chocolatey.  Pinning the version keeps
+      # the gate deterministic: a Doxygen version bump is a deliberate change.
+      - name: Install Doxygen 1.13.2
+        shell: pwsh
+        run: |
+          choco install doxygen.install --version=1.13.2 --yes --no-progress
+          # Add Doxygen's default install directory to PATH for this job.
+          $doxygenBin = "C:\Program Files\doxygen\bin"
+          if (Test-Path $doxygenBin) {
+            "$doxygenBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Verify Doxygen
+        shell: pwsh
+        run: doxygen --version
+
+      # Ensure the output directory exists before running, so the WARN_LOGFILE
+      # path (build/doxygen_warnings.log) is always writable.
+      - name: Create output directories
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "build\doxygen_out" | Out-Null
+          New-Item -ItemType Directory -Force -Path "build\doxygen_xml" | Out-Null
+
+      - name: Run Doxygen
+        shell: pwsh
+        run: |
+          Write-Host "Running: doxygen docs/Doxyfile"
+          doxygen docs/Doxyfile
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            Write-Host "::error::Doxygen exited with code $exitCode — see 'doxygen-warnings' artifact for details."
+            exit $exitCode
+          }
+          Write-Host "Doxygen gate passed: no undocumented public APIs or doc errors."
+
+      # Always upload the warning log so contributors can triage failures
+      # without a local Doxygen installation.
+      - name: Upload warning log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doxygen-warnings
+          path: build/doxygen_warnings.log
+          retention-days: 14

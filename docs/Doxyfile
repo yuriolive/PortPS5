@@ -1,0 +1,144 @@
+# PortPS5 — Doxyfile
+#
+# Purpose: Doxygen configuration for the public-API documentation CI gate.
+#   Scans core/libs/prx and core/relinker for undocumented public symbols,
+#   missing @param/@return tags, and malformed doc-comment markup.
+#
+# Run manually:   doxygen docs/Doxyfile
+# CI gate:        .github/workflows/doxygen.yml  (runs on every PR and push to main)
+#
+# Design decisions:
+#   - EXTRACT_ALL = NO  so Doxygen only reports symbols that *have* doc comments.
+#     Combined with WARN_IF_UNDOCUMENTED = YES this creates the gate: a public
+#     symbol without a doc comment is a warning → error.
+#   - WARN_AS_ERROR = YES turns every Doxygen WARNING into a non-zero exit code,
+#     which the CI step detects as a failure.
+#   - HTML and LaTeX outputs are disabled; this job only validates comments.
+#     Enabling GENERATE_XML = YES produces structured output for future tooling
+#     (e.g. API diff checks).
+#   - EXCLUDE_PATTERNS covers vendored and generated directories so third-party
+#     code never contributes false positives.
+#   - WARN_LOGFILE writes structured warnings to build/doxygen_warnings.log so
+#     the CI step can upload it as an artifact for triage.
+#
+# ABI note (APS5_VABI):
+#   PREDEFINED maps APS5_VABI to nothing so Doxygen parses the function
+#   signature correctly without the __attribute__((sysv_abi)) qualifier.
+#   Similarly APS5_EXPORT and APS5_ABORT are defined away.
+
+# ---------------------------------------------------------------------------
+# Project identity
+# ---------------------------------------------------------------------------
+
+PROJECT_NAME           = "PortPS5"
+PROJECT_BRIEF          = "Native Windows port layer for PS5 games"
+PROJECT_NUMBER         = ""
+
+# ---------------------------------------------------------------------------
+# Input
+# ---------------------------------------------------------------------------
+
+INPUT                  = core/libs/prx \
+                         core/libs/SceTypes.hpp \
+                         core/libs/SceShaders.hpp \
+                         core/relinker
+
+INPUT_ENCODING         = UTF-8
+RECURSIVE              = YES
+FILE_PATTERNS          = *.cpp *.hpp *.cc *.cxx *.h *.hxx
+
+EXCLUDE_PATTERNS       = */build/* \
+                         */3rdparty/* \
+                         */.codebase-memory/* \
+                         */CMakeFiles/* \
+                         */unpatched/* \
+                         *_test.cpp \
+                         *_tests.cpp \
+                         *Tests.cpp
+
+# Strip the repo root from reported paths so warnings show repo-relative paths.
+STRIP_FROM_PATH        = .
+STRIP_FROM_INC_PATH    = .
+
+# ---------------------------------------------------------------------------
+# Extraction and visibility
+# ---------------------------------------------------------------------------
+
+# Only report symbols that have doc comments.  Missing doc-comment = warning.
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+EXTRACT_LOCAL_CLASSES  = NO
+EXTRACT_ANON_NSPACES   = NO
+INTERNAL_DOCS          = NO
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+# ---------------------------------------------------------------------------
+# Warnings — the core of the gate
+# ---------------------------------------------------------------------------
+
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_IF_INCOMPLETE_DOC = YES
+WARN_NO_PARAMDOC       = YES
+WARN_AS_ERROR          = YES
+
+# Structured warning log for CI artifact upload.
+WARN_LOGFILE           = build/doxygen_warnings.log
+
+# Human-readable warning format: path:line: text  (matches GCC convention so
+# editors and GitHub Actions annotation parsers recognise it automatically).
+WARN_FORMAT            = "$file:$line: $text"
+
+# ---------------------------------------------------------------------------
+# Preprocessor
+# ---------------------------------------------------------------------------
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+
+# Map PortPS5 ABI and export macros to nothing so Doxygen parses signatures
+# cleanly.  Without this, APS5_VABI before the return type confuses the
+# C++ parser and the function is silently skipped.
+PREDEFINED             = APS5_VABI= \
+                         APS5_EXPORT= \
+                         APS5_ABORT(...)= \
+                         APS5_NORETURN= \
+                         _WIN32 \
+                         __cplusplus=202002L
+
+# Do not follow #include chains into system or third-party headers; only
+# parse the explicitly listed INPUT paths.
+SEARCH_INCLUDES        = NO
+
+# ---------------------------------------------------------------------------
+# Output — documentation is not generated; this job validates only
+# ---------------------------------------------------------------------------
+
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = build/doxygen_xml
+
+OUTPUT_DIRECTORY       = build/doxygen_out
+CREATE_SUBDIRS         = NO
+
+# ---------------------------------------------------------------------------
+# Miscellaneous
+# ---------------------------------------------------------------------------
+
+QUIET                  = NO
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = NO
+BUILTIN_STL_SUPPORT    = YES
+CPP_CLI_SUPPORT        = NO
+CLANG_ASSISTED_PARSING = NO
+
+# Markdown support for README-style doc comments.
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES

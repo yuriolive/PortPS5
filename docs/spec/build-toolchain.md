@@ -155,6 +155,7 @@ Tests are progressively consolidated from standalone single-function executables
 - **`build` job:** configure and build the `ci` preset from a clean clone, with submodules at their recorded SHAs.
 - **`unit` job:** `ctest --preset ci -L unit`. Its gate is that the total test count must not shrink from one commit to the next; the count is stored in a checked-in `tests/expected-count`.
 - **`policy` job:** the artifact dependency check above, plus the patterns in [verification.md](verification.md) §1.
+- **`doxygen-doc-gate` job:** runs `doxygen docs/Doxyfile` on `core/libs/prx` and `core/relinker` via `.github/workflows/doxygen.yml`. Triggered only on changes to those directories or to `docs/Doxyfile`. Does not require the MinGW toolchain. Installs Doxygen 1.13.2 via Chocolatey. Fails on any undocumented public symbol, missing `@param`/`@return` tag, or malformed Doxygen markup (`WARN_AS_ERROR = YES`). Uploads `build/doxygen_warnings.log` as the `doxygen-warnings` artifact on failure. Complements the Python `check_comments.py` linter, which enforces PortPS5-specific per-file rules (file-level headers, `APS5_VABI` doc coverage, `TEST()` invariant comments) in the main `ci.yml` policy step.
 - **Local:** `ctest -L local` before each regression run ([verification.md](verification.md) §2).
 
 ## Milestones
