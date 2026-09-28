@@ -20,7 +20,7 @@ acceptance_criteria:
     verify: ctest --preset ci -L unit
   - name: golden_corpus_coverage_green
     description: The hosted synthetic-shader golden corpus covers every decoded RDNA instruction class and is green in CI; the local-only game-derived corpus replays with 0 validation failures and no Unsupported() abort.
-    verify: ctest --preset ci -L golden
+    verify: ctest --preset golden
 
 context_references:
   - docs/ROADMAP.md

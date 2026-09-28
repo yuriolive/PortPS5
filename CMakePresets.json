@@ -113,6 +113,20 @@
       }
     },
     {
+      "name": "golden",
+      "displayName": "Recompiler Golden Corpus",
+      "description": "Runs golden-labeled tests (hosted recompiler-golden job)",
+      "configurePreset": "ci",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^golden$"
+        }
+      }
+    },
+    {
       "name": "dev",
       "displayName": "All Local Dev Tests",
       "description": "Runs all tests in development",
