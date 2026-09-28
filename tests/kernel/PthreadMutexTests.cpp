@@ -1,3 +1,7 @@
+// tests/kernel/PthreadMutexTests.cpp
+// Verification test suite for POSIX pthread mutex synchronization in PortPS5 libkernel.
+// Verifies mutual exclusion invariants, recursive locking attributes, error-checking semantics, and try-lock.
+
 #include "common/TestHarness.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 

@@ -1,3 +1,7 @@
+// tests/kernel/SyncOnAddressTests.cpp
+// Verification test suite for kernel sync-on-address (futex / WaitOnAddress) primitives in PortPS5.
+// Verifies atomic wait, timed wait, spurious wakeup handling, and concurrent single/multi-thread wakeups.
+
 #include "common/TestHarness.hpp"
 #include "prx/libkernel/Sync/SyncOnAddress.hpp"
 

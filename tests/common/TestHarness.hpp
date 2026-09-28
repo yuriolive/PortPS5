@@ -1,3 +1,8 @@
+// tests/common/TestHarness.hpp
+// Common GoogleTest test harness and environment definitions for PortPS5 verification suites.
+// Provides SCE error constants, guest page-size definitions, hermetic temporary directory fixtures,
+// and shared assertion macros.
+
 #pragma once
 
 #include <gtest/gtest.h>
