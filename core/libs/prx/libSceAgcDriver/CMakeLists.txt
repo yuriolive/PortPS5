@@ -162,8 +162,20 @@ if(ANYPS5_ENABLE_SPIRV_TOOLS)
         # vacuously on a missing or wiped corpus (Macroscope review on PR #31).
         add_test(NAME agc_replay_golden_empty COMMAND agc_shader_replay --golden "${AGC_REPLAY_FIXTURE_DIR}/empty")
         set_tests_properties(agc_replay_golden_empty PROPERTIES LABELS "golden" WILL_FAIL TRUE)
+        # Mismatch fixture: a valid request with a corrupted golden must fail, locking the
+        # diff-failure exit path (not just the pass path the CRLF fixture covers).
+        file(MAKE_DIRECTORY "${AGC_REPLAY_FIXTURE_DIR}/mismatch")
+        configure_file("${AGC_REPLAY_CORPUS_DIR}/smem_load.wave64.req" "${AGC_REPLAY_FIXTURE_DIR}/mismatch/smem_load.wave64.req" COPYONLY)
+        file(WRITE "${AGC_REPLAY_FIXTURE_DIR}/mismatch/smem_load.wave64.spvasm" "deliberately corrupted golden\n")
+        add_test(NAME agc_replay_golden_mismatch COMMAND agc_shader_replay --golden "${AGC_REPLAY_FIXTURE_DIR}/mismatch")
+        set_tests_properties(agc_replay_golden_mismatch PROPERTIES LABELS "golden" WILL_FAIL TRUE)
+        # Bad-request fixture: an unparseable .req must fail instead of passing silently.
+        file(MAKE_DIRECTORY "${AGC_REPLAY_FIXTURE_DIR}/badreq")
+        file(WRITE "${AGC_REPLAY_FIXTURE_DIR}/badreq/broken.wave64.req" "!!!not-base64!!!\n")
+        add_test(NAME agc_replay_golden_badreq COMMAND agc_shader_replay --golden "${AGC_REPLAY_FIXTURE_DIR}/badreq")
+        set_tests_properties(agc_replay_golden_badreq PROPERTIES LABELS "golden" WILL_FAIL TRUE)
         if(WIN32)
-            foreach(replayTest agc_replay_golden_crlf agc_replay_golden_empty)
+            foreach(replayTest agc_replay_golden_crlf agc_replay_golden_empty agc_replay_golden_mismatch agc_replay_golden_badreq)
                 set_tests_properties(${replayTest} PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
             endforeach()
