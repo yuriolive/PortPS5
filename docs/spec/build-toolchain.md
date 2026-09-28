@@ -101,7 +101,7 @@ Build presets name the `relinker` and `libs` targets explicitly, so that patched
 | Label | Runs in | Members |
 |---|---|---|
 | `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, PR #5 `amd64_only_*`, ported Kyty kernel/sync/event suites |
-| `golden` | hosted `recompiler-golden` | `agc_shader_replay` over `tests/golden/` (M1) |
+| `golden` | hosted `recompiler-golden` | `recompiler_golden_tests` (coverage gate + wave32/64 replay) and `agc_shader_replay --golden` over `core/shader/recompiler/tests/golden/corpus/` (M1) |
 | `lavapipe` | hosted `driver-lavapipe` | driver tests that need a Vulkan device (M1) |
 | `stress` | local / nightly CI | multithreaded futex/umtx concurrency perturbation tests |
 | `local` | maintainer machine only | anything needing a hardware GPU or game data |
@@ -118,7 +118,7 @@ Tests are progressively consolidated from standalone single-function executables
 | GoogleTest (GTest + GMock) | BSD-3-Clause | [verification.md](verification.md) (unit/integration test suites, death testing, mocking) | CMake FetchContent / pinned submodule | M0 / M1 |
 | toml++ | MIT, header-only | [configuration.md](configuration.md) | vendored single header `3rdparty/tomlplusplus/toml.hpp` at v3.4.0 (commit `30172438cee64926dc41fdd9c11fb3ba5b2ba9de`, SHA-256 `6b5172ad4dd6519aec67b919181fa7a38a2234131e5b2afa232dfe444819783e` of the committed LF bytes, see `3rdparty/tomlplusplus/VERSION.txt`) | M1 |
 | xxHash (XXH3-64/128) | BSD-2 | [shader-recompiler.md](shader-recompiler.md) (hashed keys), [pipeline-cache.md](pipeline-cache.md) (keys and record checksums) | vendored single header at a pinned release | M1 |
-| `llvm-mc` (AMDGPU target, `gfx10.3`) | Apache-2.0 with LLVM exception | [shader-recompiler.md](shader-recompiler.md) synthetic corpus | **build-time tool only**, never linked. It regenerates the checked-in `.req` and `.spvasm` from `.s` sources; the LLVM release is pinned, and CI verifies it before use | M1 |
+| `llvm-mc` (AMDGPU target, `gfx10.3`) | Apache-2.0 with LLVM exception | superseded: the synthetic corpus is hand-assembled dwords with field layouts cited to the decoder sources ([shader-recompiler.md](shader-recompiler.md)), so no `.s` sources and no build-time assembler exist | — | dropped |
 | SDL2 | zlib | [input.md](input.md), [audio.md](audio.md) | existing submodule. **Pin check:** confirm that commit `4b69833` has the HIDAPI PS5 driver (*inference:* SDL 2.0.14 or later), or bump the pin | M2 |
 
 **SDL options.** `SDL_AUDIO` with the WASAPI backend stays on. From M2, `SDL_JOYSTICK` and `SDL_HIDAPI` are on, as [input.md](input.md) decides; `SDL_HAPTIC` and `SDL_SENSOR` stay off in 1.0.
@@ -133,7 +133,7 @@ Tests are progressively consolidated from standalone single-function executables
 - [shader-recompiler.md](shader-recompiler.md) and [pipeline-cache.md](pipeline-cache.md): `add_shader_recompiler` stays a function. The recompiler version constant used as a cache key is generated at configure time from `git describe` plus a manual schema number.
 - [verification.md](verification.md): the `ci` preset and the ctest labels are the job entry points; local regression uses `dev`. Toolchain checksum verification happens in CI.
 - [audio.md](audio.md): LibAtrac9 submodule. [input.md](input.md): SDL2 `SDL_JOYSTICK` and `SDL_HIDAPI` are enabled in M2, and the SDL pin is checked then.
-- [shader-recompiler.md](shader-recompiler.md) and [pipeline-cache.md](pipeline-cache.md): the xxHash pin and the `llvm-mc` build-time tool. [configuration.md](configuration.md): the toml++ pin.
+- [shader-recompiler.md](shader-recompiler.md) and [pipeline-cache.md](pipeline-cache.md): the xxHash pin. The `llvm-mc` build-time tool was dropped: the corpus is hand-assembled dwords. [configuration.md](configuration.md): the toml++ pin.
 - [configuration.md](configuration.md): no build-time behaviour switches. Debug features are runtime `[debug]` keys, not CMake options.
 
 ## Failure modes
@@ -154,6 +154,7 @@ Tests are progressively consolidated from standalone single-function executables
 
 - **`build` job:** configure and build the `ci` preset from a clean clone, with submodules at their recorded SHAs.
 - **`unit` job:** `ctest --preset ci -L unit`. Its gate is that the total test count must not shrink from one commit to the next; the count is stored in a checked-in `tests/expected-count`.
+- **`recompiler-golden` job:** builds `recompiler_golden_tests` and `agc_shader_replay` (ci preset), then runs `ctest --preset golden` plus `agc_shader_replay --golden core/shader/recompiler/tests/golden/corpus`. The golden suite carries its own coverage gate, so no count file is needed.
 - **`policy` job:** the artifact dependency check above, plus the patterns in [verification.md](verification.md) §1.
 - **`doxygen-doc-gate` job:** runs `doxygen docs/Doxyfile` on `core/libs/prx` and `core/relinker` via `.github/workflows/doxygen.yml` on every PR and push to `main` as a required status check. Does not require the MinGW toolchain. Installs Doxygen 1.13.2 via Chocolatey. Fails on any malformed Doxygen markup with `WARN_AS_ERROR = FAIL_ON_WARNINGS` so all warnings are logged before failing (`WARN_IF_UNDOCUMENTED` and `WARN_NO_PARAMDOC` are disabled initially to avoid blocking on inherited pre-existing debt). Uploads `build/doxygen_warnings.log` as the `doxygen-warnings` artifact on failure. Complements the Python `check_comments.py` linter, which enforces PortPS5-specific per-file rules (file-level headers, `APS5_VABI` doc coverage, `TEST()` invariant comments) in the main `ci.yml` policy step.
 - **Local:** `ctest -L local` before each regression run ([verification.md](verification.md) §2).
@@ -161,7 +162,8 @@ Tests are progressively consolidated from standalone single-function executables
 ## Milestones
 
 - [x] **M0:** C++23; CMakePresets; the pinned toolchain file and CI download with checksum; every existing test in `ctest` with labels; runtime DLL copy; CONVENTIONS rewrite; TechnicalDebt clean-up; `build`, `unit` and `policy` jobs. `DummyShaders` extraction also lands in M0 because it touches licence posture.
-- [ ] **M1:** `golden` and `lavapipe` labels and jobs (`recompiler-golden`, `driver-lavapipe`), the `agc_shader_replay` port from PR #5, the PR #5 relinker tests, and the `APS5_EXPORT_FN` migration. The toml++ and xxHash pins, and the pinned `llvm-mc` build-time tool for the synthetic corpus.
+- [ ] **M1:** `lavapipe` label and job (`driver-lavapipe`), the PR #5 relinker tests, and the `APS5_EXPORT_FN` migration. The toml++ and xxHash pins.
+- [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from PR #5 (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
 - [ ] **M2:** `tools/regress` build target and its `local` label. SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled.
 - [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
 - [ ] **M6:** release preset used for the release commit, with the R1 status recorded.

@@ -48,7 +48,8 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [ ] Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
 - [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
 - [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`).
-- [ ] Hosted CI jobs `recompiler-golden` and `driver-lavapipe`.
+- [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI).
+- [ ] Hosted CI job `driver-lavapipe`.
 - [ ] Inventory each gate title's imports (NIDs, audio and video codecs, dialogs).
 
 **Exit criteria**

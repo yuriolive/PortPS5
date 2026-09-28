@@ -105,6 +105,44 @@ target_include_directories(libSceAgcDriver PRIVATE
 
 add_shader_recompiler(shader_recompiler_agc_driver libc)
 
+if(ANYPS5_ENABLE_SPIRV_TOOLS)
+    # Offline shader request replayer (M1 recompiler-golden gate). Host-only dev tool:
+    # built for dev/ci presets, never shipped. Replays serialized `.req` requests through
+    # Recompile and diffs disassembled SPIR-V against `.spvasm` goldens (--golden).
+    add_executable(agc_shader_replay
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/AgcShaderReplay.cpp
+    )
+    target_include_directories(agc_shader_replay PRIVATE
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler/Translation/include
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler/Optimization/include
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler/SpirvBackend/include
+        ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/golden
+        ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
+    )
+    target_link_libraries(agc_shader_replay PRIVATE
+        shader_recompiler_agc_driver
+        SPIRV-Tools-static
+        SPIRV-Tools-opt
+        libc
+    )
+    set_target_properties(agc_shader_replay PROPERTIES CXX_EXTENSIONS OFF EXCLUDE_FROM_ALL OFF)
+    if(WIN32 AND TARGET libc)
+        set_target_properties(agc_shader_replay PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:libc>"
+        )
+    endif()
+    if(MINGW)
+        target_link_options(agc_shader_replay PRIVATE "-Wl,--allow-multiple-definition")
+    endif()
+    if(COMMAND configure_windows_unwind)
+        configure_windows_unwind(agc_shader_replay)
+    endif()
+endif()
+
 target_link_libraries(libSceAgcDriver PRIVATE
         shader_recompiler_agc_driver
         SDL2-static
@@ -295,6 +333,16 @@ if(BUILD_TESTING)
         INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler
         LIBRARIES shader_recompiler_agc_driver libc
         LABELS   unit
+    )
+
+    # Hosted recompiler-golden gate (M1 exit): synthetic corpus replay over every
+    # decoded instruction class. Labelled 'golden' so ctest --preset golden runs only
+    # this suite; it is excluded from the 'unit' preset and its expected-count gate.
+    portps5_add_gtest(recompiler_golden_tests
+        SOURCES  ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/golden/RecompilerGoldenTests.cpp
+        INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/golden
+        LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   golden
     )
 endif()
 

@@ -1,0 +1,86 @@
+OpCapability Shader
+OpCapability SignedZeroInfNanPreserve
+OpExtension "SPV_KHR_float_controls"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main SignedZeroInfNanPreserve 32
+OpExecutionMode %main LocalSize 64 1 1
+OpName %BufferResource "BufferResource"
+OpName %vsharp "vsharp"
+OpName %image_3 "image_3"
+OpName %main "main"
+OpName %lds_dwords "lds_dwords"
+OpDecorate %_arr_uint_uint_32 ArrayStride 4
+OpMemberDecorate %BufferResource 0 Offset 0
+OpDecorate %BufferResource Block
+OpDecorate %image_3 DescriptorSet 0
+OpDecorate %image_3 Binding 3
+%uint = OpTypeInt 32 0
+%uint_32 = OpConstant %uint 32
+%_arr_uint_uint_32 = OpTypeArray %uint %uint_32
+%BufferResource = OpTypeStruct %_arr_uint_uint_32
+%_ptr_PushConstant_BufferResource = OpTypePointer PushConstant %BufferResource
+%vsharp = OpVariable %_ptr_PushConstant_BufferResource PushConstant
+%float = OpTypeFloat 32
+%8 = OpTypeImage %float 2D 0 0 0 1 Unknown
+%uint_1 = OpConstant %uint 1
+%_arr_8_uint_1 = OpTypeArray %8 %uint_1
+%_ptr_UniformConstant__arr_8_uint_1 = OpTypePointer UniformConstant %_arr_8_uint_1
+%image_3 = OpVariable %_ptr_UniformConstant__arr_8_uint_1 UniformConstant
+%void = OpTypeVoid
+%18 = OpTypeFunction %void
+%uint_0 = OpConstant %uint 0
+%_ptr_PushConstant_uint = OpTypePointer PushConstant %uint
+%uint_2 = OpConstant %uint 2
+%uint_3 = OpConstant %uint 3
+%uint_4 = OpConstant %uint 4
+%uint_5 = OpConstant %uint 5
+%uint_6 = OpConstant %uint 6
+%uint_7 = OpConstant %uint 7
+%bool = OpTypeBool
+%true = OpConstantTrue %bool
+%v4uint = OpTypeVector %uint 4
+%46 = OpConstantComposite %v4uint %uint_0 %uint_0 %uint_0 %uint_0
+%_ptr_UniformConstant_8 = OpTypePointer UniformConstant %8
+%v2uint = OpTypeVector %uint 2
+%v4float = OpTypeVector %float 4
+%uint_1024 = OpConstant %uint 1024
+%_arr_uint_uint_1024 = OpTypeArray %uint %uint_1024
+%_ptr_Workgroup__arr_uint_uint_1024 = OpTypePointer Workgroup %_arr_uint_uint_1024
+%lds_dwords = OpVariable %_ptr_Workgroup__arr_uint_uint_1024 Workgroup
+%_ptr_Workgroup_uint = OpTypePointer Workgroup %uint
+%81 = OpConstantComposite %v2uint %uint_0 %uint_0
+%main = OpFunction %void None %18
+%14 = OpLabel
+%19 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_0
+%20 = OpLoad %uint %19
+%23 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_1
+%24 = OpLoad %uint %23
+%25 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_2
+%26 = OpLoad %uint %25
+%28 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_3
+%29 = OpLoad %uint %28
+%31 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_4
+%32 = OpLoad %uint %31
+%34 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_5
+%35 = OpLoad %uint %34
+%37 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_6
+%38 = OpLoad %uint %37
+%40 = OpAccessChain %_ptr_PushConstant_uint %vsharp %uint_0 %uint_7
+%41 = OpLoad %uint %40
+%52 = OpAccessChain %_ptr_UniformConstant_8 %image_3 %uint_0
+%53 = OpLoad %8 %52
+%54 = OpImageFetch %v4float %53 %81 Lod %uint_0
+%58 = OpCompositeExtract %float %54 0
+%59 = OpBitcast %uint %58
+%60 = OpCompositeExtract %float %54 1
+%61 = OpBitcast %uint %60
+%62 = OpCompositeExtract %float %54 2
+%63 = OpBitcast %uint %62
+%64 = OpCompositeExtract %float %54 3
+%65 = OpBitcast %uint %64
+%66 = OpCompositeConstruct %v4uint %59 %61 %63 %65
+%79 = OpAccessChain %_ptr_Workgroup_uint %lds_dwords %uint_0
+OpStore %79 %59
+OpReturn
+OpFunctionEnd
