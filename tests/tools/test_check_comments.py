@@ -113,6 +113,10 @@ class TestHasDocCommentBefore(unittest.TestCase):
         lines = ['/** Doc */\n', 'int APS5_VABI foo();\n']
         self.assertTrue(has_doc_comment_before(lines, 1))
 
+    def test_block_comment_closing_line_without_leading_asterisk(self):
+        lines = ['/**\n', 'role and parameters */\n', 'int APS5_VABI foo();\n']
+        self.assertTrue(has_doc_comment_before(lines, 2))
+
     def test_at_file_start(self):
         lines = ['int APS5_VABI foo();\n']
         self.assertFalse(has_doc_comment_before(lines, 0))
@@ -741,6 +745,16 @@ class TestPreprocessorAndLiterals(unittest.TestCase):
         violations = check_vabi_docs('core/foo.cpp', lines)
         self.assertEqual(len(violations), 1)
         self.assertIn('enabled', violations[0].message)
+
+    def test_raw_string_literal_with_at_delimiter(self):
+        lines = [
+            'const char* code = R"@(\n',
+            'int APS5_VABI not_real_func();\n',
+            'TEST(NotRealSuite, NotRealCase) {}\n',
+            ')@";\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+        self.assertEqual(check_test_docs('tests/foo.cpp', lines), [])
 
     def test_check_file_raises_on_unreadable_file(self):
         with self.assertRaises((IOError, OSError)):

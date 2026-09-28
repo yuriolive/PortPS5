@@ -147,6 +147,12 @@ def has_doc_comment_before(lines, idx, skip_attrs=True):
             continue
         if is_comment_line(prev):
             return True
+        if prev.endswith('*/'):
+            k = j - 1
+            while k >= 0:
+                if '/*' in lines[k]:
+                    return True
+                k -= 1
         break
     return False
 
@@ -229,7 +235,7 @@ def sanitize_source_file(lines):
     def is_currently_active():
         return all(frame['branch_active'] for frame in pp_stack)
 
-    raw_string_start_re = re.compile(r'^R"([a-zA-Z0-9_{}\[\]#<>%:;?*+\-/\^&|~!=,\.]*)\(')
+    raw_string_start_re = re.compile(r'^R"([^\s()\\]{0,16})\(')
 
     line_idx = 0
     num_lines = len(lines)
