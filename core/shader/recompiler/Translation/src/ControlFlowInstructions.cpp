@@ -1,3 +1,9 @@
+// Translation/src/ControlFlowInstructions.cpp
+// Implements RDNA2 control-flow and register-manipulation instruction translation into the PortPS5 IR.
+// This file covers saveexec, subvector loops, predicated moves, v_movrels/v_movreld select-chain
+// lowering, lane-access ops (readlane, writelane, readfirstlane, permlane), and scalar selects.
+//
+// ABI note: all methods are internal to TranslationContext; no APS5_VABI surface here.
 #include "Translation/ControlFlowInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
@@ -221,11 +227,41 @@ void TranslationContext::sWqm(const RdnaInstruction& inst, bool wide) {
 }
 
 void TranslationContext::vMovrelsB32(const RdnaInstruction& inst) {
-    throw std::runtime_error("dynamic M0-relative vector register addressing is not supported by this translator");
+    // v_movrels_b32: dst = VGPR[M0 + src.reg].
+    // When M0 is a compile-time constant the constant-folder will collapse this to a direct
+    // register read.  For the dynamic case we emit an O(N) select chain bounded to
+    // kVMovrelMaxRegs entries: this avoids needing Function-storage VGPR arrays in SPIR-V
+    // (planned for M3 with OpAccessChain).  Beyond the bound we fall back to register 0.
+    static constexpr std::uint32_t kVMovrelMaxRegs = 64u;
+    const std::uint32_t srcBase = inst.source0.reg;
+    IrValue& m0 = ir.GetM0();
+    // Start from the base index; clamp against total physical vector registers (256).
+    const std::uint32_t maxReg = std::min(kVMovrelMaxRegs, NumVectorRegs > srcBase ? NumVectorRegs - srcBase : 0u);
+    IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(srcBase < NumVectorRegs ? srcBase : 0u)));
+    for (std::uint32_t i = 1u; i < maxReg; ++i) {
+        const IrU32 candidate(ir.GetVectorReg(static_cast<VectorReg>(srcBase + i)));
+        IrValue& eq = ir.IEqual(m0, ir.Constant(i));
+        result = IrU32(ir.Select(eq, candidate.Value(), result.Value()));
+    }
+    writeRawU32(inst.destination, result);
 }
 
 void TranslationContext::vMovreldB32(const RdnaInstruction& inst) {
-    throw std::runtime_error("dynamic M0-relative vector register addressing is not supported by this translator");
+    // v_movreld_b32: VGPR[M0 + dst.reg] = src.
+    // Mirror of vMovrelsB32: for each possible M0 value, conditionally overwrite the target
+    // register.  Bounded to kVMovrelMaxRegs entries for the same reasons as vMovrelsB32.
+    static constexpr std::uint32_t kVMovrelMaxRegs = 64u;
+    const std::uint32_t dstBase = inst.destination.reg;
+    const IrU32 src = readU32(sourceAt(inst, 0u));
+    IrValue& m0 = ir.GetM0();
+    const std::uint32_t maxReg = std::min(kVMovrelMaxRegs, NumVectorRegs > dstBase ? NumVectorRegs - dstBase : 0u);
+    for (std::uint32_t i = 0u; i < maxReg; ++i) {
+        const VectorReg reg = static_cast<VectorReg>(dstBase + i);
+        const IrU32 prev(ir.GetVectorReg(reg));
+        IrValue& eq = ir.IEqual(m0, ir.Constant(i));
+        const IrU32 updated(ir.Select(eq, src.Value(), prev.Value()));
+        ir.SetVectorReg(reg, updated.Value());
+    }
 }
 
 void TranslationContext::vReadfirstlaneB32(const RdnaInstruction& inst) {
