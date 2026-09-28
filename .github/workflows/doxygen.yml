@@ -76,8 +76,10 @@ jobs:
       - name: Create output directories
         shell: pwsh
         run: |
+          # build/doxygen_out is the OUTPUT_DIRECTORY; Doxygen creates subdirs
+          # (xml/) inside it automatically.  build/ must exist so WARN_LOGFILE
+          # (build/doxygen_warnings.log) is writable from the start.
           New-Item -ItemType Directory -Force -Path "build\doxygen_out" | Out-Null
-          New-Item -ItemType Directory -Force -Path "build\doxygen_xml" | Out-Null
 
       - name: Run Doxygen
         shell: pwsh
