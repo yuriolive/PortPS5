@@ -164,7 +164,24 @@ def is_statically_false_condition(cond):
     cond = re.sub(r'//.*$', '', cond)
     cond = re.sub(r'/\*.*?\*/', '', cond)
     cond = cond.strip()
-    return cond in ('0', '(0)', 'false', 'FALSE', '!1', '(!1)', '!true', '(!true)')
+    if cond in ('0', '(0)', 'false', 'FALSE', '!1', '(!1)', '!true', '(!true)'):
+        return True
+    # In C++, 0 && ... is statically false by short-circuit logic (unlike 0 || ...).
+    if re.match(r'^(?:0|\(0\)|false|FALSE)\s*&&', cond):
+        return True
+    return False
+
+
+def has_line_continuation(line):
+    """Return True if *line* ends with an odd count of trailing backslashes (escaping newline)."""
+    stripped_end = line.rstrip('\r\n')
+    backslash_count = 0
+    for ch in reversed(stripped_end):
+        if ch == '\\':
+            backslash_count += 1
+        else:
+            break
+    return (backslash_count % 2) == 1
 
 
 @dataclass
@@ -182,6 +199,7 @@ def sanitize_source_file(lines):
     Replaces string literals, character literals, raw string literals, and comments
     with spaces (preserving line length and original indices) while tracking active
     preprocessor conditional blocks (such as #if 0 ... #endif).
+    Handles line continuations across physical lines.
 
     Returns a list of SanitizedLine objects.
     """
@@ -191,21 +209,42 @@ def sanitize_source_file(lines):
     in_block_comment = False
     in_raw_string = False
     raw_delimiter = ''
+    in_string = False
+    in_char = False
+    string_escaped = False
+    char_escaped = False
 
     def is_currently_active():
         return all(frame['branch_active'] for frame in pp_stack)
 
     raw_string_start_re = re.compile(r'^R"([a-zA-Z0-9_{}\[\]#<>%:;?*+\-/\^&|~!=,\.]*)\(')
 
-    for line in lines:
+    line_idx = 0
+    num_lines = len(lines)
+
+    while line_idx < num_lines:
+        line = lines[line_idx]
         stripped = line.strip()
 
-        # Handle preprocessor directives when outside block comments and raw strings
-        if not in_block_comment and not in_raw_string and stripped.startswith('#'):
-            m = re.match(r'^#\s*([a-zA-Z_]\w*)(.*)$', stripped)
+        # Handle preprocessor directives when outside comments and literals
+        if (not in_block_comment and not in_raw_string and not in_string
+                and not in_char and stripped.startswith('#')):
+            directive_parts = [stripped]
+            orig_indices = [line_idx]
+            curr_idx = line_idx
+
+            while has_line_continuation(lines[curr_idx]) and curr_idx + 1 < num_lines:
+                curr_idx += 1
+                directive_parts[-1] = directive_parts[-1].rstrip().rstrip('\\').rstrip()
+                directive_parts.append(lines[curr_idx].strip())
+                orig_indices.append(curr_idx)
+
+            spliced_directive = ' '.join(directive_parts)
+            m = re.match(r'^#\s*([a-zA-Z_]\w*)(.*)$', spliced_directive)
             if m:
                 directive = m.group(1)
                 remainder = m.group(2).strip()
+                remainder = re.sub(r'\\$', '', remainder).strip()
 
                 if directive == 'if':
                     parent = is_currently_active()
@@ -243,12 +282,15 @@ def sanitize_source_file(lines):
                     if pp_stack:
                         pp_stack.pop()
 
-            sanitized.append(SanitizedLine(
-                original=line,
-                cleaned=' ' * len(line),
-                is_active=is_currently_active(),
-                is_pure_comment=False,
-            ))
+            for k in orig_indices:
+                sanitized.append(SanitizedLine(
+                    original=lines[k],
+                    cleaned=' ' * len(lines[k]),
+                    is_active=is_currently_active(),
+                    is_pure_comment=False,
+                ))
+
+            line_idx = curr_idx + 1
             continue
 
         active = is_currently_active()
@@ -256,10 +298,6 @@ def sanitize_source_file(lines):
         cleaned_chars = []
         n = len(chars)
         i = 0
-        in_string = False
-        in_char = False
-        string_escaped = False
-        char_escaped = False
         has_non_comment_code = False
 
         while i < n:
@@ -311,12 +349,10 @@ def sanitize_source_file(lines):
                 continue
 
             # In active normal code:
-            # Check for line comment //
             if ch == '/' and i + 1 < n and chars[i + 1] == '/':
                 cleaned_chars.extend([' '] * (n - i))
                 break
 
-            # Check for block comment start /*
             if ch == '/' and i + 1 < n and chars[i + 1] == '*':
                 in_block_comment = True
                 cleaned_chars.append(' ')
@@ -324,7 +360,6 @@ def sanitize_source_file(lines):
                 i += 2
                 continue
 
-            # Check for raw string R"..."
             if ch == 'R' and i + 1 < n and chars[i + 1] == '"':
                 rem = line[i:]
                 m_raw = raw_string_start_re.match(rem)
@@ -337,7 +372,6 @@ def sanitize_source_file(lines):
                     i += matched_len
                     continue
 
-            # Check for normal string "
             if ch == '"':
                 in_string = True
                 string_escaped = False
@@ -346,7 +380,6 @@ def sanitize_source_file(lines):
                 i += 1
                 continue
 
-            # Check for character literal '
             if ch == "'":
                 in_char = True
                 char_escaped = False
@@ -363,12 +396,28 @@ def sanitize_source_file(lines):
         cleaned_str = ''.join(cleaned_chars)
         is_pure_comment = not has_non_comment_code and is_comment_line(stripped)
 
+        # Handle line continuation backslash for string / char literal states
+        is_continuation = has_line_continuation(line)
+        if in_string:
+            if not is_continuation:
+                in_string = False
+                string_escaped = False
+            else:
+                string_escaped = False
+        if in_char:
+            if not is_continuation:
+                in_char = False
+                char_escaped = False
+            else:
+                char_escaped = False
+
         sanitized.append(SanitizedLine(
             original=line,
             cleaned=cleaned_str,
             is_active=active,
             is_pure_comment=is_pure_comment,
         ))
+        line_idx += 1
 
     return sanitized
 
@@ -379,7 +428,11 @@ def sanitize_source_file(lines):
 
 
 def check_file_header(rel_path, lines):
-    """Rule 1 - Verify a 2+ line comment header before includes/guards/imports."""
+    """Rule 1 - Verify a 2+ line comment header before includes/guards/imports.
+
+    Tracks block-comment state (/* ... */) across lines to correctly count
+    interior lines even when they lack leading asterisks.
+    """
     violations = []
     first_idx = find_first_non_empty(lines)
     if first_idx is None:
@@ -387,8 +440,8 @@ def check_file_header(rel_path, lines):
 
     first_stripped = lines[first_idx].strip()
 
-    # The first non-empty line must be a comment.
-    if not is_comment_line(first_stripped):
+    # The first non-empty line must begin a comment.
+    if not (first_stripped.startswith('//') or first_stripped.startswith('/*')):
         violations.append(Violation(
             rel_path, first_idx + 1, 'file-header',
             "File must begin with a 2+ line comment block (/* ... */ or "
@@ -397,18 +450,41 @@ def check_file_header(rel_path, lines):
         ))
         return violations
 
-    # Count comment lines in the header block (blank lines inside are allowed).
     comment_count = 0
+    in_block = False
     idx = first_idx
+
     while idx < len(lines):
-        stripped = lines[idx].strip()
-        if is_comment_line(stripped):
+        raw = lines[idx]
+        stripped = raw.strip()
+
+        if in_block:
+            comment_count += 1
+            if '*/' in stripped:
+                in_block = False
+            idx += 1
+            continue
+
+        if stripped.startswith('/*'):
+            comment_count += 1
+            if '*/' in stripped[2:]:
+                in_block = False
+            else:
+                in_block = True
+            idx += 1
+            continue
+
+        if stripped.startswith('//'):
             comment_count += 1
             idx += 1
-        elif stripped == '':
+            continue
+
+        if stripped == '':
             idx += 1  # Blank line inside / between header comment lines.
-        else:
-            break  # Non-comment, non-blank — header block ended.
+            continue
+
+        # Non-comment, non-blank line outside a block comment — header block ended.
+        break
 
     if comment_count < 2:
         violations.append(Violation(

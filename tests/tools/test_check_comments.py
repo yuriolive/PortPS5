@@ -627,6 +627,50 @@ class TestPreprocessorAndLiterals(unittest.TestCase):
         finally:
             os.unlink(temp_path)
 
+    def test_multiline_block_header_without_asterisks(self):
+        lines = [
+            '/*\n',
+            ' Purpose of subsystem without leading asterisks\n',
+            ' Second line of subsystem description\n',
+            ' */\n',
+            '#pragma once\n',
+        ]
+        self.assertEqual(check_file_header('core/foo.hpp', lines), [])
+
+    def test_string_literal_line_continuation_ignored(self):
+        lines = [
+            'const char* code = "first part \\\n',
+            'APS5_VABI fake_export(); \\\n',
+            'third part";\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_test_literal_line_continuation_ignored(self):
+        lines = [
+            'const char* log = "run test: \\\n',
+            'TEST(FakeSuite, FakeCase) \\\n',
+            'done";\n',
+        ]
+        self.assertEqual(check_test_docs('tests/foo.cpp', lines), [])
+
+    def test_preprocessor_line_continuation_if_0_ignored(self):
+        lines = [
+            '#if 0 \\\n',
+            '    && defined(OBSOLETE)\n',
+            'int APS5_VABI disabled_export();\n',
+            '#endif\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_preprocessor_line_continuation_if_0_alone_ignored(self):
+        lines = [
+            '#if 0 \\\n',
+            '\n',
+            'int APS5_VABI disabled_export();\n',
+            '#endif\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
