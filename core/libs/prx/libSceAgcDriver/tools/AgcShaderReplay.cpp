@@ -85,6 +85,12 @@ void WriteFile(const std::string& path, const std::string& text) {
         throw std::runtime_error("failed to open file for writing: " + path);
     }
     file << text;
+    // Flush and close before checking: operator<< buffers, so a delayed write error
+    // (e.g. disk full) surfaces only here. Without this, --update-goldens would print
+    // `updated` and count a truncated .spvasm as passed. close() sets failbit on
+    // failure, so the existing state check catches it.
+    file.flush();
+    file.close();
     if (!file) {
         throw std::runtime_error("failed to write file: " + path);
     }
