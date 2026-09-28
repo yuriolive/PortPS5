@@ -83,6 +83,7 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
                     worklist.push(info.terminator.falseBlock);
                 }
 
+                std::unordered_set<std::uint32_t> visited;
                 while (!worklist.empty()) {
                     const std::uint32_t curr = worklist.front();
                     worklist.pop();
@@ -90,7 +91,12 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
                     if (curr == InvalidControlFlowId || curr == mergeId) {
                         continue;
                     }
-                    if (divergentToMergeBlock.emplace(curr, mergeId).second) {
+
+                    // Nested divergent regions: inner branches overwrite outer merge mapping
+                    // so that LDS writes are synchronized at the nearest/innermost reconvergence.
+                    divergentToMergeBlock[curr] = mergeId;
+
+                    if (visited.insert(curr).second) {
                         auto it = infoMap.find(curr);
                         if (it != infoMap.end()) {
                             const auto& succInfo = *it->second;
@@ -99,6 +105,11 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
                             }
                             if (succInfo.terminator.falseBlock != InvalidControlFlowId && succInfo.terminator.falseBlock != mergeId) {
                                 worklist.push(succInfo.terminator.falseBlock);
+                            }
+                            for (const std::uint32_t target : succInfo.terminator.indirectTargets) {
+                                if (target != InvalidControlFlowId && target != mergeId) {
+                                    worklist.push(target);
+                                }
                             }
                         }
                     }

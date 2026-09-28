@@ -139,6 +139,157 @@ TEST(RecompilerFixesTests, DivergentBlockLdsWritePlacesBarrierAtReconvergence) {
     EXPECT_TRUE(foundMergeBarrier);
 }
 
+TEST(RecompilerFixesTests, NestedDivergentBlockLdsWritePlacesBarrierAtInnermostMerge) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& outerDiv = program.CreateBlock();
+    IrBlock& innerDiv = program.CreateBlock();
+    IrBlock& innerMerge = program.CreateBlock();
+    IrBlock& outerMerge = program.CreateBlock();
+
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &outerDiv, &innerDiv, &innerMerge, &outerMerge};
+
+    // CFG IDs:
+    // entry (0) -> outerDiv (1), outerMerge (4), merge is 4
+    // outerDiv (1) -> innerDiv (2), innerMerge (3), merge is 3
+    // innerDiv (2) -> innerMerge (3)
+    // innerMerge (3) -> outerMerge (4)
+    // outerMerge (4) -> return
+    BlockInfo entryInfo{};
+    entryInfo.id = 0u;
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::ExecZero;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 4u;
+    entryInfo.terminator.mergeBlock = 4u;
+
+    BlockInfo outerDivInfo{};
+    outerDivInfo.id = 1u;
+    outerDivInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    outerDivInfo.terminator.condition = BranchCondition::VccZero;
+    outerDivInfo.terminator.trueBlock = 2u;
+    outerDivInfo.terminator.falseBlock = 3u;
+    outerDivInfo.terminator.mergeBlock = 3u;
+
+    BlockInfo innerDivInfo{};
+    innerDivInfo.id = 2u;
+    innerDivInfo.terminator.kind = TerminatorKind::Branch;
+    innerDivInfo.terminator.trueBlock = 3u;
+
+    BlockInfo innerMergeInfo{};
+    innerMergeInfo.id = 3u;
+    innerMergeInfo.terminator.kind = TerminatorKind::Branch;
+    innerMergeInfo.terminator.trueBlock = 4u;
+
+    BlockInfo outerMergeInfo{};
+    outerMergeInfo.id = 4u;
+    outerMergeInfo.terminator.kind = TerminatorKind::Return;
+
+    program.Metadata().blockInfo = {entryInfo, outerDivInfo, innerDivInfo, innerMergeInfo, outerMergeInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(innerDiv);
+
+    IrValue& addr = ir.Constant(16u);
+    IrValue& val = ir.Constant(42u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    innerDiv.AppendInstruction(&writeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 1u);
+    // Inner merge (block 3) should have received the barrier, NOT outer merge (block 4)
+    bool innerMergeHasBarrier = false;
+    for (IrValue* inst : innerMerge.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            innerMergeHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(innerMergeHasBarrier);
+
+    bool outerMergeHasBarrier = false;
+    for (IrValue* inst : outerMerge.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            outerMergeHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(outerMergeHasBarrier);
+}
+
+TEST(RecompilerFixesTests, IndirectBranchTargetInDivergentRegionIsClassifiedAsDivergent) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& divDispatch = program.CreateBlock();
+    IrBlock& indirectTargetBlock = program.CreateBlock();
+    IrBlock& mergeBlock = program.CreateBlock();
+
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &divDispatch, &indirectTargetBlock, &mergeBlock};
+
+    // entry (0) divergent -> divDispatch (1), mergeBlock (3)
+    // divDispatch (1) -> IndirectBranch to targets: [2], mergeBlock is 3
+    // indirectTargetBlock (2) -> mergeBlock (3)
+    // mergeBlock (3) -> return
+    BlockInfo entryInfo{};
+    entryInfo.id = 0u;
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::ExecZero;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 3u;
+    entryInfo.terminator.mergeBlock = 3u;
+
+    BlockInfo divDispatchInfo{};
+    divDispatchInfo.id = 1u;
+    divDispatchInfo.terminator.kind = TerminatorKind::IndirectBranch;
+    divDispatchInfo.terminator.indirectTargets = {2u};
+    divDispatchInfo.terminator.mergeBlock = 3u;
+
+    BlockInfo indirectTargetInfo{};
+    indirectTargetInfo.id = 2u;
+    indirectTargetInfo.terminator.kind = TerminatorKind::Branch;
+    indirectTargetInfo.terminator.trueBlock = 3u;
+
+    BlockInfo mergeInfo{};
+    mergeInfo.id = 3u;
+    mergeInfo.terminator.kind = TerminatorKind::Return;
+
+    program.Metadata().blockInfo = {entryInfo, divDispatchInfo, indirectTargetInfo, mergeInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(indirectTargetBlock);
+
+    IrValue& addr = ir.Constant(32u);
+    IrValue& val = ir.Constant(99u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    indirectTargetBlock.AppendInstruction(&writeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 1u);
+    // indirectTargetBlock is divergent, so it must NOT contain the barrier
+    for (IrValue* inst : indirectTargetBlock.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+    // Uniform merge block MUST contain the barrier
+    bool mergeHasBarrier = false;
+    for (IrValue* inst : mergeBlock.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            mergeHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(mergeHasBarrier);
+}
+
 TEST(RecompilerFixesTests, SharedAtomicZeroPreservedForSynchronization) {
     IrProgram program;
     IrBlock& entry = program.CreateBlock();
