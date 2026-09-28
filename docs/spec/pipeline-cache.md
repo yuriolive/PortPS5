@@ -112,12 +112,12 @@ As agreed in the decision table in [README.md](README.md#subsystem-specs) §Pipe
 
 | Milestone | Delivers |
 |---|---|
-| M1 | Prerequisites: request serialisation and `agc_shader_replay` are ported, and the `recompiler-golden` job gives the corpus the cache tests replay. |
-| M2 | The disk pipeline cache (F7): the key rework, all five files, warm-up, telemetry, and the lavapipe and golden tests. |
-| M3 | Bounded, hash-indexed in-memory variants. Structurizer fallback changes bump `RecompilerVersion`. |
-| M4 | Subgroup-size-control variants and descriptor-heap layouts enter the keys. |
-| M5 | Tuning of the size cap and warm-up time during the performance pass. |
-| M6 | The release full runs use a warm cache ([verification.md](verification.md) §3). |
+| M1 | - [ ] Prerequisites: request serialisation and `agc_shader_replay` are ported, and the `recompiler-golden` job gives the corpus the cache tests replay. |
+| M2 | - [ ] The disk pipeline cache (F7): the key rework, all five files, warm-up, telemetry, and the lavapipe and golden tests. |
+| M3 | - [ ] Bounded, hash-indexed in-memory variants. Structurizer fallback changes bump `RecompilerVersion`. |
+| M4 | - [ ] Subgroup-size-control variants and descriptor-heap layouts enter the keys. |
+| M5 | - [ ] Tuning of the size cap and warm-up time during the performance pass. |
+| M6 | - [ ] The release full runs use a warm cache ([verification.md](verification.md) §3). |
 
 ## Open questions
 

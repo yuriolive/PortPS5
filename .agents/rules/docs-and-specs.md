@@ -6,4 +6,5 @@
 - A file reference names its tree (AnyPS5 `main`, PR #5, or PortPS5) and gives `path:line`. Verify it before citing.
 - Hardware is described only as the generic reference tier (PRD §4.4). Never name a specific personal machine, CPU or GPU model owned by a contributor.
 - The scope decisions in the PRD are settled. Don't re-open them in specs; propose changes in an issue instead.
+- Track deliverables with task checkboxes (`- [ ]` / `- [x]`) in `docs/ROADMAP.md` and `docs/spec/*.md`. When a milestone or spec task is completed, mark its checkbox as finished (`- [x]`) in the same PR.
 - Write directly: no filler, and tables where they help.

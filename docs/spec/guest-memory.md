@@ -160,9 +160,9 @@ struct IWriteTracker {
 
 | Milestone | Delivers |
 |---|---|
-| M1 | Port `GuestArena`/`GuestHeap` behind `IWriteTracker` (ROADMAP M1), with the extent tree, span-level heap registration, explicit pins, the flush hook and the registry-owned page-state table. Return codes replace throws. Remove `APS5_*` memory switches. |
-| M3 | General block-generation write tracking for GPU-written surfaces (`MarkWritten`), replacing the interim adjacent block-generation advance, and the tracker-side support for the capture-ordering redesign (ROADMAP M3). |
-| M5 | Direct-memory aliasing through section windows, and full-size streaming and resource aliasing. Host-import budget sized automatically (ROADMAP M5). |
+| M1 | - [ ] Port `GuestArena`/`GuestHeap` behind `IWriteTracker` (ROADMAP M1), with the extent tree, span-level heap registration, explicit pins, the flush hook and the registry-owned page-state table. Return codes replace throws. Remove `APS5_*` memory switches. |
+| M3 | - [ ] General block-generation write tracking for GPU-written surfaces (`MarkWritten`), replacing the interim adjacent block-generation advance, and the tracker-side support for the capture-ordering redesign (ROADMAP M3). |
+| M5 | - [ ] Direct-memory aliasing through section windows, and full-size streaming and resource aliasing. Host-import budget sized automatically (ROADMAP M5). |
 
 ## Open questions
 
