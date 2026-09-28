@@ -15,6 +15,8 @@ struct Args {
     bool lazyBinding = false;
     bool autorun = false;
     bool windowsDiagnostics = false;
+    // Opt-in GUI subsystem for the emitted PE (no console window on launch).
+    bool windowsGui = false;
     std::uint32_t unusedFilterLevel = 0;
     std::string inputPath;
     std::string outputPath;

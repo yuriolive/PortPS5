@@ -40,6 +40,9 @@ void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRv
 
 }
 
+WindowsPePatcher::WindowsPePatcher(const bool windowsGui) : _windowsGui(windowsGui) {
+}
+
 std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t>& sourceElf, const std::vector<Domain::ProgramHeader>& originalHeaders, const Domain::SysVDynamicSection& dynamicSection, const std::uint64_t originalPltGotVaddr, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Codegen::TrampolineSite>& trampolines) {
     WindowsLoadImage image(sourceElf, originalHeaders);
     if (originalPltGotVaddr != 0)
@@ -98,7 +101,7 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     sections.push_back(std::move(entry.Code));
     for (const auto& lazyStub : entry.LazyStubs)
         writeGotStub(sections, lazyStub.TargetRva, lazyStub.StubRva);
-    return WindowsPeWriter().Write(sections, entryRva, directories);
+    return WindowsPeWriter().Write(sections, entryRva, directories, _windowsGui);
 }
 
 }
