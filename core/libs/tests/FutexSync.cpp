@@ -7,6 +7,7 @@
 // path, measured below).
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/Pthread/include/FutexCore.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -716,6 +717,39 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2, mTime, &pastTs) == SCE_TIMEDOUT);
         // CV wait timed out and returned with mutex unlocked:
         REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_EPERM);
+        REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
+
+        // Verify REALTIME absolute deadline behavior:
+        // Realtime deadlines store Unix-epoch wall time and evaluate dynamically against RealtimeNanos().
+        const std::uint64_t currentRealtime = FutexCore::RealtimeNanos();
+        const std::int64_t rtSec = static_cast<std::int64_t>(currentRealtime / 1000000000ULL);
+        const std::int64_t rtNsec = static_cast<std::int64_t>(currentRealtime % 1000000000ULL);
+
+        // Past realtime deadline is already expired:
+        const FutexCore::Deadline expiredRt = FutexCore::AbsoluteToDeadline(rtSec - 10, 0, false);
+        REQUIRE(expiredRt.isRealtime == true);
+        REQUIRE(expiredRt.IsExpired() == true);
+        REQUIRE(expiredRt.RemainingNanos() == 0ULL);
+
+        // Future realtime deadline:
+        const FutexCore::Deadline futureRt = FutexCore::AbsoluteToDeadline(rtSec + 10, rtNsec, false);
+        REQUIRE(futureRt.isRealtime == true);
+        REQUIRE(futureRt.IsExpired() == false);
+        REQUIRE(futureRt.RemainingNanos() > 0ULL);
+
+        // Realtime CV wait with a 50ms deadline correctly times out:
+        KernelTimespec shortRt{};
+        const std::uint64_t targetRt = currentRealtime + 50'000'000ULL; // 50ms
+        shortRt.tv_sec = static_cast<std::int64_t>(targetRt / 1000000000ULL);
+        shortRt.tv_nsec = static_cast<std::int64_t>(targetRt % 1000000000ULL);
+
+        REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
+        const auto rtStart = std::chrono::steady_clock::now();
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2 /* CVWAIT_ABSTIME (realtime) */, mTime, &shortRt) == SCE_TIMEDOUT);
+        const auto rtElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - rtStart).count();
+        REQUIRE(rtElapsedMs >= 35); // Waited approximately 50ms
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
     }

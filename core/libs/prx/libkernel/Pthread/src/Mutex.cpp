@@ -63,7 +63,7 @@ int TryFastAcquire(std::atomic_ref<std::uint64_t>& ref, std::uint64_t unlocked,
 
 // Core lock with optional deadline (kInfinite = blocking). No global mutex:
 // Drepper three-state (unlocked / locked / locked+CONTENDED) over the word.
-int LockInternal(PthreadMutex* slot, std::uint64_t deadline) noexcept {
+int LockInternal(PthreadMutex* slot, FutexCore::Deadline deadline) noexcept {
     if (!slot)
         return kSceEinval;
     const std::uint32_t tid = GuestTid::Ensure();
@@ -137,7 +137,7 @@ int LockInternal(PthreadMutex* slot, std::uint64_t deadline) noexcept {
         }
 
         // Locked by another thread.
-        if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+        if (deadline.IsExpired())
             return kSceTimedOut;
         // Mark CONTENDED before sleeping (release), so unlock's load sees us
         // and wakes exactly one waiter. Then re-check before sleeping: if the
@@ -215,8 +215,8 @@ int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstim
         return kSceEinval;
     if (abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000LL)
         return kSceEinval;
-    // POSIX absolute timeout is REALTIME; convert to a QPC deadline.
-    const std::uint64_t deadline =
+    // POSIX absolute timeout is REALTIME; convert to a Deadline.
+    const FutexCore::Deadline deadline =
         FutexCore::AbsoluteToDeadline(abstime->tv_sec, abstime->tv_nsec, false);
     return LockInternal(mutex, deadline);
 }

@@ -471,7 +471,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         auto* cvWord = static_cast<std::uint32_t*>(obj);
         auto* mutexWord = static_cast<std::uint32_t*>(uaddr);
 
-        std::uint64_t deadline = FutexCore::kInfinite;
+        FutexCore::Deadline deadline{FutexCore::kInfinite};
         if (uaddr2 != nullptr) {
             const auto* ts = static_cast<const KernelTimespec*>(uaddr2);
             if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000LL)
@@ -489,15 +489,15 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             } else {
                 constexpr std::uint64_t kMaxSec = (UINT64_MAX - 1000000000ULL) / 1000000000ULL;
                 if (static_cast<std::uint64_t>(ts->tv_sec) > kMaxSec) {
-                    deadline = FutexCore::kInfinite;
+                    deadline = FutexCore::Deadline{FutexCore::kInfinite};
                 } else {
                     const std::uint64_t relNanos = static_cast<std::uint64_t>(ts->tv_sec) * 1000000000ULL +
                                                    static_cast<std::uint64_t>(ts->tv_nsec);
                     const std::uint64_t now = FutexCore::NowNanos();
                     if (UINT64_MAX - now <= relNanos)
-                        deadline = FutexCore::kInfinite;
+                        deadline = FutexCore::Deadline{FutexCore::kInfinite};
                     else
-                        deadline = now + relNanos;
+                        deadline = FutexCore::Deadline{now + relNanos, false};
                 }
             }
         }
@@ -542,17 +542,19 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         std::unique_lock<std::mutex> nodeLock(node.mtx);
         bool timedOut = false;
         while (!node.awakened.load(std::memory_order_acquire)) {
-            if (deadline == FutexCore::kInfinite) {
+            if (deadline.targetNanos == FutexCore::kInfinite) {
                 node.cv.wait(nodeLock);
             } else {
-                const std::uint64_t now = FutexCore::NowNanos();
-                if (now >= deadline) {
+                if (deadline.IsExpired()) {
                     timedOut = true;
                     break;
                 }
-                const std::uint64_t remainingNanos = deadline - now;
-                const auto status = node.cv.wait_for(nodeLock, std::chrono::nanoseconds(remainingNanos));
-                if (status == std::cv_status::timeout || FutexCore::NowNanos() >= deadline) {
+                std::uint64_t waitSlice = deadline.RemainingNanos();
+                if (deadline.isRealtime && waitSlice > 100'000'000ULL) {
+                    waitSlice = 100'000'000ULL; // Slice to 100ms so wall-clock changes are noticed
+                }
+                const auto status = node.cv.wait_for(nodeLock, std::chrono::nanoseconds(waitSlice));
+                if (deadline.IsExpired()) {
                     if (!node.awakened.load(std::memory_order_acquire)) {
                         timedOut = true;
                         break;

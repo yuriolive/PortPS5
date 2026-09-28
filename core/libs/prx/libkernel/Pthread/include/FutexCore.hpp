@@ -55,23 +55,46 @@ inline std::uint64_t RealtimeNanos() noexcept {
     return t * 100ULL;
 }
 
-// Convert an absolute KernelTimespec (tv_sec/tv_nsec) to a QPC deadline.
-// When monotonic, abstime shares the boot origin with QPC, so it maps
-// directly; when realtime, remaining = abstime - wallNow, added to QPC now.
-inline std::uint64_t AbsoluteToDeadline(std::int64_t sec, std::int64_t nsec, bool monotonic) noexcept {
+// Timeout deadline representation supporting monotonic or realtime clocks.
+// For realtime deadlines, targetNanos is the absolute Unix-epoch wall time in nanoseconds;
+// re-evaluating RealtimeNanos() >= targetNanos during wait slices ensures that forward
+// or backward wall-clock adjustments (e.g. NTP or manual adjustments) are properly honored.
+struct Deadline {
+    std::uint64_t targetNanos{kInfinite};
+    bool isRealtime{false};
+
+    constexpr Deadline() noexcept = default;
+    constexpr Deadline(std::uint64_t nanos) noexcept : targetNanos(nanos), isRealtime(false) {}
+    constexpr Deadline(std::uint64_t nanos, bool realtime) noexcept
+        : targetNanos(nanos), isRealtime(realtime && nanos != kInfinite) {}
+
+    constexpr operator std::uint64_t() const noexcept { return targetNanos; }
+
+    bool IsExpired() const noexcept {
+        if (targetNanos == kInfinite)
+            return false;
+        return isRealtime ? (RealtimeNanos() >= targetNanos) : (NowNanos() >= targetNanos);
+    }
+
+    std::uint64_t RemainingNanos() const noexcept {
+        if (targetNanos == kInfinite)
+            return kInfinite;
+        const std::uint64_t cur = isRealtime ? RealtimeNanos() : NowNanos();
+        return (cur >= targetNanos) ? 0 : (targetNanos - cur);
+    }
+};
+
+// Convert an absolute KernelTimespec (tv_sec/tv_nsec) to a Deadline.
+// When monotonic, targetNanos is monotonic boot nanoseconds;
+// when realtime, targetNanos is Unix-epoch wall nanoseconds, and isRealtime is true.
+inline Deadline AbsoluteToDeadline(std::int64_t sec, std::int64_t nsec, bool monotonic) noexcept {
     if (sec < 0 || sec > 18446744073LL || nsec < 0 || nsec >= 1000000000LL)
-        return 0;  // Invalid or overflow; caller returns EINVAL before waiting.
+        return Deadline{0, false};  // Invalid or overflow; caller returns EINVAL before waiting.
     const std::uint64_t absNanos =
         static_cast<std::uint64_t>(sec) * 1000000000ULL + static_cast<std::uint64_t>(nsec);
     if (absNanos == kInfinite)
-        return kInfinite - 1;  // Reserve kInfinite as the no-deadline sentinel.
-    if (monotonic)
-        return absNanos;
-    const std::uint64_t wall = RealtimeNanos();
-    const std::uint64_t now = NowNanos();
-    if (absNanos <= wall)
-        return now;  // Already expired.
-    return now + (absNanos - wall);
+        return Deadline{kInfinite - 1, !monotonic};
+    return Deadline{absNanos, !monotonic};
 }
 
 inline void WakeSingle(volatile void* addr) noexcept {
@@ -85,20 +108,19 @@ inline void WakeAll(volatile void* addr) noexcept {
 // Waits on address until woken by WakeByAddress* or value changes, or deadline expires.
 // Returns true when woken or value changed; returns false only when the deadline expires.
 inline bool WaitOnce(volatile void* addr, const void* expected, std::size_t size,
-                     std::uint64_t deadline) noexcept {
-    if (deadline == kInfinite) {
+                     Deadline deadline) noexcept {
+    if (deadline.targetNanos == kInfinite) {
         WaitOnAddress(const_cast<void*>(addr), const_cast<void*>(expected), size, INFINITE);
         return true;
     }
     while (true) {
-        const std::uint64_t now = NowNanos();
-        if (now >= deadline)
+        if (deadline.IsExpired())
             return false;
-        const std::uint64_t remaining = deadline - now;
+        const std::uint64_t remaining = deadline.RemainingNanos();
         if (remaining < 1000000ULL) {
             // Sub-millisecond: spin at most 50us checking for a change,
             // then yield so the loop re-checks in ~100us slices.
-            const std::uint64_t spinStart = now;
+            const std::uint64_t spinStart = NowNanos();
             if (size == 8) {
                 auto* a = reinterpret_cast<std::uint64_t*>(const_cast<void*>(addr));
                 const std::uint64_t exp = *static_cast<const std::uint64_t*>(expected);
@@ -122,30 +144,34 @@ inline bool WaitOnce(volatile void* addr, const void* expected, std::size_t size
                 if (aref.load(std::memory_order_acquire) != exp)
                     return true;
             }
-            if (NowNanos() >= deadline)
+            if (deadline.IsExpired())
                 return false;
             SwitchToThread();
             continue;
         }
         std::uint64_t ms = remaining / 1000000ULL;
+        // For realtime waits, clamp wait slice to at most 100ms so forward wall-clock adjustments
+        // are detected promptly.
+        if (deadline.isRealtime && ms > 100)
+            ms = 100;
         if (ms > 0xFFFFFFFEULL)
             ms = 0xFFFFFFFEULL;
         const BOOL ok = WaitOnAddress(const_cast<void*>(addr), const_cast<void*>(expected), size,
                                       static_cast<DWORD>(ms));
         if (ok)
             return true;  // Woken by WakeByAddress* or value changed.
-        if (NowNanos() >= deadline)
+        if (deadline.IsExpired())
             return false;  // Deadline expired.
     }
 }
 
 inline bool WaitU64(volatile std::uint64_t* addr, std::uint64_t expected,
-                    std::uint64_t deadline) noexcept {
+                    Deadline deadline) noexcept {
     return WaitOnce(addr, &expected, 8, deadline);
 }
 
 inline bool WaitU32(volatile std::uint32_t* addr, std::uint32_t expected,
-                    std::uint64_t deadline) noexcept {
+                    Deadline deadline) noexcept {
     return WaitOnce(addr, &expected, 4, deadline);
 }
 
@@ -166,20 +192,14 @@ inline std::uint64_t RealtimeNanos() noexcept {
            static_cast<std::uint64_t>(ts.tv_nsec);
 }
 
-inline std::uint64_t AbsoluteToDeadline(std::int64_t sec, std::int64_t nsec, bool monotonic) noexcept {
+inline Deadline AbsoluteToDeadline(std::int64_t sec, std::int64_t nsec, bool monotonic) noexcept {
     if (sec < 0 || sec > 18446744073LL || nsec < 0 || nsec >= 1000000000LL)
-        return 0;
+        return Deadline{0, false};
     const std::uint64_t absNanos =
         static_cast<std::uint64_t>(sec) * 1000000000ULL + static_cast<std::uint64_t>(nsec);
     if (absNanos == kInfinite)
-        return kInfinite - 1;
-    if (monotonic)
-        return absNanos;
-    const std::uint64_t wall = RealtimeNanos();
-    const std::uint64_t now = NowNanos();
-    if (absNanos <= wall)
-        return now;
-    return now + (absNanos - wall);
+        return Deadline{kInfinite - 1, !monotonic};
+    return Deadline{absNanos, !monotonic};
 }
 
 inline void WakeSingle(volatile void* addr) noexcept {
@@ -193,35 +213,35 @@ inline void WakeAll(volatile void* addr) noexcept {
 }
 
 inline bool WaitOnce(volatile void* addr, const void* expected, std::size_t size,
-                     std::uint64_t deadline) noexcept {
+                     Deadline deadline) noexcept {
     (void)addr;
     (void)expected;
     (void)size;
-    if (deadline != kInfinite && NowNanos() >= deadline)
+    if (deadline.IsExpired())
         return false;
-    if (deadline == kInfinite) {
+    if (deadline.targetNanos == kInfinite) {
         std::this_thread::yield();
     } else {
-        const std::uint64_t now = NowNanos();
-        if (now < deadline && deadline - now >= 1000000ULL)
+        const std::uint64_t remaining = deadline.RemainingNanos();
+        if (remaining >= 1000000ULL)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         else
             std::this_thread::yield();
     }
-    if (deadline != kInfinite && NowNanos() >= deadline)
+    if (deadline.IsExpired())
         return false;
     return true;
 }
 
 inline bool WaitU64(volatile std::uint64_t* addr, std::uint64_t expected,
-                    std::uint64_t deadline) noexcept {
+                    Deadline deadline) noexcept {
     (void)addr;
     (void)expected;
     return WaitOnce(addr, &expected, 8, deadline);
 }
 
 inline bool WaitU32(volatile std::uint32_t* addr, std::uint32_t expected,
-                    std::uint64_t deadline) noexcept {
+                    Deadline deadline) noexcept {
     (void)addr;
     (void)expected;
     return WaitOnce(addr, &expected, 4, deadline);
