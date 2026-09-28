@@ -237,8 +237,9 @@ void TranslationContext::vMovrelsB32(const RdnaInstruction& inst) {
     IrValue& m0 = ir.GetM0();
     // Start from the base index; clamp against total physical vector registers (256).
     const std::uint32_t maxReg = std::min(kVMovrelMaxRegs, NumVectorRegs > srcBase ? NumVectorRegs - srcBase : 0u);
-    IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(srcBase < NumVectorRegs ? srcBase : 0u)));
-    for (std::uint32_t i = 1u; i < maxReg; ++i) {
+    // Initialize result with fallback VGPR[0] so unmatched / out-of-bounds M0 defaults to VGPR[0].
+    IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(0u)));
+    for (std::uint32_t i = 0u; i < maxReg; ++i) {
         const IrU32 candidate(ir.GetVectorReg(static_cast<VectorReg>(srcBase + i)));
         IrValue& eq = ir.IEqual(m0, ir.Constant(i));
         result = IrU32(ir.Select(eq, candidate.Value(), result.Value()));
@@ -250,17 +251,26 @@ void TranslationContext::vMovreldB32(const RdnaInstruction& inst) {
     // v_movreld_b32: VGPR[M0 + dst.reg] = src.
     // Mirror of vMovrelsB32: for each possible M0 value, conditionally overwrite the target
     // register.  Bounded to kVMovrelMaxRegs entries for the same reasons as vMovrelsB32.
+    // Beyond the bound, fallback writes to VGPR[0].
     static constexpr std::uint32_t kVMovrelMaxRegs = 64u;
     const std::uint32_t dstBase = inst.destination.reg;
     const IrU32 src = readU32(sourceAt(inst, 0u));
     IrValue& m0 = ir.GetM0();
     const std::uint32_t maxReg = std::min(kVMovrelMaxRegs, NumVectorRegs > dstBase ? NumVectorRegs - dstBase : 0u);
+    IrValue& isOob = ir.LogicalNot(ir.ULessThan(m0, ir.Constant(maxReg)));
     for (std::uint32_t i = 0u; i < maxReg; ++i) {
         const VectorReg reg = static_cast<VectorReg>(dstBase + i);
         const IrU32 prev(ir.GetVectorReg(reg));
         IrValue& eq = ir.IEqual(m0, ir.Constant(i));
-        const IrU32 updated(ir.Select(eq, src.Value(), prev.Value()));
+        IrValue& writeCondition = (reg == static_cast<VectorReg>(0u)) ? ir.LogicalOr(eq, isOob) : eq;
+        const IrU32 updated(ir.Select(writeCondition, src.Value(), prev.Value()));
         ir.SetVectorReg(reg, updated.Value());
+    }
+    if (dstBase != 0u) {
+        const VectorReg reg0 = static_cast<VectorReg>(0u);
+        const IrU32 prev0(ir.GetVectorReg(reg0));
+        const IrU32 updated0(ir.Select(isOob, src.Value(), prev0.Value()));
+        ir.SetVectorReg(reg0, updated0.Value());
     }
 }
 

@@ -1,8 +1,9 @@
 // core/shader/recompiler/tests/RecompilerFixesTests.cpp
 // Unit tests for shader recompiler Milestone 1 fixes:
-//   - v_movrels/v_movreld bounded select-chain lowering over the VGPR register file
-//   - SharedMemoryBarrierInserter: wave-LDS barriers in wave64 compute programs
-//   - Atomic-zero peephole: eliminate or skip SharedAtomicIAdd32 with immediate zero addend
+//   - v_movrels/v_movreld bounded select-chain lowering over the VGPR register file with VGPR[0] fallback
+//   - SharedMemoryBarrierInserter: wave-LDS barriers in wave64 compute programs (uniform and reconvergence points)
+//   - SharedAtomicIAdd32 preservation: preserves workgroup synchronization effects even with zero addend
+//   - sSaveexec: instruction order and 32-bit bitwise typing
 //
 // These tests verify compiler IR transformations and invariants using GoogleTest.
 
@@ -76,7 +77,63 @@ TEST(RecompilerFixesTests, SharedMemoryBarrierNotInsertedWave32) {
     EXPECT_EQ(entry.Instructions().size(), 1u);
 }
 
-TEST(RecompilerFixesTests, AtomicZeroEliminatedWhenResultUnused) {
+TEST(RecompilerFixesTests, DivergentBlockLdsWritePlacesBarrierAtReconvergence) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& divBlock = program.CreateBlock();
+    IrBlock& mergeBlock = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    // Set up CFG block info in metadata: entry has a divergent branch to divBlock and mergeBlock, with mergeBlock as merge.
+    BlockInfo entryInfo{};
+    entryInfo.id = entry.Id();
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::ExecZero; // divergent condition
+    entryInfo.terminator.trueBlock = divBlock.Id();
+    entryInfo.terminator.falseBlock = mergeBlock.Id();
+    entryInfo.terminator.mergeBlock = mergeBlock.Id();
+
+    BlockInfo divInfo{};
+    divInfo.id = divBlock.Id();
+    divInfo.terminator.kind = TerminatorKind::Branch;
+    divInfo.terminator.trueBlock = mergeBlock.Id();
+
+    BlockInfo mergeInfo{};
+    mergeInfo.id = mergeBlock.Id();
+    mergeInfo.terminator.kind = TerminatorKind::Return;
+
+    program.Metadata().blockInfo = {entryInfo, divInfo, mergeInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(divBlock);
+
+    IrValue& addr = ir.Constant(16u);
+    IrValue& val = ir.Constant(42u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    divBlock.AppendInstruction(&writeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 1u);
+    // Divergent block must NOT contain the barrier (preventing GPU control barrier deadlocks)
+    for (IrValue* inst : divBlock.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+    // Uniform merge block MUST contain the barrier
+    bool foundMergeBarrier = false;
+    for (IrValue* inst : mergeBlock.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            foundMergeBarrier = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundMergeBarrier);
+}
+
+TEST(RecompilerFixesTests, SharedAtomicZeroPreservedForSynchronization) {
     IrProgram program;
     IrBlock& entry = program.CreateBlock();
     program.SetEntryBlock(entry);
@@ -96,28 +153,7 @@ TEST(RecompilerFixesTests, AtomicZeroEliminatedWhenResultUnused) {
     SharedMemoryBarrierInserter inserter;
     static_cast<void>(inserter.Insert(program, 32u));
 
-    // Since atomicOp result has no uses, it should be changed to Identity
-    EXPECT_EQ(atomicOp.Opcode(), IrOpcode::Identity);
-}
-
-TEST(RecompilerFixesTests, NonZeroAtomicNotEliminated) {
-    IrProgram program;
-    IrBlock& entry = program.CreateBlock();
-    program.SetEntryBlock(entry);
-    IrBuilder ir(program);
-    ir.SetInsertionPoint(entry);
-
-    IrValue& addr = ir.Constant(32u);
-    IrValue& nonZero = ir.Constant(1u);
-
-    IrValue& atomicOp = program.CreateValue(IrOpcode::SharedAtomicIAdd32, IrType::U32);
-    atomicOp.AddArgument(&addr);
-    atomicOp.AddArgument(&nonZero);
-    entry.AppendInstruction(&atomicOp);
-
-    SharedMemoryBarrierInserter inserter;
-    static_cast<void>(inserter.Insert(program, 32u));
-
+    // Shared atomics provide workgroup memory synchronization; must NOT be eliminated to Identity
     EXPECT_EQ(atomicOp.Opcode(), IrOpcode::SharedAtomicIAdd32);
 }
 
@@ -149,6 +185,36 @@ TEST(RecompilerFixesTests, VMovrelsEmitsSelectChainLowering) {
     EXPECT_TRUE(foundSelect);
 }
 
+TEST(RecompilerFixesTests, VMovrelsOutOfBoundsFallsBackToVgpr0) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    TranslationContext context(program, entry, 256u);
+
+    RdnaInstruction inst{};
+    inst.family = RdnaInstructionFamily::VOP1;
+    inst.op = RdnaOpcode::VMovrelsB32;
+    inst.destination.kind = RdnaOperandKind::VectorRegister;
+    inst.destination.reg = 10u;
+    inst.source0.kind = RdnaOperandKind::VectorRegister;
+    inst.source0.reg = 20u;
+
+    context.TranslateInstruction(inst);
+
+    // First instruction in select chain initializes result from VGPR0
+    bool readsVgpr0 = false;
+    for (IrValue* val : entry.Instructions()) {
+        if (val && val->Opcode() == IrOpcode::GetVectorRegister) {
+            if (val->ArgumentCount() >= 1 && val->Argument(0)->Register().bank == RegisterBank::Vector && val->Argument(0)->Register().index == 0u) {
+                readsVgpr0 = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(readsVgpr0);
+}
+
 TEST(RecompilerFixesTests, VMovreldEmitsSelectChainLowering) {
     IrProgram program;
     IrBlock& entry = program.CreateBlock();
@@ -174,6 +240,37 @@ TEST(RecompilerFixesTests, VMovreldEmitsSelectChainLowering) {
         }
     }
     EXPECT_TRUE(foundSelect);
+}
+
+TEST(RecompilerFixesTests, VMovreldOutOfBoundsWritesToVgpr0) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    TranslationContext context(program, entry, 256u);
+
+    // Destination base is VGPR 10 (does not include VGPR 0 in dstBase + [0..64))
+    RdnaInstruction inst{};
+    inst.family = RdnaInstructionFamily::VOP1;
+    inst.op = RdnaOpcode::VMovreldB32;
+    inst.destination.kind = RdnaOperandKind::VectorRegister;
+    inst.destination.reg = 10u;
+    inst.source0.kind = RdnaOperandKind::VectorRegister;
+    inst.source0.reg = 1u;
+
+    context.TranslateInstruction(inst);
+
+    // Fallback write to VGPR0 must be emitted for out-of-bounds M0
+    bool setsVgpr0 = false;
+    for (IrValue* val : entry.Instructions()) {
+        if (val && val->Opcode() == IrOpcode::SetVectorRegister) {
+            if (val->ArgumentCount() >= 1 && val->Argument(0)->Register().bank == RegisterBank::Vector && val->Argument(0)->Register().index == 0u) {
+                setsVgpr0 = true;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(setsVgpr0);
 }
 
 TEST(RecompilerFixesTests, SSaveexecReadsOldExecBeforeUpdatingExec) {
