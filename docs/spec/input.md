@@ -104,6 +104,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
   - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
   - [ ] TOML controller binding parsing and rejection of invalid identifiers.
   - [x] Monotonic timestamp advancement invariants on sequential `scePadRead` calls (`PadHapticsTests.cpp`).
+  - [ ] Mouse open/read/close error contract + SDL routing + ring overflow (`libSceMouse/tests/Mouse.cpp`, M2-gated DISABLED GTest; builds in CI, enables with the M2 exports).
 - **Ported Ecosystem Test Suites:**
   - [x] **KytyPS5 `PadHapticsTests`:** DualSense USB report parsing, radial deadzone calculation, motor vibration amplitude translation, and controller orientation telemetry (`core/libs/tests/PadHapticsTests.cpp`).
 - **Replay determinism:** the same recorded input produces identical `PadData` sequences whatever controller backend is present.
@@ -121,7 +122,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] Port PR #5's `scePadRead`. Import inventory for Mouse and Keyboard. Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input`. |
+| M1 | - [ ] Port PR #5's `scePadRead`. Import inventory for Mouse and Keyboard. Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input`. Sync status (PR #28): the mouse backend (`libSceMouse/src/mouse_impl.cpp`, `include/MouseState.hpp`, `include/mouse_structs.h`) plus VideoOut routing (`libSceVideoOut/src/MouseInput.cpp`, `include/MouseInput.hpp`) are byte-identical to upstream `53bda68`; `libSceMouse/Export.cpp` still throws, so the Current-state row above stands. `tests/Mouse.cpp` is converted to GTest but DISABLED until the M2 exports land (builds in CI to pin the API). Debt: the process-global `std::mutex mouseMutex` (`mouse_impl.cpp:9`) violates the no-global-locks rule and must go with the M2 work. |
 | M2 | - [ ] Everything in the target design. XInput, DualSense USB and keyboard/mouse pass the matrix on Dreaming Sarah and TMNT (the F5 delivery milestone). |
 | M3–M5 | - [ ] Regression only. Add analog-trigger and multi-button coverage as the 3D titles demand. |
 | M6 | - [ ] The release matrix is published in the release notes. |

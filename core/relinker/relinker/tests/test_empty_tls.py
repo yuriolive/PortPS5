@@ -1,16 +1,17 @@
 """Validate empty PT_TLS handling through ELF conversion and PE execution."""
 
 import os
-from pathlib import Path
 import struct
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 from test_optional_plt import fixture
 
 
 def main():
+    """Run empty-TLS conversion cases through the relinker (and execute on Windows)."""
     relinker = Path(sys.argv[1]).resolve()
     cases = [
         ("empty", 0, 0, False, None),
@@ -24,24 +25,37 @@ def main():
             output = source.with_suffix(".exe")
             data = fixture()
             struct.pack_into("<H", data, 0x38, 3)
-            struct.pack_into("<IIQQQQQQ", data, 176,
-                             7, 4, 0x800, 0x800, 0x800, file_size, memory_size, 1)
+            struct.pack_into(
+                "<IIQQQQQQ", data, 176, 7, 4, 0x800, 0x800, 0x800, file_size, memory_size, 1
+            )
             if access:
-                data[0x200:0x20a] = bytes.fromhex("64 48 8b 04 25 00 00 00 00 c3")
+                data[0x200:0x20A] = bytes.fromhex("64 48 8b 04 25 00 00 00 00 c3")
             source.write_bytes(data)
-            result = subprocess.run([str(relinker), "--windows", str(source), str(output)],
-                                    capture_output=True, text=True, timeout=20)
+            # check=False: both success and expected-failure (returncode 2)
+            # paths are asserted below.
+            result = subprocess.run(
+                [str(relinker), "--windows", str(source), str(output)],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
             if error:
-                assert result.returncode == 2 and error in result.stderr and not output.exists(), result
+                assert result.returncode == 2 and error in result.stderr and not output.exists(), (
+                    result
+                )
                 continue
             assert result.returncode == 0, (result.stdout, result.stderr)
             pe = output.read_bytes()
-            pe_offset = struct.unpack_from("<I", pe, 0x3c)[0]
+            pe_offset = struct.unpack_from("<I", pe, 0x3C)[0]
             tls_rva, tls_size = struct.unpack_from("<II", pe, pe_offset + 24 + 112 + 9 * 8)
             assert bool(tls_rva) == bool(memory_size), (name, tls_rva)
             assert bool(tls_size) == bool(memory_size), (name, tls_size)
             if os.name == "nt":
-                executed = subprocess.run([str(output)], capture_output=True, timeout=20)
+                # check=False: exit code 42 is asserted below.
+                executed = subprocess.run(
+                    [str(output)], capture_output=True, timeout=20, check=False
+                )
                 assert executed.returncode == 42, (name, executed.returncode)
     print("Empty TLS integration tests passed")
 

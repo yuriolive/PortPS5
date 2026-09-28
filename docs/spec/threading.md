@@ -135,6 +135,7 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 ## Tests
 
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
+  - Upstream ports (PR #28, adapted to the repo's per-API error families): equeue wait/delete + error-check mutex (`GuestKernelErrors.cpp`), cond timedwait slices (`GuestCondTimedwait.cpp`), thread identity/lifecycle (`GuestThreadSelf.cpp`), host TLS balance incl. Win32 threads (`HostThreadLocal.cpp` + helper TU).
   - Every mutex type (lock, trylock, timedlock, `EDEADLK`, `EPERM`, `EBUSY`, destroy).
   - Lazy initialization with 64 threads racing on a zero slot, with exactly one INIT winner.
   - Condition-variable 10^6-round ping-pong and a broadcast storm with no lost wakeups.
@@ -166,3 +167,4 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 2. Is `_umtx_op` imported by any gate title directly, or only through our libkernel? This affects priority, not the design.
 3. Does FIFO order matter for anything beyond FIFO-attributed semaphores? For example, would broadcast requeue avoid a thundering herd in job systems?
 4. Should the guest priority bands map to Windows priorities at all, or would that starve the presenter and driver threads?
+5. Sync assessment (PR #28): upstream `TimedWait` and `Pthread/Posix/Common.hpp` were trial-ported and reverted (unwired, no roadmap item names them; they return with the feature that needs them). Landed and green: GuestKernelErrors, GuestCondTimedwait, GuestThreadSelf, HostThreadLocal GTest suites — error expectations follow the repo's per-API families (equeue FreeBSD-style, pthread/SCE `0x8002`, cond `kSceTimedOut`), the host main thread has no guest handle, and the Win32 TLS baseline is filter-proof. Reverted as unusable here: `tests/Fiber.cpp` (no fiber implementation; gates M4), `tests/GuestLocale.cpp` (bakes upstream's locale layout; ours differs), `tests/GuestDirectoryEntries.cpp` (pread/getdents are Unsupported stubs here).

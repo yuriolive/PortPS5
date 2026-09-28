@@ -1,3 +1,6 @@
+// Program header layout builder — places the synthetic header block and extra
+// block for the Linux guest-module path. The header block becomes the first
+// PT_LOAD, aligned to the largest kept segment alignment.
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
@@ -144,7 +147,14 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
             ", available " + std::to_string(request.PhNum));
 
     const std::uint64_t headerBlockSize = request.PhOff + static_cast<std::uint64_t>(neededPh) * request.PhEntSize;
-    const std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
+    // The header block becomes the first PT_LOAD: align it to the largest kept
+    // segment alignment so the loader mapping stays valid. The power-of-two
+    // guard keeps the round-up mask arithmetic below well-defined.
+    std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
+    for (const auto& ph : request.OriginalHeaders) {
+        if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && (ph.Alignment & (ph.Alignment - 1)) == 0)
+            headerBlockAlign = ph.Alignment;
+    }
     const std::uint64_t headerBlockVaddr =
         (request.ExtraBlockVaddr + request.ExtraBlockSize + headerBlockAlign - 1) & ~(headerBlockAlign - 1);
 
