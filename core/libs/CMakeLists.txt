@@ -429,6 +429,31 @@ if(BUILD_TESTING)
         LABELS   unit
     )
 
+    # GuestCondTimedwait / GuestThreadSelf use GTest cases via the
+    # portps5_add_gtest helper: cond timedwait slices and thread identity.
+    portps5_add_gtest(cond_timedwait_tests
+        SOURCES  tests/GuestCondTimedwait.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libkernel libc
+        LABELS   unit
+    )
+    portps5_add_gtest(thread_self_tests
+        SOURCES  tests/GuestThreadSelf.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libkernel libc
+        LABELS   unit
+    )
+
+    # HostThreadLocal exercises host TLS construction/destruction balance;
+    # the Library TU provides the Touch/Destroyed counters in the same binary.
+    portps5_add_gtest(host_thread_local_tests
+        SOURCES  tests/HostThreadLocal.cpp
+                 tests/HostThreadLocalLibrary.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
+
     get_property(ALL_LIB_TESTS DIRECTORY PROPERTY TESTS)
     set_property(TEST ${ALL_LIB_TESTS} PROPERTY LABELS "unit")
 # --- slice audio: test registration ---
