@@ -88,6 +88,8 @@ int APS5_VABI scePthreadGetthreadid(void) noexcept;
 // Documented test prototype for _umtx_op_nid_postfix.
 int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t val, void* uaddr,
                                    void* uaddr2) noexcept;
+// Documented test prototype for sceKernelUsleep_nid_postfix.
+int APS5_VABI sceKernelUsleep_nid_postfix(unsigned int microseconds) noexcept;
 }
 
 template <typename T>
@@ -361,8 +363,9 @@ static void TestRwlock() {
     REQUIRE(scePthreadRwlockWrlock(r) == SCE_EDEADLK);  // writer relock.
     REQUIRE(scePthreadRwlockTryrdlock(r) == SCE_EBUSY);
     REQUIRE(scePthreadRwlockUnlock(r) == SCE_OK);
-    // Writer preference: with a writer queued (WRITERS_WAITING), a new
-    // reader trylock must fail even though no writer holds yet.
+    // Writer preference & recursion: with a writer queued (WRITERS_WAITING),
+    // an existing reader can recursively re-acquire (preventing self-deadlock),
+    // but a new reader thread must fail with SCE_EBUSY.
     REQUIRE(scePthreadRwlockRdlock(r) == SCE_OK);  // reader A holds.
     std::atomic<bool> writerStarted{false};
     std::atomic<int> writerRc{-1};
@@ -374,14 +377,29 @@ static void TestRwlock() {
     });
     while (!writerStarted.load())
         std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // let writer queue.
-    REQUIRE(scePthreadRwlockTryrdlock(r) == SCE_EBUSY);  // preferred writer blocks us.
-    REQUIRE(scePthreadRwlockUnlock(r) == SCE_OK);        // release A; writer proceeds.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));  // let writer queue.
+
+    // Recursive read locks by existing reader A must succeed even though writer is waiting:
+    REQUIRE(scePthreadRwlockRdlock(r) == SCE_OK);
+    REQUIRE(scePthreadRwlockTryrdlock(r) == SCE_OK);
+
+    // A separate, new reader thread MUST be blocked by writer preference:
+    std::atomic<int> readerBRc{-1};
+    std::thread r2([&] {
+        readerBRc.store(scePthreadRwlockTryrdlock(r));
+    });
+    r2.join();
+    REQUIRE(readerBRc.load() == SCE_EBUSY);  // preferred writer blocks new reader.
+
+    // Unlocking reader A 3 times releases all held locks, letting writer proceed:
+    REQUIRE(scePthreadRwlockUnlock(r) == SCE_OK);
+    REQUIRE(scePthreadRwlockUnlock(r) == SCE_OK);
+    REQUIRE(scePthreadRwlockUnlock(r) == SCE_OK);
     w.join();
     REQUIRE(writerRc.load() == SCE_OK);
     REQUIRE(scePthreadRwlockDestroy(r) == SCE_OK);
     REQUIRE(scePthreadRwlockRdlock(r) == SCE_EINVAL);  // use after destroy.
-    std::printf("PASS rwlock basics + writer preference\n");
+    std::printf("PASS rwlock basics + writer preference + recursion\n");
 }
 
 static void TestTids() {
@@ -515,9 +533,36 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(rw, 13, 0, nullptr, nullptr) == SCE_OK);
         // Release write lock (op 14).
         REQUIRE(_umtx_op_nid_postfix(rw, 14, 0, nullptr, nullptr) == SCE_OK);
+
+        // Contended writer handoff: reader-to-writer and writer-to-writer
+        // must clear waiter flags to 0 so queued writers can acquire.
+        alignas(4) std::uint32_t rwHandoff[4] = {0, 0, 0, 0};
+        REQUIRE(_umtx_op_nid_postfix(rwHandoff, 12, 0, nullptr, nullptr) == SCE_OK);  // reader holds.
+        std::atomic<bool> writerQueued{false};
+        std::atomic<int> writerResult{-1};
+        std::thread wrThread([&] {
+            writerQueued.store(true);
+            writerResult.store(_umtx_op_nid_postfix(rwHandoff, 13, 0, nullptr, nullptr));
+            if (writerResult.load() == SCE_OK) {
+                // Writer release clears state to 0 so subsequent acquirers succeed.
+                REQUIRE(_umtx_op_nid_postfix(rwHandoff, 14, 0, nullptr, nullptr) == SCE_OK);
+            }
+        });
+        while (!writerQueued.load())
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Reader release wakes queued writer:
+        REQUIRE(_umtx_op_nid_postfix(rwHandoff, 14, 0, nullptr, nullptr) == SCE_OK);
+        wrThread.join();
+        REQUIRE(writerResult.load() == SCE_OK);
+        // Word state must now be 0, allowing an immediate write lock:
+        REQUIRE(_umtx_op_nid_postfix(rwHandoff, 13, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(rwHandoff, 14, 0, nullptr, nullptr) == SCE_OK);
     }
     {
         // _umtx_op CV (ops 8, 9, 10).
+        // Per FreeBSD syscall contract, _umtx_op(cv, 8, ...) unlocks the mutex
+        // and returns with the mutex UNLOCKED (caller re-locks in userland).
         alignas(4) std::uint32_t cv[4] = {0, 0, 0, 0};
         alignas(4) std::uint32_t mutex[4] = {0, 0, 0, 0};
         std::atomic<bool> threadWaiting{false};
@@ -526,18 +571,41 @@ static void TestUmtx() {
             REQUIRE(_umtx_op_nid_postfix(mutex, 4, 0, nullptr, nullptr) == SCE_OK);
             threadWaiting.store(true);
             waitResult.store(_umtx_op_nid_postfix(cv, 8, 0, mutex, nullptr));
+            // Sycall returned: mutex MUST be unlocked. Unlocking directly returns EPERM.
+            REQUIRE(_umtx_op_nid_postfix(mutex, 6, 0, nullptr, nullptr) == SCE_EPERM);
+            // Reacquire mutex in userland:
+            REQUIRE(_umtx_op_nid_postfix(mutex, 4, 0, nullptr, nullptr) == SCE_OK);
             REQUIRE(_umtx_op_nid_postfix(mutex, 6, 0, nullptr, nullptr) == SCE_OK);
         });
         while (!threadWaiting.load()) {
             std::this_thread::yield();
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Verify mutex was unlocked while thread was waiting on cv:
+        REQUIRE(mutex[0] == 0);
         // Signal CV (op 9).
         REQUIRE(_umtx_op_nid_postfix(cv, 9, 0, nullptr, nullptr) == SCE_OK);
         t.join();
         REQUIRE(waitResult.load() == SCE_OK);
     }
     std::printf("PASS umtx wait/wake 4+8, mutex word, robust non-collision, timeout, rwlock, cv\n");
+}
+
+/**
+ * @brief Tests sub-millisecond sleep precision.
+ * Verifies that sceKernelUsleep does not return immediately when no other thread is ready.
+ */
+static void TestSubMillisecondSleep() {
+    // sceKernelUsleep(0) yields immediately.
+    REQUIRE(sceKernelUsleep_nid_postfix(0) == SCE_OK);
+
+    // Sub-millisecond sleep (e.g. 500us): must not return immediately (0us).
+    const auto t0 = std::chrono::steady_clock::now();
+    REQUIRE(sceKernelUsleep_nid_postfix(500) == SCE_OK);
+    const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    REQUIRE(elapsedUs >= 400);
+    std::printf("PASS sub-millisecond sleep duration precision\n");
 }
 
 static void Microbenchmark() {
@@ -575,6 +643,7 @@ int main() {
     TestRwlock();
     TestTids();
     TestUmtx();
+    TestSubMillisecondSleep();
     Microbenchmark();
     std::printf("PASS: futex mutex/cond/rwlock/tids/umtx + microbenchmark\n");
     return 0;

@@ -455,10 +455,6 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                 break;
             }
         }
-        // Per POSIX / FreeBSD, condition waiters always reacquire the mutex before returning.
-        const int lockErr = UmutexLock(mutexWord, tid, FutexCore::kInfinite, true);
-        if (lockErr != SyncWords::kSceOk)
-            return lockErr;
         return timedOut ? SyncWords::kSceTimedOut : SyncWords::kSceOk;
     }
     case kOpCvSignal: {
@@ -571,9 +567,9 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
             if ((state & kRwWriteOwner) != 0) {
-                // Writer release
+                // Writer release: clear owner and waiter bits so queued writers can acquire state == 0
                 std::uint32_t expected = state;
-                const std::uint32_t desired = state & (kRwWriteWaiters | kRwReadWaiters);
+                const std::uint32_t desired = 0;
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
                     FutexCore::WakeAll(rwWord);
@@ -585,10 +581,11 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             if (readers == 0)
                 return SyncWords::kSceEperm;
             std::uint32_t expected = state;
-            const std::uint32_t desired = state - 1;
+            const bool wakeWriter = readers == 1 && (state & kRwWriteWaiters) != 0;
+            const std::uint32_t desired = readers == 1 ? 0 : state - 1;
             if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                  std::memory_order_acquire)) {
-                if ((desired & kRwMaxReaders) == 0 && (desired & kRwWriteWaiters) != 0)
+                if (wakeWriter)
                     FutexCore::WakeSingle(rwWord);
                 return SyncWords::kSceOk;
             }

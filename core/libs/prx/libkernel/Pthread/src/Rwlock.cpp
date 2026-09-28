@@ -10,6 +10,8 @@
 #include <atomic>
 #include <cstdint>
 #include <new>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -28,15 +30,108 @@ inline std::atomic_ref<std::uint64_t> WordRef(PthreadRwlock* slot) noexcept {
     return std::atomic_ref<std::uint64_t>(*WordPtr(slot));
 }
 
+/**
+ * @brief Thread-local tracker for read locks currently held by this thread.
+ *
+ * POSIX rwlocks with writer preference must not block a thread that already
+ * holds a read lock when re-acquiring recursively (e.g. read lock recursion),
+ * otherwise a queued writer causes a self-deadlock between the reader and writer.
+ */
+struct ReadLockTracker {
+    static constexpr std::size_t kInlineCapacity = 32;
+    struct Entry {
+        PthreadRwlock* lock{nullptr};
+        std::uint32_t count{0};
+    };
+    Entry inlineEntries[kInlineCapacity]{};
+    std::size_t inlineCount = 0;
+    std::vector<Entry> overflow;
+
+    /**
+     * @brief Checks whether the given rwlock is currently held in read mode by this thread.
+     * @param lock Target rwlock pointer.
+     * @return True if this thread holds at least one active read lock on it.
+     */
+    bool Holds(PthreadRwlock* lock) const noexcept {
+        for (std::size_t i = 0; i < inlineCount; ++i) {
+            if (inlineEntries[i].lock == lock)
+                return inlineEntries[i].count > 0;
+        }
+        for (const auto& e : overflow) {
+            if (e.lock == lock)
+                return e.count > 0;
+        }
+        return false;
+    }
+
+    /**
+     * @brief Registers an acquired read lock for this thread.
+     * @param lock Target rwlock pointer.
+     */
+    void Add(PthreadRwlock* lock) {
+        for (std::size_t i = 0; i < inlineCount; ++i) {
+            if (inlineEntries[i].lock == lock) {
+                inlineEntries[i].count++;
+                return;
+            }
+        }
+        for (auto& e : overflow) {
+            if (e.lock == lock) {
+                e.count++;
+                return;
+            }
+        }
+        if (inlineCount < kInlineCapacity) {
+            inlineEntries[inlineCount++] = {lock, 1};
+        } else {
+            overflow.push_back({lock, 1});
+        }
+    }
+
+    /**
+     * @brief Deregisters a released read lock for this thread.
+     * @param lock Target rwlock pointer.
+     */
+    void Remove(PthreadRwlock* lock) noexcept {
+        for (std::size_t i = 0; i < inlineCount; ++i) {
+            if (inlineEntries[i].lock == lock) {
+                if (inlineEntries[i].count > 1) {
+                    inlineEntries[i].count--;
+                } else {
+                    inlineEntries[i] = inlineEntries[inlineCount - 1];
+                    inlineEntries[inlineCount - 1] = {};
+                    inlineCount--;
+                }
+                return;
+            }
+        }
+        for (std::size_t i = 0; i < overflow.size(); ++i) {
+            if (overflow[i].lock == lock) {
+                if (overflow[i].count > 1) {
+                    overflow[i].count--;
+                } else {
+                    overflow[i] = overflow.back();
+                    overflow.pop_back();
+                }
+                return;
+            }
+        }
+    }
+};
+
+thread_local ReadLockTracker tls_readLocks;
+
 // Writers are preferred once WRITERS_WAITING is set (spec): a new reader
 // blocks when a writer holds the lock OR writers are queued, so a continuous
 // reader stream cannot starve a writer. No global mutex; all state is the
 // word + WaitOnAddress with re-check (spurious wakeups allowed).
+// Threads that already hold the lock bypass writer preference to prevent self-deadlock.
 int RdlockInternal(PthreadRwlock* slot, bool tryOnly) noexcept {
     if (!slot)
         return kSceEinval;
     if (GuestTid::Ensure() == 0)
         return kSceEagain;
+    const bool alreadyHolding = tls_readLocks.Holds(slot);
     auto ref = WordRef(slot);
     while (true) {
         std::uint64_t w = ref.load(std::memory_order_acquire);
@@ -50,7 +145,7 @@ int RdlockInternal(PthreadRwlock* slot, bool tryOnly) noexcept {
         }
         if (!RW::IsInit(w) || RW::IsDestroyed(w))
             return kSceEinval;
-        if (RW::HasWriter(w) || RW::WritersWaiting(w)) {
+        if (RW::HasWriter(w) || (RW::WritersWaiting(w) && !alreadyHolding)) {
             if (tryOnly)
                 return kSceEbusy;
             // Queue as reader-waiter before sleeping (release) so unlock's
@@ -97,8 +192,10 @@ int RdlockInternal(PthreadRwlock* slot, bool tryOnly) noexcept {
             (static_cast<std::uint64_t>(readers + 1) & RW::kReadersMask);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
-                                        std::memory_order_acquire))
+                                        std::memory_order_acquire)) {
+            tls_readLocks.Add(slot);
             return kSceOk;
+        }
     }
 }
 
@@ -318,6 +415,7 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) noexcept {
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
+            tls_readLocks.Remove(rwlock);
             if (lastReader && queued) {
                 // Last reader out with waiters: clear flags (woken sides
                 // re-queue) and wake all; writer preference is enforced by

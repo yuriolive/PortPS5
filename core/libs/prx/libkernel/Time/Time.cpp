@@ -76,13 +76,14 @@ static void SleepNanos(std::uint64_t nanos) noexcept {
     }
 #ifdef _WIN32
     EnsureTimerTick();
+    const std::uint64_t start = GetMonotonicNanos();
+    const std::uint64_t target = start + nanos;
     const DWORD millis = static_cast<DWORD>(nanos / 1000000ULL);
-    if (millis > 0) {
-        Sleep(millis);
-    } else {
-        // Sub-millisecond sleep: yield once; precision comes from the futex
-        // sub-ms slices, not from Sleep (1ms granularity).
-        SwitchToThread();
+    if (millis > 1) {
+        Sleep(millis - 1);
+    }
+    while (GetMonotonicNanos() < target) {
+        YieldProcessor();
     }
 #else
     struct timespec req{};
