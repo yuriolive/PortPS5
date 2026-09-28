@@ -430,14 +430,47 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
     case kOpCvWait: {
         if (!obj || !uaddr)
             return SyncWords::kSceEinval;
-        std::uint64_t deadline = FutexCore::kInfinite;
-        const int err = ParseUmtxTimeout(nullptr, uaddr2, deadline);
-        if (err != SyncWords::kSceOk)
-            return err;
+        constexpr std::uint64_t kCvWaitAbstime = 0x01;
+        constexpr std::uint64_t kCvWaitClockid = 0x02;
+
         auto* cvWord = static_cast<std::uint32_t*>(obj);
         auto* mutexWord = static_cast<std::uint32_t*>(uaddr);
+
+        std::uint64_t deadline = FutexCore::kInfinite;
+        if (uaddr2 != nullptr) {
+            const auto* ts = static_cast<const KernelTimespec*>(uaddr2);
+            if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000LL)
+                return SyncWords::kSceEinval;
+            std::uint32_t clockid = 0;
+            if ((val & kCvWaitClockid) != 0) {
+                clockid = static_cast<std::uint32_t>(val >> 16);
+            } else {
+                clockid = cvWord[2];
+            }
+            const bool isMono = (clockid == 1 || clockid == 4 || clockid == 5 ||
+                                 clockid == 7 || clockid == 8 || clockid == 11 || clockid == 12);
+            if ((val & kCvWaitAbstime) != 0) {
+                deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, isMono);
+            } else {
+                constexpr std::uint64_t kMaxSec = (UINT64_MAX - 1000000000ULL) / 1000000000ULL;
+                if (static_cast<std::uint64_t>(ts->tv_sec) > kMaxSec) {
+                    deadline = FutexCore::kInfinite;
+                } else {
+                    const std::uint64_t relNanos = static_cast<std::uint64_t>(ts->tv_sec) * 1000000000ULL +
+                                                   static_cast<std::uint64_t>(ts->tv_nsec);
+                    const std::uint64_t now = FutexCore::NowNanos();
+                    if (UINT64_MAX - now <= relNanos)
+                        deadline = FutexCore::kInfinite;
+                    else
+                        deadline = now + relNanos;
+                }
+            }
+        }
+
         std::atomic_ref<std::uint32_t> cvRef(cvWord[0]);
-        const std::uint32_t seq = cvRef.fetch_add(1, std::memory_order_acq_rel) + 1;
+        // Capture current generation counter without modifying it, so concurrent waiters
+        // do not spuriously wake each other before CV_SIGNAL or CV_BROADCAST.
+        const std::uint32_t seq = cvRef.load(std::memory_order_acquire);
         const int unlockErr = UmutexUnlock(mutexWord, tid);
         if (unlockErr != SyncWords::kSceOk)
             return unlockErr;
@@ -530,12 +563,16 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         std::atomic_ref<std::uint32_t> stateRef(rwWord[0]);
         constexpr std::uint32_t kRwWriteOwner = 0x80000000u;
         constexpr std::uint32_t kRwWriteWaiters = 0x40000000u;
+        constexpr std::uint32_t kRwReadWaiters = 0x20000000u;
+        constexpr std::uint32_t kRwMaxReaders = 0x1FFFFFFFu;
 
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
-            if (state == 0) {
-                std::uint32_t expected = 0;
-                if (stateRef.compare_exchange_strong(expected, kRwWriteOwner, std::memory_order_acq_rel,
+            // Acquire write lock if no writer holds and no readers hold.
+            if ((state & (kRwWriteOwner | kRwMaxReaders)) == 0) {
+                std::uint32_t expected = state;
+                const std::uint32_t desired = kRwWriteOwner | (state & (kRwWriteWaiters | kRwReadWaiters));
+                if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                      std::memory_order_acquire))
                     return SyncWords::kSceOk;
                 continue;
@@ -548,7 +585,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                                                  std::memory_order_acq_rel, std::memory_order_acquire);
             }
             const std::uint32_t expect = stateRef.load(std::memory_order_acquire);
-            if (expect == 0)
+            if ((expect & (kRwWriteOwner | kRwMaxReaders)) == 0)
                 continue;
             if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(rwWord), expect, deadline))
                 return SyncWords::kSceTimedOut;
@@ -567,7 +604,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
             if ((state & kRwWriteOwner) != 0) {
-                // Writer release: clear owner and waiter bits so queued writers can acquire state == 0
+                // Writer release: clear owner bit and wake all waiters.
                 std::uint32_t expected = state;
                 const std::uint32_t desired = 0;
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
@@ -581,12 +618,13 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             if (readers == 0)
                 return SyncWords::kSceEperm;
             std::uint32_t expected = state;
-            const bool wakeWriter = readers == 1 && (state & kRwWriteWaiters) != 0;
-            const std::uint32_t desired = readers == 1 ? 0 : state - 1;
+            const bool wakeWaiters = readers == 1 && (state & (kRwWriteWaiters | kRwReadWaiters)) != 0;
+            // Preserve waiter bits when removing the final reader so waking a waiter preserves visibility.
+            const std::uint32_t desired = readers == 1 ? (state & (kRwWriteWaiters | kRwReadWaiters)) : state - 1;
             if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                  std::memory_order_acquire)) {
-                if (wakeWriter)
-                    FutexCore::WakeSingle(rwWord);
+                if (wakeWaiters)
+                    FutexCore::WakeAll(rwWord);
                 return SyncWords::kSceOk;
             }
         }

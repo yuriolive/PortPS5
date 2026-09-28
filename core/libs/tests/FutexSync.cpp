@@ -397,6 +397,10 @@ static void TestRwlock() {
     REQUIRE(scePthreadRwlockUnlock(r) == SCE_OK);
     w.join();
     REQUIRE(writerRc.load() == SCE_OK);
+    // After writer unlocks, the idle word must be clean (kWritersWaiting cleared),
+    // so subsequent readers do not block and tryrdlock immediately succeeds.
+    REQUIRE(scePthreadRwlockTryrdlock(r) == SCE_OK);
+    REQUIRE(scePthreadRwlockUnlock(r) == SCE_OK);
     REQUIRE(scePthreadRwlockDestroy(r) == SCE_OK);
     REQUIRE(scePthreadRwlockRdlock(r) == SCE_EINVAL);  // use after destroy.
     std::printf("PASS rwlock basics + writer preference + recursion\n");
@@ -587,6 +591,57 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(cv, 9, 0, nullptr, nullptr) == SCE_OK);
         t.join();
         REQUIRE(waitResult.load() == SCE_OK);
+
+        // Multi-waiter CV test: multiple concurrent waiters capture generation without
+        // modifying it, ensuring neither waiter spuriously wakes before signal/broadcast.
+        alignas(4) std::uint32_t cvMulti[4] = {0, 0, 0, 0};
+        alignas(4) std::uint32_t mMulti[4] = {0, 0, 0, 0};
+        std::atomic<bool> w1Waiting{false};
+        std::atomic<bool> w2Waiting{false};
+        std::atomic<int> r1{-1};
+        std::atomic<int> r2{-1};
+        std::thread t1([&] {
+            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
+            w1Waiting.store(true);
+            r1.store(_umtx_op_nid_postfix(cvMulti, 8, 0, mMulti, nullptr));
+            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
+            REQUIRE(_umtx_op_nid_postfix(mMulti, 6, 0, nullptr, nullptr) == SCE_OK);
+        });
+        while (!w1Waiting.load())
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Verify w1 is still waiting and has not spuriously awakened.
+        REQUIRE(r1.load() == -1);
+
+        std::thread t2([&] {
+            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
+            w2Waiting.store(true);
+            r2.store(_umtx_op_nid_postfix(cvMulti, 8, 0, mMulti, nullptr));
+            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
+            REQUIRE(_umtx_op_nid_postfix(mMulti, 6, 0, nullptr, nullptr) == SCE_OK);
+        });
+        while (!w2Waiting.load())
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Neither w1 nor w2 should have woken up yet!
+        REQUIRE(r1.load() == -1);
+        REQUIRE(r2.load() == -1);
+
+        // Broadcast to wake both:
+        REQUIRE(_umtx_op_nid_postfix(cvMulti, 10, 0, nullptr, nullptr) == SCE_OK);
+        t1.join();
+        t2.join();
+        REQUIRE(r1.load() == SCE_OK);
+        REQUIRE(r2.load() == SCE_OK);
+
+        // CV wait with CVWAIT_ABSTIME (val = 1) and past timestamp returns timeout:
+        alignas(4) std::uint32_t cvTime[4] = {0, 0, 0, 0};
+        alignas(4) std::uint32_t mTime[4] = {0, 0, 0, 0};
+        REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
+        KernelTimespec pastTs{0, 1}; // epoch + 1ns
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1, mTime, &pastTs) == SCE_TIMEDOUT);
+        REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
     }
     std::printf("PASS umtx wait/wake 4+8, mutex word, robust non-collision, timeout, rwlock, cv\n");
 }

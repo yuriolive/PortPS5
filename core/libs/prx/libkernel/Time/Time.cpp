@@ -78,9 +78,17 @@ static void SleepNanos(std::uint64_t nanos) noexcept {
     EnsureTimerTick();
     const std::uint64_t start = GetMonotonicNanos();
     const std::uint64_t target = start + nanos;
-    const DWORD millis = static_cast<DWORD>(nanos / 1000000ULL);
-    if (millis > 1) {
-        Sleep(millis - 1);
+    std::uint64_t remainingMillis = nanos / 1000000ULL;
+    // Chunk large sleeps into bounded DWORD intervals (max ~24 days per Sleep call)
+    // so millis >= 2^32 does not wrap when cast to DWORD.
+    constexpr DWORD kMaxChunkMs = 0x7FFFFFFFUL;
+    while (remainingMillis > 1) {
+        const DWORD chunk = static_cast<DWORD>(std::min<std::uint64_t>(remainingMillis - 1, kMaxChunkMs));
+        Sleep(chunk);
+        const std::uint64_t now = GetMonotonicNanos();
+        if (now >= target)
+            break;
+        remainingMillis = (target - now) / 1000000ULL;
     }
     while (GetMonotonicNanos() < target) {
         YieldProcessor();

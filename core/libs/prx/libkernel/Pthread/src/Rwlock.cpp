@@ -388,16 +388,13 @@ int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) noexcept {
         if (RW::HasWriter(w)) {
             if (RW::WriterTid(w) != tid)
                 return kSceEperm;
-            // Write unlock: clear WRITER|tid, keep waiter flags for the
-            // wake decision, then wake all when anyone queued.
+            // Write unlock: clear WRITER|tid and transient waiter flags so idle lock is kInit.
+            // Woken waiters will re-register as needed.
             const bool queued = RW::WritersWaiting(w) || RW::ReadersWaiting(w);
-            const std::uint64_t want =
-                RW::kInit | (w & (RW::kWritersWaiting | RW::kReadersWaiting));
+            const std::uint64_t want = RW::kInit;
             std::uint64_t expected = w;
             if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                             std::memory_order_acquire)) {
-                // Writer-waiting flag is preserved across unlock so waking writers
-                // maintain priority over incoming readers (preventing starvation).
                 if (queued)
                     FutexCore::WakeAll(WordPtr(rwlock));
                 return kSceOk;
