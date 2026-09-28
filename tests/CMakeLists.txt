@@ -85,3 +85,14 @@ portps5_add_test(check_comments_unit_tests
     ARGS
         -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tools -p "test_check_comments.py" -v
 )
+
+# Python unit tests for tools/progress.py — verifies --root revision
+# attribution (libraries, opcode enum and ISA list all follow the selected
+# root) with synthetic trees and no game data.
+portps5_add_test(progress_unit_tests
+    ${Python3_EXECUTABLE}
+    LABELS
+        unit
+    ARGS
+        -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tools -p "test_progress.py" -v
+)

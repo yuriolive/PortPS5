@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
-ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
+ISA = ROOT / "tools" / "rdna_isa.txt"
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "yuriolive/PortPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?\{")
 STUB = "NotImplemented_nid_no_patch"
@@ -293,6 +293,7 @@ if __name__ == "__main__":
     if args.root:
         PRX = args.root / "core" / "libs" / "prx"
         OPCODES = args.root / OPCODES.relative_to(ROOT)
+        ISA = args.root / ISA.relative_to(ROOT)
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
     libraries, shaders = collect_libraries(), collect_shaders()
