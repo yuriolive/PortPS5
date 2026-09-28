@@ -260,6 +260,18 @@ class ProgressMainTests(unittest.TestCase):
             base = os.path.join(first, "progress.json")
             self.assertEqual(progress.main(["--compare", base, base]), 0)
 
+    def test_main_root_without_isa_falls_back(self):
+        # A base revision predating rdna_isa.txt still measures: the ISA
+        # falls back to this checkout instead of raising FileNotFoundError.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _write_tree(tmp, _ISA_WITH_TESTADD)
+            os.remove(root / "tools" / "rdna_isa.txt")
+            out = os.path.join(tmp, "out")
+            self.assertEqual(progress.main([out, "--root", str(root)]), 0)
+            with open(os.path.join(out, "progress.json")) as f:
+                data = json.load(f)
+            self.assertGreater(data["shaders"]["total"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

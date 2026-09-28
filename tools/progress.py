@@ -406,7 +406,12 @@ def main(argv=None):
         root = args.root
         prx = root / "core" / "libs" / "prx"
         opcodes = root / OPCODES.relative_to(ROOT)
+        # New files may be absent from the base revision (e.g. rdna_isa.txt
+        # itself when first added): fall back to this checkout's copy so
+        # base-vs-head comparison still runs instead of failing.
         isa = root / ISA.relative_to(ROOT)
+        if not isa.is_file():
+            isa = ISA
     else:
         prx, opcodes, isa = PRX, OPCODES, ISA
     output = args.output
