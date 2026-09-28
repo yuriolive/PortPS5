@@ -118,11 +118,11 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 | Milestone | Work |
 |---|---|
-| M1 | Offline NP, trophies, user service and system dialogs non-blocking at boot for all five titles. NP, dialog and trophy import inventory. `MsgDialog` stops throwing. |
-| M2 | Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration. Round-trip in `tools/regress`. Dreaming Sarah and TMNT pass. |
-| M3 | Tomb Raider save/load (the PRD gate for save/load), including the multi-slot list dialog. |
-| M4–M5 | Bugsnax and Demon's Souls saves, including any backup events or memory-blob paths they use. |
-| M6 | The user guide documents the save location and migration. |
+| M1 | - [ ] Offline NP, trophies, user service and system dialogs non-blocking at boot for all five titles. NP, dialog and trophy import inventory. `MsgDialog` stops throwing. |
+| M2 | - [ ] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration. Round-trip in `tools/regress`. Dreaming Sarah and TMNT pass. |
+| M3 | - [ ] Tomb Raider save/load (the PRD gate for save/load), including the multi-slot list dialog. |
+| M4–M5 | - [ ] Bugsnax and Demon's Souls saves, including any backup events or memory-blob paths they use. |
+| M6 | - [ ] The user guide documents the save location and migration. |
 
 ## Open questions
 

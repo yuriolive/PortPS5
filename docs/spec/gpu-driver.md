@@ -169,12 +169,12 @@ The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` on
 
 | Milestone | Delivers |
 |---|---|
-| M1 | Port the Recorder, host import with staging fallback, and GPU detile. Keep the interim adjacent block-generation advance (no switch, no title reference) until M3. Remove `matchesFillKernel`, `matchesCopyKernel`, `tolerate`-skips, the failure memo and the `APS5_*` switches (fill and copy run as the title's own shaders). Add the `driver-lavapipe` CI job. |
-| M2 | Depth/stencil and conditional colour writes. Pipeline-cache integration. |
-| M3 | Module split. The indirect family. Block-generation tracking. The capture-ordering redesign (GPU buffers, submit-time images, the label-wait rule). |
-| M4 | GPU-side descriptor heap for bindless. Fill/copy IR pattern recognition. Wave64 through subgroup-size control, in step with the recompiler. |
-| M5 | Automatic host-import budget, full-size streaming and aliasing, and the performance pass. |
-| M6 | Release full runs, with nothing new in the driver. |
+| M1 | - [ ] Port the Recorder, host import with staging fallback, and GPU detile. Keep the interim adjacent block-generation advance (no switch, no title reference) until M3. Remove `matchesFillKernel`, `matchesCopyKernel`, `tolerate`-skips, the failure memo and the `APS5_*` switches (fill and copy run as the title's own shaders). Add the `driver-lavapipe` CI job. |
+| M2 | - [ ] Depth/stencil and conditional colour writes. Pipeline-cache integration. |
+| M3 | - [ ] Module split. The indirect family. Block-generation tracking. The capture-ordering redesign (GPU buffers, submit-time images, the label-wait rule). |
+| M4 | - [ ] GPU-side descriptor heap for bindless. Fill/copy IR pattern recognition. Wave64 through subgroup-size control, in step with the recompiler. |
+| M5 | - [ ] Automatic host-import budget, full-size streaming and aliasing, and the performance pass. |
+| M6 | - [ ] Release full runs, with nothing new in the driver. |
 
 ## Open questions
 

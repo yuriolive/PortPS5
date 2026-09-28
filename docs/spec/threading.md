@@ -156,9 +156,9 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 
 | Milestone | Delivers |
 |---|---|
-| M1 | The futex rewrite of mutex, condition variable, rwlock and `_umtx_op`, with no global mutex. Correct errno and SCE returns. `Unsupported()` in place of throws. Compact tids. Removal of the job-affinity and time-scale switches. The sync microbenchmark. (ROADMAP M1) |
-| M4 | Event flags, semaphores and fibers on the shared primitive, for UE4 job-system coverage. (ROADMAP M4) |
-| M5 | The perf pass over contention and sleep telemetry. (ROADMAP M5) |
+| M1 | - [ ] The futex rewrite of mutex, condition variable, rwlock and `_umtx_op`, with no global mutex. Correct errno and SCE returns. `Unsupported()` in place of throws. Compact tids. Removal of the job-affinity and time-scale switches. The sync microbenchmark. (ROADMAP M1) |
+| M4 | - [ ] Event flags, semaphores and fibers on the shared primitive, for UE4 job-system coverage. (ROADMAP M4) |
+| M5 | - [ ] The perf pass over contention and sleep telemetry. (ROADMAP M5) |
 
 ## Open questions
 

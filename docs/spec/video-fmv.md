@@ -109,12 +109,12 @@ Reaching the post-FMV state without the end reference fails the check, so a skip
 
 | Milestone | Work |
 |---|---|
-| M1 | Port the saveexec fix. Port the interim adjacent block-generation advance (no switch, no title reference). AvPlayer coverage audit and codec inventory per gate title. Offset telemetry skeleton (`video_latency_ms`). |
-| M2 | FMV references and the "FMV played" rule wired into `tools/regress` for the 2D titles, if they contain video. |
-| M3 | General block-generation tracking replaces the interim adjacent block-generation advance, which is deleted. Tomb Raider FMV passes. Stress-run exit. |
-| M4 | Bugsnax FMV on the general path. |
-| M5 | Demon's Souls Bink FMVs from first level to credits within the A/V bar. |
-| M6 | Release full runs. |
+| M1 | - [ ] Port the saveexec fix. Port the interim adjacent block-generation advance (no switch, no title reference). AvPlayer coverage audit and codec inventory per gate title. Offset telemetry skeleton (`video_latency_ms`). |
+| M2 | - [ ] FMV references and the "FMV played" rule wired into `tools/regress` for the 2D titles, if they contain video. |
+| M3 | - [ ] General block-generation tracking replaces the interim adjacent block-generation advance, which is deleted. Tomb Raider FMV passes. Stress-run exit. |
+| M4 | - [ ] Bugsnax FMV on the general path. |
+| M5 | - [ ] Demon's Souls Bink FMVs from first level to credits within the A/V bar. |
+| M6 | - [ ] Release full runs. |
 
 ## Open questions
 

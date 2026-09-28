@@ -39,6 +39,13 @@ Short version:
 5. A change to a subsystem's behaviour updates its spec in `docs/spec/` in the same PR.
 6. Docs describe hardware only as the generic reference tier. Never name a specific personal machine.
 7. Enforce code comments across all new files, public interfaces, and test fixtures: document file purpose, non-obvious rationale, ABI invariants, and workarounds inline in the code. Iterate and verify builds and unit tests locally before committing.
+8. Maintain task checkboxes across `docs/ROADMAP.md` and `docs/spec/`. As tasks, roadmap milestones, or subsystem spec items are completed, mark them as finished (`- [x]`) in the same PR. Keep pending items checked as open (`- [ ]`).
+9. Standardize task plans and PR descriptions. Every task, unit of work, or issue (including beads/`bd` tasks and plans) must follow this structured specification:
+   - **Context:** Root problem, motivation, and current state.
+   - **Higher Goal:** Architectural intent and systemic benefits.
+   - **Acceptance Criteria:** Concrete, verifiable deliverables using checkboxes (`- [ ]` / `- [x]`).
+   - **Out of Scope:** Explicit boundaries and deferred items.
+   - **Summary of Changes:** Specific files, implementations, tests, or docs modified.
 
 ## Skills
 
