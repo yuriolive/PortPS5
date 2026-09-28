@@ -188,7 +188,11 @@ int RunGolden(const Options& options) {
     // never as an uncaught filesystem_error escaping main.
     try {
         const fs::directory_iterator end;
-        for (fs::directory_iterator it(options.goldenDir, ec); it != end; it.increment(ec)) {
+        // NOTE: a failing increment(ec) leaves the iterator equal to end, so `it != end`
+        // alone would terminate the loop before the body reports ec. The `|| ec` keeps
+        // the failure branch reachable; each successful filesystem op clears ec, so no
+        // stale error can leak across iterations.
+        for (fs::directory_iterator it(options.goldenDir, ec); it != end || ec; it.increment(ec)) {
             if (ec) {
                 std::cerr << "FAILED traversal of " << options.goldenDir << ": " << ec.message() << "\n";
                 ++failed;
