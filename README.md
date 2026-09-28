@@ -1,4 +1,16 @@
+<p align="center">
+  <img src="assets/logo.png" alt="PortPS5 Logo" width="180" />
+</p>
+
 # PortPS5
+
+[![CI](https://img.shields.io/github/actions/workflow/status/yuriolive/PortPS5/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/yuriolive/PortPS5/actions/workflows/ci.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/yuriolive/PortPS5/codeql.yml?branch=main&label=CodeQL&style=flat-square)](https://github.com/yuriolive/PortPS5/actions/workflows/codeql.yml)
+[![License: GPL-2.0](https://img.shields.io/badge/license-GPL--2.0--only-blue?style=flat-square)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-informational?style=flat-square&logo=windows)](https://github.com/yuriolive/PortPS5)
+[![Language: C++23](https://img.shields.io/badge/language-C%2B%2B23-informational?style=flat-square&logo=cplusplus)](https://github.com/yuriolive/PortPS5)
+[![Vulkan 1.3](https://img.shields.io/badge/Vulkan-1.3-red?style=flat-square&logo=vulkan)](https://www.vulkan.org/)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/yuriolive?style=flat-square&logo=githubsponsors&color=ea4aaa)](https://github.com/sponsors/yuriolive)
 
 Native Windows execution of decrypted PS5 game dumps.
 
@@ -62,6 +74,24 @@ docs/                 PRD, ROADMAP, subsystem specifications
 seeds/                Milestone work plans for agentic workflows
 .agents/              Shared AI rules and skills
 ```
+
+---
+
+## Supporting the Project
+
+PortPS5 is built by a solo maintainer with the help of AI agents, entirely in spare time.
+Every sponsorship directly speeds up development:
+
+| Your support goes towards | Why it matters |
+|---|---|
+| 🤖 **AI compute credits** | AI agents write code, review PRs, and run spec checks around the clock — but inference isn't free. More credits = faster iteration across all milestones. |
+| 🖥️ **Test hardware** | Gate titles (Demon's Souls, Tomb Raider, Bugsnax …) need a Vulkan 1.3 GPU to validate. A second machine means continuous hardware-in-the-loop testing without blocking daily work. |
+| ⚡ **Milestone velocity** | The [roadmap](docs/ROADMAP.md) spans M0 → M6. Sponsorship lets me dedicate more focused time to each milestone exit criterion instead of spreading it across weekends. |
+| 📦 **Toolchain & CI costs** | Pinned MinGW GCC 15.2 builds, Vulkan SDK updates, and Windows CI runners all have ongoing overhead. |
+
+If PortPS5 is useful or exciting to you, consider sponsoring — even a small monthly amount keeps the lights on and signals that the project is worth the effort.
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&logo=githubsponsors)](https://github.com/sponsors/yuriolive)
 
 ---
 
