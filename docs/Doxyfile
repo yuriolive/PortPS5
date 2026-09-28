@@ -88,9 +88,16 @@ WARNINGS               = YES
 # Track: "Enable WARN_IF_UNDOCUMENTED in Doxygen gate" (follow-up task).
 WARN_IF_UNDOCUMENTED   = NO
 WARN_IF_DOC_ERROR      = YES
-WARN_IF_INCOMPLETE_DOC = YES
+# WARN_IF_INCOMPLETE_DOC fires on partially-documented symbols and is also
+# part of the pre-existing debt class.  Disabled until WARN_IF_UNDOCUMENTED
+# is re-enabled.
+WARN_IF_INCOMPLETE_DOC = NO
 WARN_NO_PARAMDOC       = NO
-WARN_AS_ERROR          = YES
+# FAIL_ON_WARNINGS: Doxygen completes the full scan, writes every warning to
+# WARN_LOGFILE, and only exits non-zero at the end.  Unlike YES (which stops
+# at the first warning), this lets contributors see all violations in a single
+# CI run rather than one error at a time.
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
 
 # Structured warning log for CI artifact upload.
 WARN_LOGFILE           = build/doxygen_warnings.log

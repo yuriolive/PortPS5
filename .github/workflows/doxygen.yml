@@ -8,7 +8,7 @@
 #   This is a separate, lightweight job.  It does not build the project and
 #   does not need the MinGW toolchain.  It installs Doxygen via Chocolatey
 #   (pre-installed on windows-2022 runners), runs 'doxygen docs/Doxyfile',
-#   and fails if Doxygen emits any WARNING (WARN_AS_ERROR = YES in Doxyfile).
+#   and fails if Doxygen emits any WARNING (WARN_AS_ERROR = FAIL_ON_WARNINGS in Doxyfile).
 #
 # On failure:
 #   The build/doxygen_warnings.log file is uploaded as a CI artifact named
@@ -23,22 +23,8 @@ name: Doxygen API Documentation Gate
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'core/libs/prx/**'
-      - 'core/libs/SceTypes.hpp'
-      - 'core/libs/SceShaders.hpp'
-      - 'core/relinker/**'
-      - 'docs/Doxyfile'
-      - '.github/workflows/doxygen.yml'
   pull_request:
     branches: [ main ]
-    paths:
-      - 'core/libs/prx/**'
-      - 'core/libs/SceTypes.hpp'
-      - 'core/libs/SceShaders.hpp'
-      - 'core/relinker/**'
-      - 'docs/Doxyfile'
-      - '.github/workflows/doxygen.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
