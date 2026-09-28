@@ -139,7 +139,7 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 ## Milestones
 
 - [x] **M0:** rebase keeps main's relinker. Existing relinker tests are wired into `ctest`. Stub magic bytes get "why" comments (CONVENTIONS change).
-- [ ] **M1:** `CodeMap` built from `CodeInstructionCollector` as the only instruction-discovery engine (ROADMAP M1 relinker item), which `--to-intel` depends on; `--to-intel` port from PR #5, register-form fallback plus the libc trap without `APS5_*`; the `APS5_EXPORT_FN` export macro (the `policy` job); and the conversion report used by the "inventory each gate title's imports" item.
+- [x] **M1:** `CodeMap` built from `CodeInstructionCollector` as the only instruction-discovery engine (ROADMAP M1 relinker item), which `--to-intel` depends on; `--to-intel` port from PR #5, register-form fallback plus the libc trap without `APS5_*`; the `APS5_EXPORT_FN` export macro (the `policy` job); and the conversion report used by the "inventory each gate title's imports" item.
 - [ ] **M2–M5:** no planned relinker scope. Fixes are driven by gate-title conversion failures.
 - [ ] **M6:** CLI usage section of the user guide.
 

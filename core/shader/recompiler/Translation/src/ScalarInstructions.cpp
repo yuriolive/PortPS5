@@ -1,3 +1,6 @@
+// core/shader/recompiler/Translation/src/ScalarInstructions.cpp
+// Implements scalar ALU instruction translation into the PortPS5 IR,
+// including moves, shifts, arithmetic, comparisons, and saveexec instructions.
 #include "Translation/ScalarInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
@@ -50,22 +53,22 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         emitWaitcnt();
         return true;
     case RdnaOpcode::SAndSaveexecB32:
-        sSaveexec(inst, IrOpcode::LogicalAnd, false, false, false);
+        sSaveexec(inst, IrOpcode::BitwiseAnd32, false, false, false);
         return true;
     case RdnaOpcode::SAndn1SaveexecB32:
-        sSaveexec(inst, IrOpcode::LogicalAnd, false, true, false);
+        sSaveexec(inst, IrOpcode::BitwiseAnd32, false, true, false);
         return true;
     case RdnaOpcode::SOrn2SaveexecB32:
-        sSaveexec(inst, IrOpcode::LogicalOr, true, false, false);
+        sSaveexec(inst, IrOpcode::BitwiseOr32, true, false, false);
         return true;
     case RdnaOpcode::SAndSaveexecB64:
-        sSaveexec(inst, IrOpcode::LogicalAnd, false, false, true);
+        sSaveexec(inst, IrOpcode::BitwiseAnd32, false, false, true);
         return true;
     case RdnaOpcode::SAndn1SaveexecB64:
-        sSaveexec(inst, IrOpcode::LogicalAnd, false, true, true);
+        sSaveexec(inst, IrOpcode::BitwiseAnd32, false, true, true);
         return true;
     case RdnaOpcode::SOrn2SaveexecB64:
-        sSaveexec(inst, IrOpcode::LogicalOr, true, false, true);
+        sSaveexec(inst, IrOpcode::BitwiseOr32, true, false, true);
         return true;
     case RdnaOpcode::SAddU32:
         addU32(inst, false, false);
