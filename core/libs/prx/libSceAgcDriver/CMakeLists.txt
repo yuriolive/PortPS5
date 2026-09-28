@@ -141,6 +141,34 @@ if(ANYPS5_ENABLE_SPIRV_TOOLS)
     if(COMMAND configure_windows_unwind)
         configure_windows_unwind(agc_shader_replay)
     endif()
+
+    if(BUILD_TESTING)
+        # Process-level regression tests for agc_shader_replay --golden (labelled
+        # 'golden' so the recompiler-golden job runs them through ctest --preset golden).
+        # Fixtures generate at configure time from one checked-in corpus pair, so they
+        # track the corpus without duplicating shaders.
+        set(AGC_REPLAY_CORPUS_DIR "${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/golden/corpus")
+        set(AGC_REPLAY_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/golden_fixtures")
+        file(MAKE_DIRECTORY "${AGC_REPLAY_FIXTURE_DIR}/crlf" "${AGC_REPLAY_FIXTURE_DIR}/empty")
+        # CRLF fixture: golden checked out with Windows line endings must still compare
+        # equal to the LF-only disassembler output (Macroscope review on PR #31).
+        configure_file("${AGC_REPLAY_CORPUS_DIR}/smem_load.wave64.req" "${AGC_REPLAY_FIXTURE_DIR}/crlf/smem_load.wave64.req" COPYONLY)
+        file(READ "${AGC_REPLAY_CORPUS_DIR}/smem_load.wave64.spvasm" AGC_REPLAY_SPVASM)
+        string(REPLACE "\n" "\r\n" AGC_REPLAY_SPVASM_CRLF "${AGC_REPLAY_SPVASM}")
+        file(WRITE "${AGC_REPLAY_FIXTURE_DIR}/crlf/smem_load.wave64.spvasm" "${AGC_REPLAY_SPVASM_CRLF}")
+        add_test(NAME agc_replay_golden_crlf COMMAND agc_shader_replay --golden "${AGC_REPLAY_FIXTURE_DIR}/crlf")
+        set_tests_properties(agc_replay_golden_crlf PROPERTIES LABELS "golden")
+        # Empty-corpus fixture: replaying zero requests must fail, so CI can never pass
+        # vacuously on a missing or wiped corpus (Macroscope review on PR #31).
+        add_test(NAME agc_replay_golden_empty COMMAND agc_shader_replay --golden "${AGC_REPLAY_FIXTURE_DIR}/empty")
+        set_tests_properties(agc_replay_golden_empty PROPERTIES LABELS "golden" WILL_FAIL TRUE)
+        if(WIN32)
+            foreach(replayTest agc_replay_golden_crlf agc_replay_golden_empty)
+                set_tests_properties(${replayTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+            endforeach()
+        endif()
+    endif()
 endif()
 
 target_link_libraries(libSceAgcDriver PRIVATE

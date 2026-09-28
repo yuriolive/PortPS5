@@ -192,6 +192,8 @@ Other facts:
   - Golden diffs compare the disassembly of the final validated module (the `Recompile`
     contract returns post-optimizer SPIR-V when SPIRV-Tools are on). Goldens therefore pin
     the SPIRV-Tools version; regenerate deliberately with `--update-goldens` after review.
+    Comparisons normalize CRLF (Windows checkouts) against the LF-only disassembler output,
+    and replaying zero requests fails, so CI can never pass on a wiped corpus.
 - **Fuzz** (hosted, fixed seeds, plus a nightly local run): a random CFG generator emits `s_branch` / `s_cbranch_*` programs, including irreducible ones, and mutates corpus CFGs. Oracle: 0 structurizer throws, `spirv-val` passes, and an interpreter over IR matches an interpreter over the RDNA CFG on the branch trace for random SGPR inputs.
 - **Local game-derived corpus:** `.req` files captured under `debug.recompiler.capture = true`. They stay on the maintainer machine (verification.md §2), and the pass condition is 0 validation failures and no `Unsupported()` abort.
 

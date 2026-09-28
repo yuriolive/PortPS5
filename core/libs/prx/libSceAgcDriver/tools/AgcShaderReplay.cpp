@@ -21,6 +21,7 @@
 #include <spirv-tools/libspirv.hpp>
 #endif
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -175,39 +176,66 @@ int RunGolden(const Options& options) {
     }
     std::uint32_t passed = 0;
     std::uint32_t failed = 0;
-    for (const auto& entry : fs::directory_iterator(options.goldenDir, ec)) {
-        if (!entry.is_regular_file() || entry.path().extension() != ".req") {
-            continue;
-        }
-        const std::string reqPath = entry.path().string();
-        fs::path goldenPath = entry.path();
-        goldenPath.replace_extension(".spvasm");
-        try {
-            const std::string payload = TrimTrailingSpace(ReadFile(reqPath));
-            RequestSerializer serializer;
-            DeserializedRequest deserialized = serializer.Deserialize(payload);
-            const RecompileResult result = ReplayRequest(deserialized.request);
-            const std::string disasm = DisassembleSpirv(result.spirv);
-            if (options.updateGoldens) {
-                WriteFile(goldenPath.string(), disasm);
-                std::cout << "updated " << goldenPath.string() << "\n";
-                ++passed;
-                continue;
-            }
-            const std::string expected = ReadFile(goldenPath.string());
-            if (disasm != expected) {
-                std::cerr << "MISMATCH " << reqPath << " (golden " << goldenPath.string() << " differs; rerun with --update-goldens after review)\n";
+    // The traversal itself runs under no-throw error_code overloads plus a catch-all:
+    // a directory_iterator increment or status query that throws (removed directory,
+    // permission change mid-iteration) must surface as the documented exit code 2,
+    // never as an uncaught filesystem_error escaping main.
+    try {
+        const fs::directory_iterator end;
+        for (fs::directory_iterator it(options.goldenDir, ec); it != end; it.increment(ec)) {
+            if (ec) {
+                std::cerr << "FAILED traversal of " << options.goldenDir << ": " << ec.message() << "\n";
                 ++failed;
+                break;
+            }
+            std::error_code fileEc;
+            const bool isReq = it->is_regular_file(fileEc) && !fileEc && it->path().extension() == ".req";
+            if (!isReq) {
                 continue;
             }
-            std::cout << "ok " << reqPath << " (" << result.spirv.size() << " words)\n";
-            ++passed;
-        } catch (const std::exception& e) {
-            std::cerr << "FAILED " << reqPath << ": " << ShortFailure(e.what()) << "\n";
-            ++failed;
+            const std::string reqPath = it->path().string();
+            fs::path goldenPath = it->path();
+            goldenPath.replace_extension(".spvasm");
+            try {
+                const std::string payload = TrimTrailingSpace(ReadFile(reqPath));
+                RequestSerializer serializer;
+                DeserializedRequest deserialized = serializer.Deserialize(payload);
+                const RecompileResult result = ReplayRequest(deserialized.request);
+                const std::string disasm = DisassembleSpirv(result.spirv);
+                if (options.updateGoldens) {
+                    WriteFile(goldenPath.string(), disasm);
+                    std::cout << "updated " << goldenPath.string() << "\n";
+                    ++passed;
+                    continue;
+                }
+                // Golden files may check out with CRLF line endings on Windows while the
+                // disassembler always emits LF; normalize before comparing so identical
+                // content compares equal on every checkout style.
+                std::string expected = ReadFile(goldenPath.string());
+                expected.erase(std::remove(expected.begin(), expected.end(), '\r'), expected.end());
+                if (disasm != expected) {
+                    std::cerr << "MISMATCH " << reqPath << " (golden " << goldenPath.string() << " differs; rerun with --update-goldens after review)\n";
+                    ++failed;
+                    continue;
+                }
+                std::cout << "ok " << reqPath << " (" << result.spirv.size() << " words)\n";
+                ++passed;
+            } catch (const std::exception& e) {
+                std::cerr << "FAILED " << reqPath << ": " << ShortFailure(e.what()) << "\n";
+                ++failed;
+            }
         }
+    } catch (const std::exception& e) {
+        std::cerr << "FAILED traversal of " << options.goldenDir << ": " << e.what() << "\n";
+        ++failed;
     }
     std::cout << "golden: " << passed << " passed, " << failed << " failed\n";
+    // An empty corpus dir replays nothing: success requires at least one request, so CI
+    // can never pass vacuously on a missing or wiped corpus.
+    if (passed == 0u) {
+        std::cerr << "FAILED: no .req requests replayed in " << options.goldenDir << "\n";
+        return 2;
+    }
     return failed == 0u ? 0 : 2;
 #endif
 }
