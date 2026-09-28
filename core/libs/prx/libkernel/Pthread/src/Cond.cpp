@@ -226,10 +226,14 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
     }
 
     if (waitRc == kSceTimedOut || waitRc == kSceEinval) {
-        // Dequeue this timed out/invalid waiter so waiters count stays accurate.
+        // Dequeue this timed out/invalid waiter only if a signal hasn't already dequeued us.
+        // If CW::Seq(cur) != seq, scePthreadCondSignal or scePthreadCondBroadcast already
+        // accounted for us when waking.
         while (true) {
             const std::uint64_t cur = cref.load(std::memory_order_acquire);
             if (!CW::IsInit(cur))
+                break;
+            if (CW::Seq(cur) != seq)
                 break;
             const std::uint32_t w = CW::Waiters(cur);
             if (w == 0)

@@ -1,3 +1,6 @@
+// _umtx_op implementation for PortPS5 libkernel.
+// Implements FreeBSD _umtx_op operations on in-place futex words using FutexCore.
+
 #include "prx/libkernel/Pthread/include/FutexCore.hpp"
 #include "prx/libkernel/Pthread/include/GuestTid.hpp"
 #include "prx/libkernel/Pthread/include/SyncWords.hpp"
@@ -74,10 +77,18 @@ int UmutexLock(std::uint32_t* word, std::uint32_t tid, std::uint64_t deadline) n
                 return SyncWords::kSceEownerdead;
             continue;
         }
+        // FreeBSD umutex: m_flags is the second 32-bit word.
+        // UMUTEX_ERROR_CHECK = 0x0002, UMUTEX_PRIO_PROTECT = 0x0008.
+        const auto* m = static_cast<const std::uint32_t*>(word);
+        const std::uint32_t flags = m[1];
+        if ((flags & 0x0008u) != 0) {
+            // Priority protect: m[2] is m_ceilings[0]. Reject if priority exceeds ceiling.
+            const std::uint32_t ceiling = m[2];
+            if (ceiling != 0 && ceiling < 700u) {
+                return SyncWords::kSceEinval;
+            }
+        }
         if (owner == (tid & kUmutexOwnerMask)) {
-            // FreeBSD umutex: m_flags is the second 32-bit word. UMUTEX_ERROR_CHECK = 0x0002.
-            const auto* m = static_cast<const std::uint32_t*>(word);
-            const std::uint32_t flags = m[1];
             if ((flags & 0x0002u) != 0)
                 return SyncWords::kSceEdeadlk;
             // Normal mutex: self-relock waits (per FreeBSD spec).
@@ -125,7 +136,17 @@ int UmutexTrylock(std::uint32_t* word, std::uint32_t tid) noexcept {
         return SyncWords::kSceEinval;
     std::atomic_ref<std::uint32_t> ref(*word);
     const std::uint32_t w = ref.load(std::memory_order_acquire);
-    if ((w & kUmutexOwnerMask) != 0)
+    const std::uint32_t owner = w & kUmutexOwnerMask;
+    if (owner == 0x20u)
+        return SyncWords::kSceEnotrecoverable;
+    if (owner == 0x10u) {
+        std::uint32_t robustExpected = w;
+        const std::uint32_t want = (w & kUmutexContested) | (tid & kUmutexOwnerMask);
+        if (ref.compare_exchange_strong(robustExpected, want, std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return SyncWords::kSceEownerdead;
+    }
+    if (owner != 0)
         return SyncWords::kSceEbusy;
     std::uint32_t expected = w;
     const std::uint32_t want = (w & kUmutexContested) | (tid & kUmutexOwnerMask);
@@ -152,8 +173,17 @@ void LogUnknownOnce(int op) noexcept {
 
 }  // namespace
 
-// FreeBSD signature: int _umtx_op(void *obj, int op, u_long val, void *uaddr,
-// void *uaddr2). val is a count for WAKE/NWAKE and a compare value for WAIT.
+/**
+ * _umtx_op implementation for libkernel.
+ * Performs fast userspace locking and futex wait/wake operations.
+ *
+ * @param obj Target synchronization word or object pointer.
+ * @param op Operation code (UMTX_OP_*).
+ * @param val Value parameter (expected word value for WAIT, waiter count for WAKE).
+ * @param uaddr Optional timeout (KernelTimespec*) or secondary argument.
+ * @param uaddr2 Optional secondary argument (unused).
+ * @return 0 on success, or SCE/POSIX error code.
+ */
 extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t val, void* uaddr,
                                               void* uaddr2) noexcept {
     (void)uaddr2;
@@ -187,13 +217,16 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                     return SyncWords::kSceEinval;
                 }
             }
-            const std::uint64_t expect = ref.load(std::memory_order_acquire);
-            if (expect != val)
-                return SyncWords::kSceOk;
-            if (!FutexCore::WaitU64(reinterpret_cast<volatile std::uint64_t*>(w), expect,
-                                    deadline))
-                return SyncWords::kSceTimedOut;
-            return SyncWords::kSceOk;
+            while (true) {
+                const std::uint64_t expect = ref.load(std::memory_order_acquire);
+                if (expect != val)
+                    return SyncWords::kSceOk;
+                if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+                    return SyncWords::kSceTimedOut;
+                if (!FutexCore::WaitU64(reinterpret_cast<volatile std::uint64_t*>(w), expect,
+                                        deadline))
+                    return SyncWords::kSceTimedOut;
+            }
         }
         auto* w = static_cast<std::uint32_t*>(obj);
         std::atomic_ref<std::uint32_t> ref(*w);
@@ -208,12 +241,15 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                 return SyncWords::kSceEinval;
             }
         }
-        const std::uint32_t expect = ref.load(std::memory_order_acquire);
-        if (expect != static_cast<std::uint32_t>(val))
-            return SyncWords::kSceOk;
-        if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(w), expect, deadline))
-            return SyncWords::kSceTimedOut;
-        return SyncWords::kSceOk;
+        while (true) {
+            const std::uint32_t expect = ref.load(std::memory_order_acquire);
+            if (expect != static_cast<std::uint32_t>(val))
+                return SyncWords::kSceOk;
+            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+                return SyncWords::kSceTimedOut;
+            if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(w), expect, deadline))
+                return SyncWords::kSceTimedOut;
+        }
     }
     case kOpWake:
     case kOpWakePrivate: {

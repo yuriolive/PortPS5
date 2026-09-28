@@ -31,6 +31,8 @@ static constexpr int SCE_TIMEDOUT = static_cast<int>(0x8002003Cu);
 static constexpr int SCE_EDEADLK = static_cast<int>(0x8002000Bu);
 static constexpr int SCE_EPERM = static_cast<int>(0x80020001u);
 static constexpr int SCE_EAGAIN = static_cast<int>(0x80020023u);
+static constexpr int SCE_EOWNERDEAD = static_cast<int>(0x80020060u);
+static constexpr int SCE_ENOTRECOVERABLE = static_cast<int>(0x8002005Fu);
 
 extern "C" {
 int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) noexcept;
@@ -429,6 +431,13 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_EBUSY);
         REQUIRE(_umtx_op_nid_postfix(&m, 6, 0, nullptr, nullptr) == SCE_OK);
+        // Robust mutex state 0x20 -> SCE_ENOTRECOVERABLE.
+        alignas(4) std::uint32_t m_notrecov = 0x20u;
+        REQUIRE(_umtx_op_nid_postfix(&m_notrecov, 4, 0, nullptr, nullptr) == SCE_ENOTRECOVERABLE);
+        // Robust mutex state 0x10 -> SCE_EOWNERDEAD (and acquired).
+        alignas(4) std::uint32_t m_ownerdead = 0x10u;
+        REQUIRE(_umtx_op_nid_postfix(&m_ownerdead, 4, 0, nullptr, nullptr) == SCE_EOWNERDEAD);
+        REQUIRE((m_ownerdead & 0xFFFFFFu) != 0);  // acquired by current thread tid.
         // Unknown op -> EINVAL.
         REQUIRE(_umtx_op_nid_postfix(&m, 999, 0, nullptr, nullptr) == SCE_EINVAL);
     }
