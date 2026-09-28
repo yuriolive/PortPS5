@@ -1,5 +1,7 @@
 # PortPS5
 
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/yuriolive?style=flat-square)](https://github.com/sponsors/yuriolive)
+
 Native Windows execution of decrypted PS5 game dumps.
 
 PortPS5 converts **user-supplied, already-decrypted PS5 game dumps** into native Windows executables plus replacement system libraries. It executes the game's x86-64 code directly on the host CPU without emulation, relinks guest ELFs into PE images, implements PS5 system libraries (`.prx`), and translates the GPU workload to Vulkan.
