@@ -611,6 +611,65 @@ TEST(RecompilerFixesTests, DivergentLoopWithoutMergeBlockEmitsDirectBarrier) {
     EXPECT_TRUE(loopBodyHasBarrier);
 }
 
+TEST(RecompilerFixesTests, DivergentRegionLdsReadTriggersBarrierAtReconvergence) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& divBlock = program.CreateBlock();
+    IrBlock& mergeBlock = program.CreateBlock();
+
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &divBlock, &mergeBlock};
+
+    // CFG IDs:
+    // entry (0) conditional branch on ExecZero (divergent) -> divBlock (1), mergeBlock (2), merge is 2
+    // divBlock (1) -> mergeBlock (2)
+    // mergeBlock (2) -> return
+    BlockInfo entryInfo{};
+    entryInfo.id = 0u;
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::ExecZero;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 2u;
+    entryInfo.terminator.mergeBlock = 2u;
+
+    BlockInfo divInfo{};
+    divInfo.id = 1u;
+    divInfo.terminator.kind = TerminatorKind::Branch;
+    divInfo.terminator.trueBlock = 2u;
+
+    BlockInfo mergeInfo{};
+    mergeInfo.id = 2u;
+    mergeInfo.terminator.kind = TerminatorKind::Return;
+
+    program.Metadata().blockInfo = {entryInfo, divInfo, mergeInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(divBlock);
+
+    IrValue& addr = ir.Constant(64u);
+    IrValue& readOp = program.CreateValue(IrOpcode::LoadSharedU32, IrType::U32);
+    readOp.AddArgument(&addr);
+    divBlock.AppendInstruction(&readOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    // LoadSharedU32 in divergent block must cause a barrier at the uniform reconvergence merge block
+    EXPECT_EQ(stats.insertedBarriers, 1u);
+    for (IrValue* inst : divBlock.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+
+    bool mergeHasBarrier = false;
+    for (IrValue* inst : mergeBlock.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            mergeHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(mergeHasBarrier);
+}
+
 } // namespace
 } // namespace ShaderRecompiler
 

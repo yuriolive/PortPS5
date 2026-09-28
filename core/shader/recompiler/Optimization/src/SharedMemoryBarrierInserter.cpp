@@ -166,6 +166,16 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
                     }
                     ++stats.insertedBarriers;
                 }
+            } else if (access == SharedAccess::Read) {
+                // If this LDS read occurs in a divergent region, ensure prior divergent LDS writes
+                // that reconverge at mergeId are synchronized before this read at a safe uniform point
+                // (e.g. at the reconvergence point of the divergent region containing the write).
+                if (isDivergent) {
+                    const std::uint32_t mergeId = divIt->second;
+                    if (mergeId != InvalidControlFlowId && blockMap.contains(mergeId)) {
+                        reconvergenceNeedingBarrier.insert(mergeId);
+                    }
+                }
             }
         }
     }
