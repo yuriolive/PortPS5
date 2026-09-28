@@ -93,8 +93,9 @@ int UmutexUnlock(std::uint32_t* word, std::uint32_t tid) noexcept {
         if ((w & kUmutexOwnerMask) != (tid & kUmutexOwnerMask))
             return SyncWords::kSceEperm;
         const bool hadWaiters = (w & kUmutexContested) != 0;
+        const std::uint32_t desired = hadWaiters ? kUmutexContested : 0;
         std::uint32_t expected = w;
-        if (ref.compare_exchange_strong(expected, 0, std::memory_order_acq_rel,
+        if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
             if (hadWaiters)
                 FutexCore::WakeSingle(word);

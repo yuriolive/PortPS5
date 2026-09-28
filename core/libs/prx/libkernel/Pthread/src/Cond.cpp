@@ -68,7 +68,8 @@ void MutexUnlockForWait(PthreadMutex* mutex, const HeldMutex& held, std::uint32_
         const std::uint64_t w = ref.load(std::memory_order_acquire);
         if (!MW::IsInit(w) || MW::IsDestroyed(w) || MW::Owner(w) != tid)
             return;
-        const std::uint64_t desired = MW::Make(held.type, 0, 0, false);
+        const bool hadWaiters = MW::IsContended(w);
+        const std::uint64_t desired = MW::Make(held.type, 0, 0, hadWaiters);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
@@ -225,16 +226,11 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
     }
 
     if (waitRc == kSceTimedOut || waitRc == kSceEinval) {
-        // We may still be counted in waiters (no seq bump consumed us):
-        // try to dequeue exactly once. If a concurrent signal already did
-        // (seq changed after our last check), the CAS below fails harmlessly
-        // because seq differs; re-read to avoid underflow.
+        // Dequeue this timed out/invalid waiter so waiters count stays accurate.
         while (true) {
             const std::uint64_t cur = cref.load(std::memory_order_acquire);
             if (!CW::IsInit(cur))
                 break;
-            if (CW::Seq(cur) != seq)
-                break;  // a signal took us; nothing to dequeue.
             const std::uint32_t w = CW::Waiters(cur);
             if (w == 0)
                 break;

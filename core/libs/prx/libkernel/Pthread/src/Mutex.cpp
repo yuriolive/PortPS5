@@ -191,10 +191,10 @@ int UnlockInternal(PthreadMutex* slot) noexcept {
                 return kSceOk;
             continue;
         }
-        // Final unlock: clear owner (and CONTENDED); wake one waiter only if
-        // CONTENDED was set (Drepper handoff, avoids thundering herd).
+        // Final unlock: clear owner, preserving CONTENDED if waiters were queued
+        // so the next owner wakes the remaining waiters (Drepper handoff).
         const bool hadWaiters = MW::IsContended(w);
-        const std::uint64_t desired = MW::Make(type, 0, 0, false);
+        const std::uint64_t desired = MW::Make(type, 0, 0, hadWaiters);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
