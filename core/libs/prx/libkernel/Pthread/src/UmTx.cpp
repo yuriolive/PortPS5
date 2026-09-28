@@ -283,11 +283,12 @@ inline CvBucket& GetCvBucket(void* obj) noexcept {
     return s_cvBuckets[(addr >> 4) % kCvBucketCount];
 }
 
-// Track active queued writers and readers for rwlocks without mutating guest urwlock fields.
+// Track active queued writers, readers, and writer owner TID for rwlocks without mutating guest urwlock fields.
 struct RwBucketEntry {
     void* obj{nullptr};
     std::uint32_t writeWaiters{0};
     std::uint32_t readWaiters{0};
+    std::uint32_t writeOwnerTid{0};
 };
 
 struct RwBucket {
@@ -312,7 +313,7 @@ inline void RwIncWriters(void* obj) noexcept {
             return;
         }
     }
-    b.entries.push_back({obj, 1, 0});
+    b.entries.push_back({obj, 1, 0, 0});
 }
 
 inline std::uint32_t RwDecWriters(void* obj) noexcept {
@@ -323,7 +324,7 @@ inline std::uint32_t RwDecWriters(void* obj) noexcept {
             if (it->writeWaiters > 0)
                 it->writeWaiters--;
             const std::uint32_t remaining = it->writeWaiters;
-            if (it->writeWaiters == 0 && it->readWaiters == 0)
+            if (it->writeWaiters == 0 && it->readWaiters == 0 && it->writeOwnerTid == 0)
                 b.entries.erase(it);
             return remaining;
         }
@@ -340,7 +341,7 @@ inline void RwIncReaders(void* obj) noexcept {
             return;
         }
     }
-    b.entries.push_back({obj, 0, 1});
+    b.entries.push_back({obj, 0, 1, 0});
 }
 
 inline std::uint32_t RwDecReaders(void* obj) noexcept {
@@ -351,12 +352,47 @@ inline std::uint32_t RwDecReaders(void* obj) noexcept {
             if (it->readWaiters > 0)
                 it->readWaiters--;
             const std::uint32_t remaining = it->readWaiters;
-            if (it->writeWaiters == 0 && it->readWaiters == 0)
+            if (it->writeWaiters == 0 && it->readWaiters == 0 && it->writeOwnerTid == 0)
                 b.entries.erase(it);
             return remaining;
         }
     }
     return 0;
+}
+
+inline std::uint32_t RwGetWriter(void* obj) noexcept {
+    auto& b = GetRwBucket(obj);
+    std::lock_guard<std::mutex> lock(b.mtx);
+    for (const auto& e : b.entries) {
+        if (e.obj == obj)
+            return e.writeOwnerTid;
+    }
+    return 0;
+}
+
+inline void RwSetWriter(void* obj, std::uint32_t tid) noexcept {
+    auto& b = GetRwBucket(obj);
+    std::lock_guard<std::mutex> lock(b.mtx);
+    for (auto& e : b.entries) {
+        if (e.obj == obj) {
+            e.writeOwnerTid = tid;
+            return;
+        }
+    }
+    b.entries.push_back({obj, 0, 0, tid});
+}
+
+inline void RwClearWriter(void* obj) noexcept {
+    auto& b = GetRwBucket(obj);
+    std::lock_guard<std::mutex> lock(b.mtx);
+    for (auto it = b.entries.begin(); it != b.entries.end(); ++it) {
+        if (it->obj == obj) {
+            it->writeOwnerTid = 0;
+            if (it->writeWaiters == 0 && it->readWaiters == 0)
+                b.entries.erase(it);
+            return;
+        }
+    }
 }
 
 }  // namespace
@@ -849,20 +885,20 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
 
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
-            // Recursive write lock detection: state low 24 bits hold writer TID atomically.
-            if ((state & kRwWriteOwner) != 0 && (state & kUmutexOwnerMask) == (tid & kUmutexOwnerMask)) {
+            // Recursive write lock detection: verify owner via out-of-line writer tracking.
+            if ((state & kRwWriteOwner) != 0 && RwGetWriter(obj) == (tid & kUmutexOwnerMask)) {
                 cleanupWaitersOnDone();
                 return SyncWords::kSceEdeadlk;
             }
 
             // Acquire write lock if no writer holds and no readers hold.
-            // Publish write owner bit and writer TID simultaneously in a single atomic CAS.
+            // Low bits are kept exclusively for reader count (FreeBSD ABI); do not store TID in low bits.
             if ((state & (kRwWriteOwner | kRwMaxReaders)) == 0) {
                 std::uint32_t expected = state;
-                const std::uint32_t desired = kRwWriteOwner | (state & (kRwWriteWaiters | kRwReadWaiters)) |
-                                             (tid & kUmutexOwnerMask);
+                const std::uint32_t desired = kRwWriteOwner | (state & (kRwWriteWaiters | kRwReadWaiters));
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
+                    RwSetWriter(obj, tid & kUmutexOwnerMask);
                     cleanupWaitersOnDone();
                     return SyncWords::kSceOk;
                 }
@@ -908,16 +944,17 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
             if ((state & kRwWriteOwner) != 0) {
-                // Writer release: verify calling thread is the writer that holds the lock.
-                const std::uint32_t owner = state & kUmutexOwnerMask;
+                // Writer release: verify calling thread is the writer that holds the lock via out-of-line tracking.
+                const std::uint32_t owner = RwGetWriter(obj);
                 if (owner != 0 && owner != (tid & kUmutexOwnerMask))
                     return SyncWords::kSceEperm;
-                // Clear owner and TID without mutating state before CAS succeeds;
+                // Clear owner without mutating state before CAS succeeds;
                 // preserve waiters so queued threads can wake and acquire.
                 std::uint32_t expected = state;
                 const std::uint32_t desired = state & (kRwWriteWaiters | kRwReadWaiters);
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
+                    RwClearWriter(obj);
                     FutexCore::WakeAll(rwWord);
                     return SyncWords::kSceOk;
                 }
