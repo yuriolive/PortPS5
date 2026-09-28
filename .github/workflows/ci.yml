@@ -224,3 +224,25 @@ jobs:
           Write-Host "Running code comment and docstring policy checks..."
           git fetch origin main --depth=1 2>$null
           python tools/check_comments.py --base origin/main
+
+  python_quality:
+    name: Python quality (uv, ruff, pytest, coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.8.12"
+          python-version: "3.13"
+
+      - name: Lint (ruff check)
+        run: uv run --locked --group dev ruff check tools/ tests/tools/ core/relinker/relinker/tests/ core/libs/tests/run_exception_tests.py
+
+      - name: Format (ruff format --check)
+        run: uv run --locked --group dev ruff format --check tools/ tests/tools/ core/relinker/relinker/tests/ core/libs/tests/run_exception_tests.py
+
+      - name: Test with coverage (pytest)
+        run: uv run --locked --group dev pytest tests/tools --cov=tools --cov-report=term-missing

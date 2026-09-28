@@ -79,6 +79,7 @@ dist/
 coverage.xml
 .coverage
 htmlcov/
+.ruff_cache/
 
 *.tmp
 *.log
