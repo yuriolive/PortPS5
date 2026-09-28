@@ -16,11 +16,11 @@ File references are `core/relinker/...` unless marked `libs/` (= `core/libs/`). 
 
 | Step | Code | Notes |
 |---|---|---|
-| Parse CLI | `cli/src/CliArgs.cpp:8-61` | Flags: `--windows`, `--windows-diagnostics`, `--skip-syscall-check`, `--skip-sce-module`, `--to-intel`, `unused-filter=0\|1\|2`, `--registry`, `--rpath` (default `$ORIGIN/libs`, `Cli.hpp:21`), `--lazy-binding`, `--autorun`. Usage text says `<output.elf>` even for PE (`CliArgs.cpp:56`). |
+| Parse CLI | `cli/src/CliArgs.cpp:8-61` | Flags: `--windows`, `--windows-diagnostics`, `--windows-gui` (GUI subsystem, requires `--windows`), `--skip-syscall-check`, `--skip-sce-module`, `--to-intel`, `unused-filter=0\|1\|2`, `--registry`, `--rpath` (default `$ORIGIN/libs`, `Cli.hpp:21`), `--lazy-binding`, `--autorun`. Usage text says `<output.elf>` even for PE (`CliArgs.cpp:56`). |
 | AMD-only rewrite | `main.cpp:44-55` | Runs before relinking, on `ElfReader::ReadCodeSegments()`. |
 | Relink | `relinker/src/pipeline/RelinkerPipeline.cpp:36-305` | Takes only the **first** `PF_X` `PT_LOAD` as text (`:44-50`); requires `PT_DYNAMIC`; each `DT_OS_*`/`DT_*` pair must have exactly one member (`:81-89`); collects `NidReference`s from RELA and JMPREL (`:164-197`); syscall scan (`:202-203`); NID filter levels (`:213-241`); PLT compaction at level 2 (`:246-252`); copies `R_X86_64_RELATIVE` (`:265-281`); builds the call registry (`:283-302`). |
 | Guest modules | `main.cpp:80-82`, `relinker/src/guest/GuestModuleBuilder.cpp` | Converts `sce_module` libraries unless `--skip-sce-module`. Not in PR #5. |
-| PE emission | `elfpatcher/src/windows/WindowsPePatcher.cpp:42-100` | `WindowsLoadImage`; `WindowsRelocationBuilder::Apply` (`:47`); `.procpar` from segment type `0x61000001` (`:52-61`); `.ehmeta` holding the `PT_GNU_EH_FRAME` RVA (`:62-68`); TLS directory (`:69`); `.reloc` (`:70-75`); kernel32 imports (`:76-80`); entry stub (`:91`). Image base `0x140000000` (`WindowsPeFormat.hpp:14`); console subsystem (`WindowsPeWriter.cpp:32`). |
+| PE emission | `elfpatcher/src/windows/WindowsPePatcher.cpp:42-100` | `WindowsLoadImage`; `WindowsRelocationBuilder::Apply` (`:47`); `.procpar` from segment type `0x61000001` (`:52-61`); `.ehmeta` holding the `PT_GNU_EH_FRAME` RVA (`:62-68`); TLS directory (`:69`); `.reloc` (`:70-75`); kernel32 imports (`:76-80`); entry stub (`:91`). Image base `0x140000000` (`WindowsPeFormat.hpp:14`); console subsystem by default, GUI (`IMAGE_SUBSYSTEM_WINDOWS_GUI`) with `--windows-gui` (`WindowsPeWriter.cpp:32`). |
 
 **Relocations.** `ValidationPolicy` accepts 14 types (`ValidationPolicy.cpp:30-47`), but `WindowsRelocationBuilder::Apply` only handles `R_X86_64_64`, `GLOB_DAT`, `JUMP_SLOT` and `RELATIVE` (`WindowsRelocationBuilder.cpp:21-22`). Any other accepted type fails late, at PE emission. Overlapping targets are rejected (`:24-27`). Import slots are zeroed and bound at startup (`:45-47`). `ValidateSyscallAbsence` is an empty body (`ValidationPolicy.cpp:56-57`).
 
@@ -124,7 +124,7 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 ## Tests
 
 - **GoogleTest Unit Suites & Unit Tests** (`ctest -L unit`, hosted `unit` job):
-  - Legacy tests migrated to GoogleTest: `strict_nid_filter`, `optional_plt`, `empty_tls`, `tls_function_coverage` (Python), `windows_dependency_diagnostics`. From PR #5 (ported, general mechanisms only): `amd64_only_converter` (`codegen/tests/Amd64OnlyConverterTests.cpp`), `amd64_only_windows` (`elfpatcher/tests/Amd64OnlyWindowsTests.cpp`, PE builder only, no libc dep).
+  - Legacy tests migrated to GoogleTest: `strict_nid_filter`, `optional_plt`, `empty_tls`, `tls_function_coverage` (Python), `windows_dependency_diagnostics`. Upstream ports (PR #28, fix + test together): `linux_load_alignment` (first PT_LOAD aligns to the largest kept segment alignment, `ProgramHeaderLayoutBuilder.cpp:147`), `windows_gui` (CUI default, GUI with `--windows-gui`, subsystem word at `WindowsPeWriter.cpp:32`). From PR #5 (ported, general mechanisms only): `amd64_only_converter` (`codegen/tests/Amd64OnlyConverterTests.cpp`), `amd64_only_windows` (`elfpatcher/tests/Amd64OnlyWindowsTests.cpp`, PE builder only, no libc dep).
   - New unit tests on synthetic ELFs: `codemap` (`relinker/tests/CodeMapTests.cpp`):
     - Jump table and literal pool inside `.text`: linear sweep desyncs, `CodeMap` does not.
     - SSE4a register form: relink succeeds and site appears in `Residual`.

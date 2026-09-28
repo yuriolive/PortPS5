@@ -45,26 +45,26 @@ EXIT_VIOLATION = 1
 EXIT_ERROR = 2
 
 #: File extensions checked by the linter.
-SOURCE_EXTENSIONS = ('.cpp', '.hpp', '.cc', '.cxx', '.h', '.hxx')
+SOURCE_EXTENSIONS = (".cpp", ".hpp", ".cc", ".cxx", ".h", ".hxx")
 
 #: Directories that are exempt from all checks (vendored / generated code).
-EXEMPT_DIRS = frozenset({'3rdparty', 'build', '.codebase-memory'})
+EXEMPT_DIRS = frozenset({"3rdparty", "build", ".codebase-memory"})
 
 #: Top-level directories where Rule 1 (file headers) applies.
-RULE1_DIRS = frozenset({'core', 'tests', 'tools'})
+RULE1_DIRS = frozenset({"core", "tests", "tools"})
 
 #: Top-level directory where Rule 3 (TEST docs) applies.
-TESTS_DIR = 'tests'
+TESTS_DIR = "tests"
 
 #: Regex matching an APS5_VABI *function* declaration/definition.
 #: The lookbehind (?<![\w*]) prevents matching inside identifiers that end
 #: with APS5_VABI (e.g. a variable named myAPS5_VABI) and the requirement
 #: for \w+ after APS5_VABI + whitespace ensures we match a function name,
 #: not a pointer-type alias like  (APS5_VABI *).
-VABI_FUNC_RE = re.compile(r'(?<![\w*])APS5_VABI\s+\w+\s*\(')
+VABI_FUNC_RE = re.compile(r"(?<![\w*])APS5_VABI\s+\w+\s*\(")
 
 #: Regex matching TEST or TEST_F at the start of an identifier/line.
-TEST_NAME_RE = re.compile(r'^\s*TEST(?:_F)?\b')
+TEST_NAME_RE = re.compile(r"^\s*TEST(?:_F)?\b")
 TEST_RE = TEST_NAME_RE
 
 
@@ -77,10 +77,10 @@ TEST_RE = TEST_NAME_RE
 class Violation:
     """A single documentation policy violation."""
 
-    file: str       # Repository-relative path with forward slashes
-    line: int       # 1-based line number
-    rule: str       # 'file-header', 'vabi-doc', or 'test-doc'
-    message: str    # Human-readable description
+    file: str  # Repository-relative path with forward slashes
+    line: int  # 1-based line number
+    rule: str  # 'file-header', 'vabi-doc', or 'test-doc'
+    message: str  # Human-readable description
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ class Violation:
 
 def normalize_path(path):
     """Normalize path separators to forward slashes for consistent reporting."""
-    return path.replace(os.sep, '/').replace('\\', '/')
+    return path.replace(os.sep, "/").replace("\\", "/")
 
 
 def is_comment_line(line):
@@ -98,17 +98,16 @@ def is_comment_line(line):
     stripped = line.strip()
     if not stripped:
         return False
-    return (
-        stripped.startswith('//')
-        or stripped.startswith('/*')
-        or (stripped.startswith('*') and (len(stripped) == 1 or stripped[1].isspace() or stripped[1] == '/'))
+    return stripped.startswith(("//", "/*")) or (
+        stripped.startswith("*")
+        and (len(stripped) == 1 or stripped[1].isspace() or stripped[1] == "/")
     )
 
 
 def is_attribute_line(line):
     """Return True if the stripped line is a C++11 attribute like [[noreturn]]."""
     stripped = line.strip()
-    return stripped.startswith('[[') and ']]' in stripped
+    return stripped.startswith("[[") and "]]" in stripped
 
 
 def read_source_lines(path):
@@ -116,7 +115,7 @@ def read_source_lines(path):
 
     Uses utf-8-sig encoding to transparently strip any leading Byte Order Mark (BOM).
     """
-    with open(path, 'r', encoding='utf-8-sig', errors='replace') as f:
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         return f.readlines()
 
 
@@ -139,7 +138,7 @@ def has_doc_comment_before(lines, idx, skip_attrs=True):
     j = idx - 1
     while j >= 0:
         prev = lines[j].strip()
-        if prev == '':
+        if prev == "":
             j -= 1
             continue
         if skip_attrs and is_attribute_line(prev):
@@ -147,10 +146,10 @@ def has_doc_comment_before(lines, idx, skip_attrs=True):
             continue
         if is_comment_line(prev):
             return True
-        if prev.endswith('*/'):
+        if prev.endswith("*/"):
             k = j - 1
             while k >= 0:
-                if '/*' in lines[k]:
+                if "/*" in lines[k]:
                     return True
                 k -= 1
         break
@@ -161,41 +160,47 @@ def extract_func_name(line):
     """Extract the function name from an APS5_VABI function signature line."""
     m = VABI_FUNC_RE.search(line)
     if not m:
-        return 'unknown'
+        return "unknown"
     # The match looks like "APS5_VABI funcname("
     after = m.group(0)
-    return after.split('APS5_VABI')[-1].strip().split('(')[0].strip()
+    return after.split("APS5_VABI")[-1].strip().split("(")[0].strip()
 
 
 def is_statically_false_condition(cond):
     """Return True if a preprocessor condition expression is statically disabled (e.g. 0)."""
-    cond = re.sub(r'//.*$', '', cond)
-    cond = re.sub(r'/\*.*?\*/', '', cond)
+    cond = re.sub(r"//.*$", "", cond)
+    cond = re.sub(r"/\*.*?\*/", "", cond)
     cond = cond.strip()
-    if re.fullmatch(r'\(*\s*0(?:[uUlL]*)\s*\)*', cond) or cond in ('false', 'FALSE', '!1', '(!1)', '!true', '(!true)'):
+    if re.fullmatch(r"\(*\s*0(?:[uUlL]*)\s*\)*", cond) or cond in (
+        "false",
+        "FALSE",
+        "!1",
+        "(!1)",
+        "!true",
+        "(!true)",
+    ):
         return True
     # In C++, 0 && ... is statically false by short-circuit logic (unlike 0 || ...).
-    if re.match(r'^(?:0|\(0\)|false|FALSE)\s*&&', cond):
-        return True
-    return False
+    return re.match(r"^(?:0|\(0\)|false|FALSE)\s*&&", cond) is not None
 
 
 def is_statically_true_condition(cond):
     """Return True if a preprocessor condition expression is statically known to be true."""
-    cond = re.sub(r'//.*$', '', cond)
-    cond = re.sub(r'/\*.*?\*/', '', cond)
+    cond = re.sub(r"//.*$", "", cond)
+    cond = re.sub(r"/\*.*?\*/", "", cond)
     cond = cond.strip()
-    if re.fullmatch(r'\(*\s*[1-9]\d*(?:[uUlL]*)\s*\)*', cond) or cond in ('true', 'TRUE', '!0', '(!0)', '!false', '(!false)'):
-        return True
-    return False
+    return bool(
+        re.fullmatch(r"\(*\s*[1-9]\d*(?:[uUlL]*)\s*\)*", cond)
+        or cond in ("true", "TRUE", "!0", "(!0)", "!false", "(!false)")
+    )
 
 
 def has_line_continuation(line):
     """Return True if *line* ends with an odd count of trailing backslashes (escaping newline)."""
-    stripped_end = line.rstrip('\r\n')
+    stripped_end = line.rstrip("\r\n")
     backslash_count = 0
     for ch in reversed(stripped_end):
-        if ch == '\\':
+        if ch == "\\":
             backslash_count += 1
         else:
             break
@@ -205,6 +210,7 @@ def has_line_continuation(line):
 @dataclass
 class SanitizedLine:
     """Sanitized line representation for comment policy checking."""
+
     original: str
     cleaned: str
     is_active: bool
@@ -226,14 +232,14 @@ def sanitize_source_file(lines):
 
     in_block_comment = False
     in_raw_string = False
-    raw_delimiter = ''
+    raw_delimiter = ""
     in_string = False
     in_char = False
     string_escaped = False
     char_escaped = False
 
     def is_currently_active():
-        return all(frame['branch_active'] for frame in pp_stack)
+        return all(frame["branch_active"] for frame in pp_stack)
 
     raw_string_start_re = re.compile(r'^R"([^\s()\\]{0,16})\(')
 
@@ -245,70 +251,101 @@ def sanitize_source_file(lines):
         stripped = line.strip()
 
         # Handle preprocessor directives when outside comments and literals
-        if (not in_block_comment and not in_raw_string and not in_string
-                and not in_char and stripped.startswith('#')):
+        if (
+            not in_block_comment
+            and not in_raw_string
+            and not in_string
+            and not in_char
+            and stripped.startswith("#")
+        ):
             directive_parts = [stripped]
             orig_indices = [line_idx]
             curr_idx = line_idx
 
             while has_line_continuation(lines[curr_idx]) and curr_idx + 1 < num_lines:
                 curr_idx += 1
-                directive_parts[-1] = directive_parts[-1].rstrip().rstrip('\\').rstrip()
+                directive_parts[-1] = directive_parts[-1].rstrip().rstrip("\\").rstrip()
                 directive_parts.append(lines[curr_idx].strip())
                 orig_indices.append(curr_idx)
 
-            spliced_directive = ' '.join(directive_parts)
-            m = re.match(r'^#\s*([a-zA-Z_]\w*)(.*)$', spliced_directive)
+            spliced_directive = " ".join(directive_parts)
+            m = re.match(r"^#\s*([a-zA-Z_]\w*)(.*)$", spliced_directive)
             if m:
                 directive = m.group(1)
                 remainder = m.group(2).strip()
-                remainder = re.sub(r'\\$', '', remainder).strip()
+                remainder = re.sub(r"\\$", "", remainder).strip()
 
-                if directive == 'if':
+                if directive == "if":
                     parent = is_currently_active()
                     if not parent:
-                        pp_stack.append({'parent_active': False, 'branch_active': False, 'known_branch_taken': True})
+                        pp_stack.append(
+                            {
+                                "parent_active": False,
+                                "branch_active": False,
+                                "known_branch_taken": True,
+                            }
+                        )
                     else:
                         disabled = is_statically_false_condition(remainder)
                         active = not disabled
                         known_taken = is_statically_true_condition(remainder)
-                        pp_stack.append({'parent_active': True, 'branch_active': active, 'known_branch_taken': known_taken})
-                elif directive in ('ifdef', 'ifndef'):
+                        pp_stack.append(
+                            {
+                                "parent_active": True,
+                                "branch_active": active,
+                                "known_branch_taken": known_taken,
+                            }
+                        )
+                elif directive in ("ifdef", "ifndef"):
                     parent = is_currently_active()
                     if not parent:
-                        pp_stack.append({'parent_active': False, 'branch_active': False, 'known_branch_taken': True})
+                        pp_stack.append(
+                            {
+                                "parent_active": False,
+                                "branch_active": False,
+                                "known_branch_taken": True,
+                            }
+                        )
                     else:
                         # Non-literal condition: active to lint this branch, but alternate branches are also eligible
-                        pp_stack.append({'parent_active': True, 'branch_active': True, 'known_branch_taken': False})
-                elif directive == 'elif':
+                        pp_stack.append(
+                            {
+                                "parent_active": True,
+                                "branch_active": True,
+                                "known_branch_taken": False,
+                            }
+                        )
+                elif directive == "elif":
                     if pp_stack:
                         frame = pp_stack[-1]
-                        if not frame['parent_active'] or frame['known_branch_taken']:
-                            frame['branch_active'] = False
+                        if not frame["parent_active"] or frame["known_branch_taken"]:
+                            frame["branch_active"] = False
                         else:
                             disabled = is_statically_false_condition(remainder)
-                            frame['branch_active'] = not disabled
+                            frame["branch_active"] = not disabled
                             if is_statically_true_condition(remainder):
-                                frame['known_branch_taken'] = True
-                elif directive == 'else':
+                                frame["known_branch_taken"] = True
+                elif directive == "else":
                     if pp_stack:
                         frame = pp_stack[-1]
-                        if not frame['parent_active'] or frame['known_branch_taken']:
-                            frame['branch_active'] = False
+                        if not frame["parent_active"] or frame["known_branch_taken"]:
+                            frame["branch_active"] = False
                         else:
-                            frame['branch_active'] = True
-                            frame['known_branch_taken'] = True
-                elif directive == 'endif':
+                            frame["branch_active"] = True
+                            frame["known_branch_taken"] = True
+                elif directive == "endif":
                     if pp_stack:
                         pp_stack.pop()
 
             for k in orig_indices:
-                sanitized.append(SanitizedLine(
-                    original=lines[k],
-                    cleaned=' ' * len(lines[k]),
-                    is_active=is_currently_active(),
-                    is_pure_comment=False,
-                ))
+                sanitized.append(
+                    SanitizedLine(
+                        original=lines[k],
+                        cleaned=" " * len(lines[k]),
+                        is_active=is_currently_active(),
+                        is_pure_comment=False,
+                    )
+                )
 
             line_idx = curr_idx + 1
             continue
@@ -324,9 +361,9 @@ def sanitize_source_file(lines):
             ch = chars[i]
 
             if in_block_comment:
-                cleaned_chars.append(' ')
-                if ch == '*' and i + 1 < n and chars[i + 1] == '/':
-                    cleaned_chars.append(' ')
+                cleaned_chars.append(" ")
+                if ch == "*" and i + 1 < n and chars[i + 1] == "/":
+                    cleaned_chars.append(" ")
                     in_block_comment = False
                     i += 2
                     continue
@@ -334,23 +371,23 @@ def sanitize_source_file(lines):
                 continue
 
             if in_raw_string:
-                cleaned_chars.append(' ')
-                target = ')' + raw_delimiter + '"'
-                if line[i:i + len(target)] == target:
+                cleaned_chars.append(" ")
+                target = ")" + raw_delimiter + '"'
+                if line[i : i + len(target)] == target:
                     for _ in range(len(target) - 1):
-                        cleaned_chars.append(' ')
+                        cleaned_chars.append(" ")
                     in_raw_string = False
-                    raw_delimiter = ''
+                    raw_delimiter = ""
                     i += len(target)
                     continue
                 i += 1
                 continue
 
             if in_string:
-                cleaned_chars.append(' ')
+                cleaned_chars.append(" ")
                 if string_escaped:
                     string_escaped = False
-                elif ch == '\\':
+                elif ch == "\\":
                     string_escaped = True
                 elif ch == '"':
                     in_string = False
@@ -358,10 +395,10 @@ def sanitize_source_file(lines):
                 continue
 
             if in_char:
-                cleaned_chars.append(' ')
+                cleaned_chars.append(" ")
                 if char_escaped:
                     char_escaped = False
-                elif ch == '\\':
+                elif ch == "\\":
                     char_escaped = True
                 elif ch == "'":
                     in_char = False
@@ -369,25 +406,25 @@ def sanitize_source_file(lines):
                 continue
 
             # In active normal code:
-            if ch == '/' and i + 1 < n and chars[i + 1] == '/':
-                cleaned_chars.extend([' '] * (n - i))
+            if ch == "/" and i + 1 < n and chars[i + 1] == "/":
+                cleaned_chars.extend([" "] * (n - i))
                 break
 
-            if ch == '/' and i + 1 < n and chars[i + 1] == '*':
+            if ch == "/" and i + 1 < n and chars[i + 1] == "*":
                 in_block_comment = True
-                cleaned_chars.append(' ')
-                cleaned_chars.append(' ')
+                cleaned_chars.append(" ")
+                cleaned_chars.append(" ")
                 i += 2
                 continue
 
-            if ch == 'R' and i + 1 < n and chars[i + 1] == '"':
+            if ch == "R" and i + 1 < n and chars[i + 1] == '"':
                 rem = line[i:]
                 m_raw = raw_string_start_re.match(rem)
                 if m_raw:
                     in_raw_string = True
                     raw_delimiter = m_raw.group(1)
                     matched_len = len(m_raw.group(0))
-                    cleaned_chars.extend([' '] * matched_len)
+                    cleaned_chars.extend([" "] * matched_len)
                     has_non_comment_code = True
                     i += matched_len
                     continue
@@ -395,7 +432,7 @@ def sanitize_source_file(lines):
             if ch == '"':
                 in_string = True
                 string_escaped = False
-                cleaned_chars.append(' ')
+                cleaned_chars.append(" ")
                 has_non_comment_code = True
                 i += 1
                 continue
@@ -403,7 +440,7 @@ def sanitize_source_file(lines):
             if ch == "'":
                 in_char = True
                 char_escaped = False
-                cleaned_chars.append(' ')
+                cleaned_chars.append(" ")
                 has_non_comment_code = True
                 i += 1
                 continue
@@ -413,7 +450,7 @@ def sanitize_source_file(lines):
             cleaned_chars.append(ch)
             i += 1
 
-        cleaned_str = ''.join(cleaned_chars)
+        cleaned_str = "".join(cleaned_chars)
         is_pure_comment = not has_non_comment_code and is_comment_line(stripped)
 
         # Handle line continuation backslash for string / char literal states
@@ -431,12 +468,14 @@ def sanitize_source_file(lines):
             else:
                 char_escaped = False
 
-        sanitized.append(SanitizedLine(
-            original=line,
-            cleaned=cleaned_str,
-            is_active=active,
-            is_pure_comment=is_pure_comment,
-        ))
+        sanitized.append(
+            SanitizedLine(
+                original=line,
+                cleaned=cleaned_str,
+                is_active=active,
+                is_pure_comment=is_pure_comment,
+            )
+        )
         line_idx += 1
 
     return sanitized
@@ -461,13 +500,17 @@ def check_file_header(rel_path, lines):
     first_stripped = lines[first_idx].strip()
 
     # The first non-empty line must begin a comment.
-    if not (first_stripped.startswith('//') or first_stripped.startswith('/*')):
-        violations.append(Violation(
-            rel_path, first_idx + 1, 'file-header',
-            "File must begin with a 2+ line comment block (/* ... */ or "
-            "consecutive //) explaining subsystem purpose and ownership/ABI "
-            "invariants, before includes or guards.",
-        ))
+    if not first_stripped.startswith(("//", "/*")):
+        violations.append(
+            Violation(
+                rel_path,
+                first_idx + 1,
+                "file-header",
+                "File must begin with a 2+ line comment block (/* ... */ or "
+                "consecutive //) explaining subsystem purpose and ownership/ABI "
+                "invariants, before includes or guards.",
+            )
+        )
         return violations
 
     comment_count = 0
@@ -480,26 +523,23 @@ def check_file_header(rel_path, lines):
 
         if in_block:
             comment_count += 1
-            if '*/' in stripped:
+            if "*/" in stripped:
                 in_block = False
             idx += 1
             continue
 
-        if stripped.startswith('/*'):
+        if stripped.startswith("/*"):
             comment_count += 1
-            if '*/' in stripped[2:]:
-                in_block = False
-            else:
-                in_block = True
+            in_block = "*/" not in stripped[2:]
             idx += 1
             continue
 
-        if stripped.startswith('//'):
+        if stripped.startswith("//"):
             comment_count += 1
             idx += 1
             continue
 
-        if stripped == '':
+        if stripped == "":
             idx += 1  # Blank line inside / between header comment lines.
             continue
 
@@ -507,11 +547,15 @@ def check_file_header(rel_path, lines):
         break
 
     if comment_count < 2:
-        violations.append(Violation(
-            rel_path, first_idx + 1, 'file-header',
-            f"File header must be at least 2 lines (found {comment_count}). "
-            "Explain subsystem purpose and ownership/ABI invariants.",
-        ))
+        violations.append(
+            Violation(
+                rel_path,
+                first_idx + 1,
+                "file-header",
+                f"File header must be at least 2 lines (found {comment_count}). "
+                "Explain subsystem purpose and ownership/ABI invariants.",
+            )
+        )
 
     return violations
 
@@ -533,7 +577,7 @@ def check_vabi_docs(rel_path, lines):
         if not cleaned:
             continue
 
-        if cleaned.startswith('#'):
+        if cleaned.startswith("#"):
             continue
 
         match = VABI_FUNC_RE.search(cleaned)
@@ -542,11 +586,15 @@ def check_vabi_docs(rel_path, lines):
 
         if not has_doc_comment_before(lines, i, skip_attrs=True):
             func_name = extract_func_name(cleaned)
-            violations.append(Violation(
-                rel_path, i + 1, 'vabi-doc',
-                f"Export '{func_name}' with APS5_VABI lacks a preceding doc "
-                f"comment explaining role, parameters, and return/error codes.",
-            ))
+            violations.append(
+                Violation(
+                    rel_path,
+                    i + 1,
+                    "vabi-doc",
+                    f"Export '{func_name}' with APS5_VABI lacks a preceding doc "
+                    f"comment explaining role, parameters, and return/error codes.",
+                )
+            )
 
     return violations
 
@@ -572,11 +620,11 @@ def check_test_docs(rel_path, lines):
             continue
 
         # Check if '(' follows, either on the same line or on subsequent active lines before other tokens
-        rem = cleaned[match.end():].lstrip()
+        rem = cleaned[match.end() :].lstrip()
         is_test_call = False
-        if rem.startswith('('):
+        if rem.startswith("("):
             is_test_call = True
-        elif rem == '':
+        elif rem == "":
             # Lookahead on subsequent lines
             for j in range(i + 1, len(sanitized)):
                 next_line = sanitized[j]
@@ -585,7 +633,7 @@ def check_test_docs(rel_path, lines):
                 next_cleaned = next_line.cleaned.strip()
                 if not next_cleaned:
                     continue
-                if next_cleaned.startswith('('):
+                if next_cleaned.startswith("("):
                     is_test_call = True
                 break
 
@@ -594,11 +642,15 @@ def check_test_docs(rel_path, lines):
 
         if not has_doc_comment_before(lines, i, skip_attrs=False):
             stripped_orig = lines[i].strip()
-            violations.append(Violation(
-                rel_path, i + 1, 'test-doc',
-                f"{stripped_orig} is missing a doc comment explaining the "
-                f"invariant or edge case being tested.",
-            ))
+            violations.append(
+                Violation(
+                    rel_path,
+                    i + 1,
+                    "test-doc",
+                    f"{stripped_orig} is missing a doc comment explaining the "
+                    f"invariant or edge case being tested.",
+                )
+            )
 
     return violations
 
@@ -614,12 +666,12 @@ _RULE1_PREFIXES = tuple(RULE1_DIRS)
 def _in_dir(rel_path, dir_name):
     """Return True if *rel_path* lives inside the top-level *dir_name* directory."""
     norm = normalize_path(rel_path)
-    return norm == dir_name or norm.startswith(dir_name + '/')
+    return norm == dir_name or norm.startswith(dir_name + "/")
 
 
 def _is_exempt(rel_path):
     """Return True if the file path passes through an exempt directory."""
-    parts = normalize_path(rel_path).split('/')
+    parts = normalize_path(rel_path).split("/")
     return any(part in EXEMPT_DIRS for part in parts)
 
 
@@ -681,36 +733,49 @@ def get_changed_files(base_ref, repo_root):
     """
     files = set()
 
-    # 1. Branch commits diff: base_ref...HEAD
+    # 1. Branch commits diff: base_ref...HEAD (check=False: a non-zero
+    # return selects the fallback diff below instead of raising).
     res = subprocess.run(
-        ['git', '-C', repo_root, 'diff', '--name-only', f'{base_ref}...HEAD'],
-        capture_output=True, text=True,
+        ["git", "-C", repo_root, "diff", "--name-only", f"{base_ref}...HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if res.returncode == 0:
         files.update(f.strip() for f in res.stdout.splitlines() if f.strip())
     else:
         # Fallback to direct diff against base_ref
         res = subprocess.run(
-            ['git', '-C', repo_root, 'diff', '--name-only', base_ref],
-            capture_output=True, text=True,
+            ["git", "-C", repo_root, "diff", "--name-only", base_ref],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if res.returncode == 0:
             files.update(f.strip() for f in res.stdout.splitlines() if f.strip())
         else:
-            print(f"ERROR: git diff against '{base_ref}' failed: {res.stderr.strip()}", file=sys.stderr)
+            print(
+                f"ERROR: git diff against '{base_ref}' failed: {res.stderr.strip()}",
+                file=sys.stderr,
+            )
             return None
 
-    # 2. Also check any uncommitted changes (staged or in working directory)
+    # 2. Also check any uncommitted changes (staged or in working directory).
+    # check=False: git may fail outside a worktree; empty output then.
     res_staged = subprocess.run(
-        ['git', '-C', repo_root, 'diff', '--cached', '--name-only'],
-        capture_output=True, text=True,
+        ["git", "-C", repo_root, "diff", "--cached", "--name-only"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if res_staged.returncode == 0:
         files.update(f.strip() for f in res_staged.stdout.splitlines() if f.strip())
 
     res_wc = subprocess.run(
-        ['git', '-C', repo_root, 'diff', '--name-only', 'HEAD'],
-        capture_output=True, text=True,
+        ["git", "-C", repo_root, "diff", "--name-only", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if res_wc.returncode == 0:
         files.update(f.strip() for f in res_wc.stdout.splitlines() if f.strip())
@@ -729,11 +794,14 @@ def get_default_base(repo_root):
 
     Returns None if neither ref exists.
     """
-    for candidate in ('origin/main', 'main'):
+    for candidate in ("origin/main", "main"):
         try:
+            # check=False: missing refs are probed via returncode, not raises.
             result = subprocess.run(
-                ['git', '-C', repo_root, 'rev-parse', '--verify', candidate],
-                capture_output=True, text=True,
+                ["git", "-C", repo_root, "rev-parse", "--verify", candidate],
+                capture_output=True,
+                text=True,
+                check=False,
             )
             if result.returncode == 0:
                 return candidate
@@ -789,7 +857,7 @@ def format_violation(v, github_format=False):
     """Format a single violation as an output line."""
     if github_format:
         # GitHub Actions annotation: ::error file=<path>,line=<line>::<message>
-        msg = v.message.replace('\n', ' ').replace('\r', '')
+        msg = v.message.replace("\n", " ").replace("\r", "")
         return f"::error file={v.file},line={v.line}::{msg}"
     return f"ERROR: {v.file}:{v.line}: {v.message}"
 
@@ -800,27 +868,31 @@ def format_violation(v, github_format=False):
 
 
 def main(argv=None):
+    """Run the comment policy check over the PR (or --all/--paths) scope.
+
+    Returns EXIT_OK (0), EXIT_VIOLATION (1) or EXIT_ERROR (2).
+    """
     parser = argparse.ArgumentParser(
-        description='PortPS5 code comment and best-practice linter.',
+        description="PortPS5 code comment and best-practice linter.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='Exit 0 = all pass; 1 = violations found; 2 = tool error.',
+        epilog="Exit 0 = all pass; 1 = violations found; 2 = tool error.",
     )
     parser.add_argument(
-        '--base',
+        "--base",
         default=None,
-        help='Git ref to diff against for PR scope (default: origin/main or main).',
+        help="Git ref to diff against for PR scope (default: origin/main or main).",
     )
     parser.add_argument(
-        '--all',
-        action='store_true',
-        help='Audit all .cpp/.hpp files in the repository.',
+        "--all",
+        action="store_true",
+        help="Audit all .cpp/.hpp files in the repository.",
     )
     parser.add_argument(
-        '--paths',
-        nargs='*',
+        "--paths",
+        nargs="*",
         default=None,
-        metavar='DIR',
-        help='Only check specific files or directories.',
+        metavar="DIR",
+        help="Only check specific files or directories.",
     )
     args = parser.parse_args(argv)
 
@@ -838,7 +910,7 @@ def main(argv=None):
         elif args.all:
             print("No source files found.")
         else:
-            base = args.base or get_default_base(repo_root) or 'unknown'
+            base = args.base or get_default_base(repo_root) or "unknown"
             print(f"OK: No changed C++ source files to check against base '{base}'.")
         return EXIT_OK
 
@@ -847,7 +919,7 @@ def main(argv=None):
         rel = normalize_path(os.path.relpath(f, repo_root))
         try:
             violations = check_file(rel, f)
-        except (IOError, OSError) as exc:
+        except OSError as exc:
             print(f"ERROR: could not read {rel}: {exc}", file=sys.stderr)
             return EXIT_ERROR
         all_violations.extend(violations)
@@ -855,7 +927,7 @@ def main(argv=None):
     # Sort by file path then line number for stable output.
     all_violations.sort(key=lambda v: (v.file, v.line))
 
-    github_format = os.environ.get('GITHUB_ACTIONS', '') == 'true'
+    github_format = os.environ.get("GITHUB_ACTIONS", "") == "true"
 
     if all_violations:
         for v in all_violations:
@@ -870,5 +942,5 @@ def main(argv=None):
     return EXIT_OK
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
