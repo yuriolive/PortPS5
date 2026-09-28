@@ -19,12 +19,12 @@ References are relative to `core/`.
 | Area | AnyPS5 `main` | PR #5 |
 |---|---|---|
 | Bink 2 (title-decoded) | No verified FMV reach. | Demon's Souls' intro cinematic plays through the title's own decoder. It depends on two fixes:<br>• the `s_*_saveexec` source-before-destination order (`shader/recompiler/Translation/src/ControlFlowInstructions.cpp:18-25`; the comment names the Bink 2 kernels; `APS5_SAVEEXEC_WRITE_FIRST` reverts it);<br>• "adjacent-generation" write-back for video planes packed back to back (`libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp:838-849`, `:2609-2641`; kill switch `APS5_NO_ADJACENT_GENERATION`). |
-| `libSceAvPlayer.native` | All 27 exports are `NotImplemented_nid_no_patch`, which throws `std::runtime_error` (`libs/prx/libc/src/General.cpp:85-87`). For example, `sceAvPlayerInit` is at `libs/prx/libSceAvPlayer.native/Export.cpp:87-91`. The file is byte-identical in both trees. | Same. |
-| `libSceAvPlayer` (non-native) | 25 throw-stubs. | Same. |
+| `libSceAvPlayer.native` | All 27 exports are `NotImplemented_nid_no_patch`, which throws `std::runtime_error` (`libs/prx/libc/src/General.cpp:85-87`). For example, `sceAvPlayerInit` is at `libs/prx/libSceAvPlayer.native/Export.cpp:87-91`. | Upstream implements a 27-export state machine simulating player lifecycle (Ready/Play/Pause/Stop) with a 1080p blank clip. PortPS5 ports this state machine with full System V ABI annotations and companion GoogleTest suite. |
+| `libSceAvPlayer` (non-native) | 25 throw-stubs. | Forwards to `libSceAvPlayer.native` implementation under System V ABI. |
 | Flip pacing | `libSceVideoOut` synthesises a 59.94 Hz vblank from `steady_clock` (`VideoOutDriver.cpp` `vblankLoop`). | Same (`libs/prx/libSceVideoOut/src/VideoOutDriver.cpp:504-521`). A flip waits for `lastFlipVblank + flipRate + 1` (`:350-362`). The swapchain present mode is hard-coded to FIFO (`libSceAgcDriver/Execution/src/VulkanDevice.cpp:847`, `:1471`). |
 | A/V telemetry | None. | None. |
 
-The architecture spec calls AvPlayer coverage "unknown". Reading the code settles it: coverage is **zero**, and any title that calls `sceAvPlayerInit` terminates.
+The architecture spec previously called AvPlayer coverage "zero". AvPlayer now provides a non-blocking offline state machine serving a blank frame stream and simulated event transitions so titles polling AvPlayer frame getters or event loops never crash or deadlock at boot. Real system media decoding (e.g., Media Foundation) remains scheduled for full FMV verification.
 
 ## Decision
 
