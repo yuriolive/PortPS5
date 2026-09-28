@@ -42,6 +42,7 @@ TEST(RecompilerFixesTests, SharedMemoryBarrierInsertedAfterLdsWriteWave64) {
 
     EXPECT_EQ(entry.Instructions().size(), 1u);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -71,6 +72,7 @@ TEST(RecompilerFixesTests, SharedMemoryBarrierNotInsertedWave32) {
     writeOp.AddArgument(&val);
     entry.AppendInstruction(&writeOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 32u);
 
@@ -121,6 +123,7 @@ TEST(RecompilerFixesTests, DivergentBlockLdsWritePlacesBarrierAtReconvergence) {
     writeOp.AddArgument(&val);
     divBlock.AppendInstruction(&writeOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -199,6 +202,7 @@ TEST(RecompilerFixesTests, NestedDivergentBlockLdsWritePlacesBarrierAtInnermostM
     writeOp.AddArgument(&val);
     innerDiv.AppendInstruction(&writeOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -272,6 +276,7 @@ TEST(RecompilerFixesTests, IndirectBranchTargetInDivergentRegionIsClassifiedAsDi
     writeOp.AddArgument(&val);
     indirectTargetBlock.AppendInstruction(&writeOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -308,6 +313,7 @@ TEST(RecompilerFixesTests, SharedAtomicZeroPreservedForSynchronization) {
 
     EXPECT_EQ(atomicOp.Opcode(), IrOpcode::SharedAtomicIAdd32);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     static_cast<void>(inserter.Insert(program, 32u));
 
@@ -332,6 +338,7 @@ TEST(RecompilerFixesTests, SharedMemoryBarrierInsertedAfterDataAppendAndConsumeW
     IrValue& consumeOp = program.CreateValue(IrOpcode::DataConsume, IrType::U32);
     entry.AppendInstruction(&consumeOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -539,6 +546,7 @@ TEST(RecompilerFixesTests, SccConditionClassifiedAsDivergentPlacesBarrierAtRecon
     writeOp.AddArgument(&val);
     sccBranch.AppendInstruction(&writeOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -596,6 +604,7 @@ TEST(RecompilerFixesTests, DivergentLoopWithoutMergeBlockEmitsDirectBarrier) {
     writeOp.AddArgument(&val);
     loopBody.AppendInstruction(&writeOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -660,6 +669,7 @@ TEST(RecompilerFixesTests, DivergentRegionLdsReadOrdersPriorWritesAtUniformHeade
     readOp.AddArgument(&addr);
     divBlock.AppendInstruction(&readOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -728,6 +738,7 @@ TEST(RecompilerFixesTests, DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBa
     readOp.AddArgument(&addr);
     divBlock.AppendInstruction(&readOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -800,6 +811,7 @@ TEST(RecompilerFixesTests, DivergentReadWithCyclicHeaderSkipsPreReadBarrier) {
     readOp.AddArgument(&addr);
     divBlock.AppendInstruction(&readOp);
 
+    program.Resources().stage = IrShaderStage::Compute;
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
@@ -813,6 +825,67 @@ TEST(RecompilerFixesTests, DivergentReadWithCyclicHeaderSkipsPreReadBarrier) {
     for (IrValue* inst : mergeBlock.Instructions()) {
         EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
     }
+}
+
+TEST(RecompilerFixesTests, Wave64VertexStageSkipsBarrierInsertion) {
+    // Behavioral invariant: the backend lowers IrOpcode::Barrier to OpControlBarrier with
+    // Workgroup execution scope, which has no workgroup in vertex/fragment/tessellation-evaluation
+    // modules and fails shader-module creation there. The pass must insert nothing for those
+    // stages even when wave64 LDS writes are present.
+    // Preconditions: stage Vertex, uniform block with a single WriteSharedU32, waveSize 64.
+    // Expected: zero Barriers, write left untouched.
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::Vertex;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(entry);
+
+    IrValue& addr = ir.Constant(16u);
+    IrValue& val = ir.Constant(42u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    entry.AppendInstruction(&writeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 0u);
+    ASSERT_EQ(entry.Instructions().size(), 1u);
+    EXPECT_EQ(entry.Instructions().front()->Opcode(), IrOpcode::WriteSharedU32);
+}
+
+TEST(RecompilerFixesTests, TessellationControlStageInsertsBarrier) {
+    // Behavioral invariant: tessellation-control patches synchronize with workgroup-execution
+    // barriers (the backend emits them with tessellation-control memory semantics), so the pass
+    // must stay active there, unlike vertex/fragment stages.
+    // Preconditions: stage TessellationControl, uniform block with a single WriteSharedU32, waveSize 64.
+    // Expected: exactly one Barrier directly after the write.
+    IrProgram program;
+    program.Resources().stage = IrShaderStage::TessellationControl;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(entry);
+
+    IrValue& addr = ir.Constant(16u);
+    IrValue& val = ir.Constant(42u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    entry.AppendInstruction(&writeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 1u);
+    ASSERT_EQ(entry.Instructions().size(), 2u);
+    auto it = entry.Instructions().begin();
+    EXPECT_EQ((*it)->Opcode(), IrOpcode::WriteSharedU32);
+    ++it;
+    ASSERT_NE(it, entry.Instructions().end());
+    EXPECT_EQ((*it)->Opcode(), IrOpcode::Barrier);
 }
 
 } // namespace

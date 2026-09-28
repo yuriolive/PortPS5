@@ -170,6 +170,9 @@ Other facts:
     outermost uniform headers (`DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader`,
     `DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers`), and the cyclic-header skip
     (`DivergentReadWithCyclicHeaderSkipsPreReadBarrier`).
+  - [x] Stage gate: `SharedMemoryBarrierInserter` inserts barriers only for compute, mesh, and
+    tessellation-control stages (Workgroup execution scope is invalid elsewhere), covered by
+    `Wave64VertexStageSkipsBarrierInsertion` and `TessellationControlStageInsertsBarrier`.
   - [ ] Death tests (`EXPECT_DEATH`): verify that unresolvable opcodes trigger an immediate logging abort via `Unsupported()` without memory corruption.
 - **Ported Ecosystem Test Suites:**
   - [ ] **KytyPS5 `ShaderRecompilerComputeTests`:** comprehensive RDNA2 instruction lowering, resource descriptor bindings, texture sampling modes, and atomic memory operations.

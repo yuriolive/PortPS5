@@ -54,6 +54,21 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
     if (waveSize != 64u) {
         return stats;
     }
+    // The backend lowers IrOpcode::Barrier to OpControlBarrier with Workgroup execution scope
+    // (SpirvFlowEmitter::EmitBarrier), which is only valid in stages with a workgroup. In vertex,
+    // fragment, and tessellation-evaluation modules the barrier would fail shader-module creation,
+    // so the pass stays out there: non-compute LDS, if present, is emulated function-local (see
+    // SpirvAnalysis functionLds handling) and needs no workgroup ordering. Tessellation control is
+    // kept: patch synchronization barriers are legal and required there, and the backend emits them
+    // with tessellation-control memory semantics.
+    switch (program.Resources().stage) {
+    case IrShaderStage::Compute:
+    case IrShaderStage::Mesh:
+    case IrShaderStage::TessellationControl:
+        break;
+    default:
+        return stats;
+    }
 
     const auto& blockInfoList = program.Metadata().blockInfo;
     const auto& blockOrder = program.BlockOrder();
