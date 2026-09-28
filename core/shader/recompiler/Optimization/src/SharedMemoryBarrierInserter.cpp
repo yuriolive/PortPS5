@@ -22,6 +22,8 @@ bool IsDivergentBranchCondition(BranchCondition cond) {
     case BranchCondition::VccNonZero:
     case BranchCondition::ExecZero:
     case BranchCondition::ExecNonZero:
+    case BranchCondition::SccZero:
+    case BranchCondition::SccNonZero:
     case BranchCondition::Unknown:
         return true;
     default:
@@ -71,6 +73,7 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
 
         for (const auto& info : blockInfoList) {
             if (info.terminator.kind == TerminatorKind::ConditionalBranch &&
+                info.terminator.mergeBlock != InvalidControlFlowId &&
                 IsDivergentBranchCondition(info.terminator.condition)) {
                 const std::uint32_t mergeId = info.terminator.mergeBlock;
 

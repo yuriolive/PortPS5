@@ -499,5 +499,118 @@ TEST(RecompilerFixesTests, SSaveexecReadsOldExecBeforeUpdatingExec) {
     EXPECT_LT(std::distance(opcodes.begin(), itGetExecLo), std::distance(opcodes.begin(), itSetExecLo));
 }
 
+TEST(RecompilerFixesTests, SccConditionClassifiedAsDivergentPlacesBarrierAtReconvergence) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& sccBranch = program.CreateBlock();
+    IrBlock& mergeBlock = program.CreateBlock();
+
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &sccBranch, &mergeBlock};
+
+    // entry (0) conditional branch on SccZero -> sccBranch (1), mergeBlock is 2
+    BlockInfo entryInfo{};
+    entryInfo.id = 0u;
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::SccZero;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 2u;
+    entryInfo.terminator.mergeBlock = 2u;
+
+    BlockInfo sccBranchInfo{};
+    sccBranchInfo.id = 1u;
+    sccBranchInfo.terminator.kind = TerminatorKind::Branch;
+    sccBranchInfo.terminator.trueBlock = 2u;
+
+    BlockInfo mergeBlockInfo{};
+    mergeBlockInfo.id = 2u;
+    mergeBlockInfo.terminator.kind = TerminatorKind::Return;
+
+    program.Metadata().blockInfo = {entryInfo, sccBranchInfo, mergeBlockInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(sccBranch);
+
+    IrValue& addr = ir.Constant(16u);
+    IrValue& val = ir.Constant(42u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    sccBranch.AppendInstruction(&writeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 1u);
+    // Barrier should NOT be in sccBranch (divergent across waves in workgroup), but at reconvergence (mergeBlock)
+    bool sccBranchHasBarrier = false;
+    for (IrValue* inst : sccBranch.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            sccBranchHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(sccBranchHasBarrier);
+
+    bool mergeHasBarrier = false;
+    for (IrValue* inst : mergeBlock.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            mergeHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(mergeHasBarrier);
+}
+
+TEST(RecompilerFixesTests, DivergentLoopWithoutMergeBlockEmitsDirectBarrier) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& loopBody = program.CreateBlock();
+
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &loopBody};
+
+    // entry (0) conditional branch on VccZero without structured mergeBlock (e.g. unstructured loop backedge)
+    BlockInfo entryInfo{};
+    entryInfo.id = 0u;
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::VccZero;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 0u;
+    entryInfo.terminator.mergeBlock = InvalidControlFlowId;
+
+    BlockInfo loopBodyInfo{};
+    loopBodyInfo.id = 1u;
+    loopBodyInfo.terminator.kind = TerminatorKind::Return;
+
+    program.Metadata().blockInfo = {entryInfo, loopBodyInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(loopBody);
+
+    IrValue& addr = ir.Constant(16u);
+    IrValue& val = ir.Constant(42u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    loopBody.AppendInstruction(&writeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    // Because mergeBlock is invalid, loopBody is not trapped in an invalid merge mapping;
+    // direct barrier insertion takes over so wave64 LDS ordering is not lost.
+    EXPECT_EQ(stats.insertedBarriers, 1u);
+    bool loopBodyHasBarrier = false;
+    for (IrValue* inst : loopBody.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            loopBodyHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(loopBodyHasBarrier);
+}
+
 } // namespace
 } // namespace ShaderRecompiler
+
