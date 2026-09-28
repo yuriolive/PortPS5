@@ -73,6 +73,24 @@ seeds/                Milestone work plans for agentic workflows
 
 ---
 
+## Supporting the Project
+
+PortPS5 is built by a solo maintainer with the help of AI agents, entirely in spare time.
+Every sponsorship directly speeds up development:
+
+| Your support goes towards | Why it matters |
+|---|---|
+| 🤖 **AI compute credits** | AI agents write code, review PRs, and run spec checks around the clock — but inference isn't free. More credits = faster iteration across all milestones. |
+| 🖥️ **Test hardware** | Gate titles (Demon's Souls, Tomb Raider, Bugsnax …) need a Vulkan 1.3 GPU to validate. A second machine means continuous hardware-in-the-loop testing without blocking daily work. |
+| ⚡ **Milestone velocity** | The [roadmap](docs/ROADMAP.md) spans M0 → M6. Sponsorship lets me dedicate more focused time to each milestone exit criterion instead of spreading it across weekends. |
+| 📦 **Toolchain & CI costs** | Pinned MinGW GCC 15.2 builds, Vulkan SDK updates, and Windows CI runners all have ongoing overhead. |
+
+If PortPS5 is useful or exciting to you, consider sponsoring — even a small monthly amount keeps the lights on and signals that the project is worth the effort.
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&logo=githubsponsors)](https://github.com/sponsors/yuriolive)
+
+---
+
 ## License
 
 PortPS5 is licensed under the **GNU General Public License v2.0 only** ([GPL-2.0-only](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)), preserving the license of the upstream AnyPS5 project.
