@@ -7,9 +7,11 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 
 // _umtx_op (public FreeBSD semantics, docs/spec/threading.md Target design).
 // Why here: _umtx_op shares the futex core with mutex/cond/rwlock. WAIT of
@@ -255,6 +257,32 @@ void LogUnknownOnce(int op) noexcept {
         APS5_LOG_ERR("Unknown _umtx_op %d", op);
 }
 
+// Kernel condition variable wait queue representation for UMTX_OP_CV_*.
+// Maintains waiter registration so that cvWord[0] (c_has_waiters) reflects active
+// waiters, and signal/broadcast selectively notify waiting threads without spurious
+// cross-waiter wakeups.
+struct CvWaitNode {
+    CvWaitNode* next{nullptr};
+    CvWaitNode* prev{nullptr};
+    void* obj{nullptr};
+    std::atomic<bool> awakened{false};
+    std::mutex mtx;
+    std::condition_variable cv;
+};
+
+struct CvBucket {
+    std::mutex mtx;
+    CvWaitNode* head{nullptr};
+};
+
+constexpr std::size_t kCvBucketCount = 64;
+CvBucket s_cvBuckets[kCvBucketCount];
+
+inline CvBucket& GetCvBucket(void* obj) noexcept {
+    const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(obj);
+    return s_cvBuckets[(addr >> 4) % kCvBucketCount];
+}
+
 }  // namespace
 
 /**
@@ -272,7 +300,8 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                                               void* uaddr2) noexcept {
     const std::uint32_t tid = GuestTid::Ensure();
     if (tid == 0 && (op == kOpMutexLock || op == kOpMutexTrylock || op == kOpLock ||
-                     op == kOpMutexLock2 || op == kOpMutexWait))
+                     op == kOpMutexLock2 || op == kOpMutexWait || op == kOpRwWrlock ||
+                     op == kOpRwUnlock))
         return SyncWords::kSceEagain;
 
     switch (op) {
@@ -461,8 +490,6 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
                 return SyncWords::kSceEinval;
             std::uint32_t clockid = 0;
             if ((val & kCvWaitClockid) != 0) {
-                clockid = static_cast<std::uint32_t>(val >> 16);
-            } else {
                 clockid = cvWord[2];
             }
             const bool isMono = (clockid == 1 || clockid == 4 || clockid == 5 ||
@@ -487,45 +514,120 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             }
         }
 
-        std::atomic_ref<std::uint32_t> cvRef(cvWord[0]);
-        // Capture current generation counter without modifying it, so concurrent waiters
-        // do not spuriously wake each other before CV_SIGNAL or CV_BROADCAST.
-        const std::uint32_t seq = cvRef.load(std::memory_order_acquire);
+        CvWaitNode node;
+        node.obj = obj;
+        auto& bucket = GetCvBucket(obj);
+        {
+            std::lock_guard<std::mutex> bLock(bucket.mtx);
+            node.next = bucket.head;
+            if (bucket.head)
+                bucket.head->prev = &node;
+            bucket.head = &node;
+            // Mark condition variable as having waiters (c_has_waiters = 1) for userland fast-path checks.
+            std::atomic_ref<std::uint32_t> cvRef(cvWord[0]);
+            cvRef.store(1, std::memory_order_release);
+        }
+
         const int unlockErr = UmutexUnlock(mutexWord, tid);
-        if (unlockErr != SyncWords::kSceOk)
-            return unlockErr;
-        bool timedOut = false;
-        while (true) {
-            const std::uint32_t cur = cvRef.load(std::memory_order_acquire);
-            if (cur != seq)
-                break;
-            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline) {
-                timedOut = true;
-                break;
+        if (unlockErr != SyncWords::kSceOk) {
+            std::lock_guard<std::mutex> bLock(bucket.mtx);
+            if (node.prev)
+                node.prev->next = node.next;
+            else
+                bucket.head = node.next;
+            if (node.next)
+                node.next->prev = node.prev;
+            bool anyRemaining = false;
+            for (auto* cur = bucket.head; cur != nullptr; cur = cur->next) {
+                if (cur->obj == obj) {
+                    anyRemaining = true;
+                    break;
+                }
             }
-            if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(cvWord), cur, deadline)) {
-                timedOut = true;
-                break;
+            if (!anyRemaining) {
+                std::atomic_ref<std::uint32_t> cvRef(cvWord[0]);
+                cvRef.store(0, std::memory_order_release);
+            }
+            return unlockErr;
+        }
+
+        std::unique_lock<std::mutex> nodeLock(node.mtx);
+        bool timedOut = false;
+        while (!node.awakened.load(std::memory_order_acquire)) {
+            if (deadline == FutexCore::kInfinite) {
+                node.cv.wait(nodeLock);
+            } else {
+                const std::uint64_t now = FutexCore::NowNanos();
+                if (now >= deadline) {
+                    timedOut = true;
+                    break;
+                }
+                const std::uint64_t remainingNanos = deadline - now;
+                const auto status = node.cv.wait_for(nodeLock, std::chrono::nanoseconds(remainingNanos));
+                if (status == std::cv_status::timeout || FutexCore::NowNanos() >= deadline) {
+                    if (!node.awakened.load(std::memory_order_acquire)) {
+                        timedOut = true;
+                        break;
+                    }
+                }
             }
         }
+        nodeLock.unlock();
+
+        {
+            std::lock_guard<std::mutex> bLock(bucket.mtx);
+            if (node.prev)
+                node.prev->next = node.next;
+            else
+                bucket.head = node.next;
+            if (node.next)
+                node.next->prev = node.prev;
+            bool anyRemaining = false;
+            for (auto* cur = bucket.head; cur != nullptr; cur = cur->next) {
+                if (cur->obj == obj) {
+                    anyRemaining = true;
+                    break;
+                }
+            }
+            if (!anyRemaining) {
+                std::atomic_ref<std::uint32_t> cvRef(cvWord[0]);
+                cvRef.store(0, std::memory_order_release);
+            }
+        }
+
         return timedOut ? SyncWords::kSceTimedOut : SyncWords::kSceOk;
     }
     case kOpCvSignal: {
         if (!obj)
             return SyncWords::kSceEinval;
-        auto* cvWord = static_cast<std::uint32_t*>(obj);
-        std::atomic_ref<std::uint32_t> cvRef(cvWord[0]);
-        cvRef.fetch_add(1, std::memory_order_acq_rel);
-        FutexCore::WakeSingle(cvWord);
+        auto& bucket = GetCvBucket(obj);
+        std::lock_guard<std::mutex> bLock(bucket.mtx);
+        for (auto* cur = bucket.head; cur != nullptr; cur = cur->next) {
+            if (cur->obj == obj && !cur->awakened.load(std::memory_order_relaxed)) {
+                cur->awakened.store(true, std::memory_order_release);
+                {
+                    std::lock_guard<std::mutex> nLock(cur->mtx);
+                }
+                cur->cv.notify_one();
+                break;
+            }
+        }
         return SyncWords::kSceOk;
     }
     case kOpCvBroadcast: {
         if (!obj)
             return SyncWords::kSceEinval;
-        auto* cvWord = static_cast<std::uint32_t*>(obj);
-        std::atomic_ref<std::uint32_t> cvRef(cvWord[0]);
-        cvRef.fetch_add(1, std::memory_order_acq_rel);
-        FutexCore::WakeAll(cvWord);
+        auto& bucket = GetCvBucket(obj);
+        std::lock_guard<std::mutex> bLock(bucket.mtx);
+        for (auto* cur = bucket.head; cur != nullptr; cur = cur->next) {
+            if (cur->obj == obj && !cur->awakened.load(std::memory_order_relaxed)) {
+                cur->awakened.store(true, std::memory_order_release);
+                {
+                    std::lock_guard<std::mutex> nLock(cur->mtx);
+                }
+                cur->cv.notify_all();
+            }
+        }
         return SyncWords::kSceOk;
     }
     case kOpRwRdlock: {
@@ -605,17 +707,18 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
 
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
-            // Recursive write lock detection: rwWord[2] holds the writer's TID.
-            if ((state & kRwWriteOwner) != 0 && rwWord[2] == tid)
+            // Recursive write lock detection: state low 24 bits hold writer TID atomically.
+            if ((state & kRwWriteOwner) != 0 && (state & kUmutexOwnerMask) == (tid & kUmutexOwnerMask))
                 return SyncWords::kSceEdeadlk;
 
             // Acquire write lock if no writer holds and no readers hold.
+            // Publish write owner bit and writer TID simultaneously in a single atomic CAS.
             if ((state & (kRwWriteOwner | kRwMaxReaders)) == 0) {
                 std::uint32_t expected = state;
-                const std::uint32_t desired = kRwWriteOwner | (state & (kRwWriteWaiters | kRwReadWaiters));
+                const std::uint32_t desired = kRwWriteOwner | (state & (kRwWriteWaiters | kRwReadWaiters)) |
+                                             (tid & kUmutexOwnerMask);
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
-                    rwWord[2] = tid;
                     return SyncWords::kSceOk;
                 }
                 continue;
@@ -652,12 +755,13 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
             if ((state & kRwWriteOwner) != 0) {
                 // Writer release: verify calling thread is the writer that holds the lock.
-                if (rwWord[2] != tid)
+                const std::uint32_t owner = state & kUmutexOwnerMask;
+                if (owner != 0 && owner != (tid & kUmutexOwnerMask))
                     return SyncWords::kSceEperm;
-                rwWord[2] = 0;
-                // Clear owner bit and wake all waiters.
+                // Clear owner and TID without mutating state before CAS succeeds;
+                // preserve waiters so queued threads can wake and acquire.
                 std::uint32_t expected = state;
-                const std::uint32_t desired = 0;
+                const std::uint32_t desired = state & (kRwWriteWaiters | kRwReadWaiters);
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
                     FutexCore::WakeAll(rwWord);

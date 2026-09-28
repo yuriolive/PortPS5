@@ -609,10 +609,14 @@ static void TestUmtx() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         // Verify mutex was unlocked while thread was waiting on cv:
         REQUIRE(mutex[0] == 0);
+        // Verify c_has_waiters is marked (cv[0] == 1) for userland fast-path detection:
+        REQUIRE(cv[0] == 1);
         // Signal CV (op 9).
         REQUIRE(_umtx_op_nid_postfix(cv, 9, 0, nullptr, nullptr) == SCE_OK);
         t.join();
         REQUIRE(waitResult.load() == SCE_OK);
+        // Verify c_has_waiters is cleared back to 0 once waiter has completed:
+        REQUIRE(cv[0] == 0);
 
         // Multi-waiter CV test: multiple concurrent waiters capture generation without
         // modifying it, ensuring neither waiter spuriously wakes before signal/broadcast.
@@ -665,12 +669,21 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2, mTime, &pastTs) == SCE_TIMEDOUT);
         // Re-lock mTime before second cv wait since cv wait returns with mutex unlocked:
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
-        // CV wait with CVWAIT_ABSTIME | CVWAIT_CLOCKID (val = 2 | 4 | (1 << 16)) for CLOCK_MONOTONIC:
-        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2 | 4 | (1 << 16), mTime, &pastTs) == SCE_TIMEDOUT);
+        // CV wait with CVWAIT_ABSTIME | CVWAIT_CLOCKID: clockid is taken from cvTime[2] (c_clockid).
+        // CLOCK_MONOTONIC_FAST (4) with past timestamp returns SCE_TIMEDOUT:
+        cvTime[2] = 4;
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2 | 4, mTime, &pastTs) == SCE_TIMEDOUT);
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
 
-        // Reject invalid clock ID in CV wait (e.g. clockid = 99 -> val = 2 | 4 | (99 << 16)):
-        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2 | 4 | (99 << 16), mTime, &pastTs) == SCE_EINVAL);
+        // Reject invalid clock ID in cvTime[2] (e.g. clockid = 99):
+        cvTime[2] = 99;
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2 | 4, mTime, &pastTs) == SCE_EINVAL);
+        // Mutex remains held because invalid parameter was rejected before unlocking.
+        // When CVWAIT_CLOCKID is not set in val (val = 2), invalid cvTime[2] is ignored and defaults to CLOCK_REALTIME:
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2, mTime, &pastTs) == SCE_TIMEDOUT);
+        // CV wait timed out and returned with mutex unlocked:
+        REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_EPERM);
+        REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
     }
     {
@@ -710,10 +723,15 @@ static void TestUmtx() {
                                      reinterpret_cast<void*>(sizeof(UmtxTime)), &ut) == SCE_EINVAL);
     }
     {
-        // RWLOCK owner TID verification, EDEADLK detection, and rwWord[1] URWLOCK_PREFER_READER:
-        alignas(4) std::uint32_t rwTest[4] = {0, 0x02u /* URWLOCK_PREFER_READER */, 0, 0};
+        // RWLOCK owner TID verification, EDEADLK detection, and rwWord[1] URWLOCK_PREFER_READER.
+        // In FreeBSD struct urwlock, rwWord[2] is rw_blocked_readers and rwWord[3] is rw_blocked_writers;
+        // locking/unlocking must never clobber these words.
+        alignas(4) std::uint32_t rwTest[4] = {0, 0x02u /* URWLOCK_PREFER_READER */, 0x12345678u, 0x87654321u};
         // Acquire write lock:
         REQUIRE(_umtx_op_nid_postfix(rwTest, 13, 0, nullptr, nullptr) == SCE_OK);
+        // Verify rw_blocked_readers and rw_blocked_writers remain untouched:
+        REQUIRE(rwTest[2] == 0x12345678u);
+        REQUIRE(rwTest[3] == 0x87654321u);
         // Recursive write lock from same thread must return SCE_EDEADLK:
         REQUIRE(_umtx_op_nid_postfix(rwTest, 13, 0, nullptr, nullptr) == SCE_EDEADLK);
 
@@ -725,8 +743,10 @@ static void TestUmtx() {
         otherThread.join();
         REQUIRE(otherUnlockRc.load() == SCE_EPERM);
 
-        // Owner unlocks successfully:
+        // Owner unlocks successfully, preserving layout words:
         REQUIRE(_umtx_op_nid_postfix(rwTest, 14, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(rwTest[2] == 0x12345678u);
+        REQUIRE(rwTest[3] == 0x87654321u);
 
         // Reader preference in rwWord[1] allows reader acquisition even if writer is waiting:
         // Also test wrlock timeout cleans up kRwWriteWaiters bit:
