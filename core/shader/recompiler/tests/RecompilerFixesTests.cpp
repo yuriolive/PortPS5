@@ -7,13 +7,17 @@
 // These tests verify compiler IR transformations and invariants using GoogleTest.
 
 #include "Optimization/include/Optimization/SharedMemoryBarrierInserter.hpp"
+#include "Translation/include/Translation/TranslationContext.hpp"
+#include "RdnaDecoder/include/RdnaDecoder/RdnaInstruction.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrBuilder.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrOpcode.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrProgram.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrValue.hpp"
 
+#include <algorithm>
 #include <gtest/gtest.h>
+#include <vector>
 
 namespace ShaderRecompiler {
 namespace {
@@ -115,6 +119,94 @@ TEST(RecompilerFixesTests, NonZeroAtomicNotEliminated) {
     static_cast<void>(inserter.Insert(program, 32u));
 
     EXPECT_EQ(atomicOp.Opcode(), IrOpcode::SharedAtomicIAdd32);
+}
+
+TEST(RecompilerFixesTests, VMovrelsEmitsSelectChainLowering) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    TranslationContext context(program, entry, 256u);
+
+    RdnaInstruction inst{};
+    inst.family = RdnaInstructionFamily::VOP1;
+    inst.op = RdnaOpcode::VMovrelsB32;
+    inst.destination.kind = RdnaOperandKind::VectorRegister;
+    inst.destination.reg = 0u;
+    inst.source0.kind = RdnaOperandKind::VectorRegister;
+    inst.source0.reg = 5u;
+
+    context.TranslateInstruction(inst);
+
+    // Verify that the entry block contains select operations comparing M0 against candidate registers
+    bool foundSelect = false;
+    for (IrValue* val : entry.Instructions()) {
+        if (val && val->Opcode() == IrOpcode::SelectU32) {
+            foundSelect = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundSelect);
+}
+
+TEST(RecompilerFixesTests, VMovreldEmitsSelectChainLowering) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    TranslationContext context(program, entry, 256u);
+
+    RdnaInstruction inst{};
+    inst.family = RdnaInstructionFamily::VOP1;
+    inst.op = RdnaOpcode::VMovreldB32;
+    inst.destination.kind = RdnaOperandKind::VectorRegister;
+    inst.destination.reg = 0u;
+    inst.source0.kind = RdnaOperandKind::VectorRegister;
+    inst.source0.reg = 1u;
+
+    context.TranslateInstruction(inst);
+
+    bool foundSelect = false;
+    for (IrValue* val : entry.Instructions()) {
+        if (val && val->Opcode() == IrOpcode::SelectU32) {
+            foundSelect = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundSelect);
+}
+
+TEST(RecompilerFixesTests, SSaveexecReadsOldExecBeforeUpdatingExec) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    TranslationContext context(program, entry, 256u);
+
+    RdnaInstruction inst{};
+    inst.family = RdnaInstructionFamily::SOP1;
+    inst.op = RdnaOpcode::SAndSaveexecB64;
+    inst.destination.kind = RdnaOperandKind::ScalarRegister;
+    inst.destination.reg = 4u;
+    inst.source0.kind = RdnaOperandKind::ScalarRegister;
+    inst.source0.reg = 6u;
+
+    context.TranslateInstruction(inst);
+
+    // Verify instruction ordering: GetExecLo / GetExecHi must occur before SetExecLo / SetExecHi
+    std::vector<IrOpcode> opcodes;
+    for (IrValue* val : entry.Instructions()) {
+        if (val) {
+            opcodes.push_back(val->Opcode());
+        }
+    }
+
+    auto itGetExecLo = std::find(opcodes.begin(), opcodes.end(), IrOpcode::GetExecLo);
+    auto itSetExecLo = std::find(opcodes.begin(), opcodes.end(), IrOpcode::SetExecLo);
+
+    ASSERT_NE(itGetExecLo, opcodes.end());
+    ASSERT_NE(itSetExecLo, opcodes.end());
+    EXPECT_LT(std::distance(opcodes.begin(), itGetExecLo), std::distance(opcodes.begin(), itSetExecLo));
 }
 
 } // namespace
