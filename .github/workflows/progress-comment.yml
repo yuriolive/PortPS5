@@ -1,8 +1,8 @@
-name: Progress comment
+name: Progress Comment
 
 on:
   workflow_run:
-    workflows: [Progress report]
+    workflows: [Progress Report]
     types: [completed]
 
 permissions:

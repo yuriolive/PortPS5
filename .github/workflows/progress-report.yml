@@ -1,4 +1,4 @@
-name: Progress report
+name: Progress Report
 
 on:
   pull_request:
