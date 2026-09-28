@@ -116,7 +116,8 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
             }
 
             const SharedAccess access = SharedAccessOf(inst->Opcode());
-            if (access == SharedAccess::Write || access == SharedAccess::Atomic) {
+            if (access == SharedAccess::Write || access == SharedAccess::Atomic ||
+                access == SharedAccess::Append || access == SharedAccess::Consume) {
                 if (isDivergent) {
                     // In a lane-divergent block, placing a workgroup barrier directly causes GPU deadlocks.
                     // Place the barrier at the uniform reconvergence point (merge block) instead.

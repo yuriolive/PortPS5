@@ -157,6 +157,42 @@ TEST(RecompilerFixesTests, SharedAtomicZeroPreservedForSynchronization) {
     EXPECT_EQ(atomicOp.Opcode(), IrOpcode::SharedAtomicIAdd32);
 }
 
+TEST(RecompilerFixesTests, SharedMemoryBarrierInsertedAfterDataAppendAndConsumeWave64) {
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(entry);
+
+    IrValue& val = ir.Constant(123u);
+
+    // DataAppend (ds_append) and DataConsume (ds_consume) update shared memory state
+    IrValue& appendOp = program.CreateValue(IrOpcode::DataAppend, IrType::U32);
+    appendOp.AddArgument(&val);
+    entry.AppendInstruction(&appendOp);
+
+    IrValue& consumeOp = program.CreateValue(IrOpcode::DataConsume, IrType::U32);
+    entry.AppendInstruction(&consumeOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    // Both append and consume must have barriers inserted after them
+    EXPECT_EQ(stats.insertedBarriers, 2u);
+
+    std::vector<IrOpcode> opcodes;
+    for (IrValue* inst : entry.Instructions()) {
+        if (inst) {
+            opcodes.push_back(inst->Opcode());
+        }
+    }
+    ASSERT_EQ(opcodes.size(), 4u);
+    EXPECT_EQ(opcodes[0], IrOpcode::DataAppend);
+    EXPECT_EQ(opcodes[1], IrOpcode::Barrier);
+    EXPECT_EQ(opcodes[2], IrOpcode::DataConsume);
+    EXPECT_EQ(opcodes[3], IrOpcode::Barrier);
+}
+
 TEST(RecompilerFixesTests, VMovrelsEmitsSelectChainLowering) {
     IrProgram program;
     IrBlock& entry = program.CreateBlock();
