@@ -11,12 +11,18 @@
 [![Language: C++23](https://img.shields.io/badge/language-C%2B%2B23-informational?style=flat-square&logo=cplusplus)](https://github.com/yuriolive/PortPS5)
 [![Vulkan 1.3](https://img.shields.io/badge/Vulkan-1.3-red?style=flat-square&logo=vulkan)](https://www.vulkan.org/)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/yuriolive?style=flat-square&logo=githubsponsors&color=ea4aaa)](https://github.com/sponsors/yuriolive)
+[![libraries](https://yuriolive.github.io/PortPS5/badge-libraries.svg)](https://yuriolive.github.io/PortPS5/)
+[![shaders](https://yuriolive.github.io/PortPS5/badge-shaders.svg)](https://yuriolive.github.io/PortPS5/)
 
 Native Windows execution of decrypted PS5 game dumps.
 
 PortPS5 converts **user-supplied, already-decrypted PS5 game dumps** into native Windows executables plus replacement system libraries. It executes the game's x86-64 code directly on the host CPU without emulation, relinks guest ELFs into PE images, implements PS5 system libraries (`.prx`), and translates the GPU workload to Vulkan.
 
 PortPS5 is a GPL-2.0-only hard fork of [AnyPS5](https://github.com/boykopovar/AnyPS5) by boykopovar.
+
+[![progress map](https://yuriolive.github.io/PortPS5/progress.svg)](https://yuriolive.github.io/PortPS5/)
+
+<sub>* System libraries: percentage of the functions known to the project so far (declared in [core/libs/prx](core/libs/prx)), not of every PS5 system function. The total grows as more functions are declared. Rendered by `tools/progress.py` on every push to `main` (requires GitHub Pages enabled).</sub>
 
 ---
 
