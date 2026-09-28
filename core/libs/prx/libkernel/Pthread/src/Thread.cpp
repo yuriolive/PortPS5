@@ -204,7 +204,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
 extern "C" {
 
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry,
-                              void* arg, const char*) noexcept {
+                               void* arg, const char* name) noexcept {
     if (!thread || !entry)
         return SCE_KERNEL_ERROR_EINVAL;
     if (attr && !*attr)
@@ -214,6 +214,10 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
         p = std::make_unique<PthreadPrivate>();
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
+    }
+    if (name) {
+        std::lock_guard<std::mutex> lk(p->_name_mtx);
+        std::strncpy(p->threadName, name, sizeof(p->threadName) - 1);
     }
     bool detached = false;
     if (attr && *attr)

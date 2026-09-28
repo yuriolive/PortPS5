@@ -176,13 +176,13 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
     // the read and the sleep would be lost. The signal side bumps seq BEFORE
     // waking (release), and we only sleep while seq is unchanged, so the
     // seq check closes the lost-wakeup window.
-    std::uint32_t seq = 0;
+    std::uint64_t seq = 0;
     while (true) {
         cw = cref.load(std::memory_order_acquire);
         if (!CW::IsInit(cw) || CW::IsDestroyed(cw))
             return kSceEinval;
         const std::uint32_t waiters = CW::Waiters(cw);
-        if (waiters == 0xFFFFu)
+        if (waiters >= 8191u)
             return SyncWords::kSceEagain;
         seq = CW::Seq(cw);
         // Rebuild preserving flags exactly:
@@ -343,9 +343,9 @@ int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept {
     std::uint64_t w = ref.load(std::memory_order_acquire);
     if (w == 0) {
         std::uint64_t expected = 0;
-        ref.compare_exchange_strong(expected, CW::Make(false, 0, 0), std::memory_order_acq_rel,
-                                    std::memory_order_acquire);
-        return kSceOk;  // no waiters on a fresh cond.
+        if (ref.compare_exchange_strong(expected, CW::Make(false, 0, 0), std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return kSceOk;  // no waiters on a fresh cond.
     }
     if (!CW::IsInit(w) || CW::IsDestroyed(w))
         return kSceEinval;
@@ -359,7 +359,7 @@ int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept {
         }
         const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
                                    (static_cast<std::uint64_t>(waiters - 1) << CW::kWaitersShift) |
-                                   ((CW::Seq(w) + 1) & 0xFFFFFFFFULL);
+                                   ((CW::Seq(w) + 1) & CW::kSeqMask);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {
@@ -376,9 +376,9 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
     std::uint64_t w = ref.load(std::memory_order_acquire);
     if (w == 0) {
         std::uint64_t expected = 0;
-        ref.compare_exchange_strong(expected, CW::Make(false, 0, 0), std::memory_order_acq_rel,
-                                    std::memory_order_acquire);
-        return kSceOk;
+        if (ref.compare_exchange_strong(expected, CW::Make(false, 0, 0), std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return kSceOk;
     }
     if (!CW::IsInit(w) || CW::IsDestroyed(w))
         return kSceEinval;
@@ -392,7 +392,7 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
             // arrives after; with zero waiters the wake is harmless).
             const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
                                        (static_cast<std::uint64_t>(0) << CW::kWaitersShift) |
-                                       ((CW::Seq(w) + 1) & 0xFFFFFFFFULL);
+                                       ((CW::Seq(w) + 1) & CW::kSeqMask);
             std::uint64_t expected = w;
             if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                             std::memory_order_acquire))
@@ -400,7 +400,7 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
             continue;
         }
         const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
-                                   ((CW::Seq(w) + 1) & 0xFFFFFFFFULL);
+                                   ((CW::Seq(w) + 1) & CW::kSeqMask);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
                                         std::memory_order_acquire)) {

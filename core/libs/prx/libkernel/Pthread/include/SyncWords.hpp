@@ -27,6 +27,8 @@ inline constexpr int kSceEperm = static_cast<int>(0x80020001u);     // 1
 inline constexpr int kSceEagain = static_cast<int>(0x80020023u);    // 35
 inline constexpr int kSceEsrch = static_cast<int>(0x80020003u);     // 3
 inline constexpr int kSceEnomem = static_cast<int>(0x8002000Cu);    // 12
+inline constexpr int kSceEownerdead = static_cast<int>(0x80020060u);    // 96
+inline constexpr int kSceEnotrecoverable = static_cast<int>(0x8002005Fu); // 95
 
 // POSIX (FreeBSD) errnos returned by the pthread_* wrappers.
 inline constexpr int kPosixEinval = 22;
@@ -93,20 +95,20 @@ struct MutexWord {
 static_assert(sizeof(MutexWord::Storage) == 8);
 
 // ---------------- Cond word ----------------
-// bit 63 INIT | 62 DESTROYED | 61 CLOCK_MONOTONIC | 47..32 waiters | 31..0 seq
+// bit 63 INIT | 62 DESTROYED | 61 CLOCK_MONOTONIC | 60..48 waiters | 47..0 seq
 struct CondWord {
     using Storage = std::uint64_t;
     static constexpr Storage kInit = 1ULL << 63;
     static constexpr Storage kDestroyed = 1ULL << 62;
     static constexpr Storage kClockMono = 1ULL << 61;
-    static constexpr unsigned kWaitersShift = 32;
-    static constexpr Storage kWaitersMask = 0xFFFFULL << kWaitersShift;
-    static constexpr Storage kSeqMask = 0xFFFFFFFFULL;
+    static constexpr unsigned kWaitersShift = 48;
+    static constexpr Storage kWaitersMask = 0x1FFFULL << kWaitersShift;
+    static constexpr Storage kSeqMask = 0xFFFFFFFFFFFFULL;
     static constexpr Storage kDestroyedWord = kInit | kDestroyed;
 
-    static constexpr Storage Make(bool mono, std::uint32_t waiters, std::uint32_t seq) noexcept {
-        Storage w = kInit | (static_cast<Storage>(waiters) << kWaitersShift) |
-                    (static_cast<Storage>(seq) & kSeqMask);
+    static constexpr Storage Make(bool mono, std::uint32_t waiters, std::uint64_t seq) noexcept {
+        Storage w = kInit | ((static_cast<Storage>(waiters) & 0x1FFFULL) << kWaitersShift) |
+                    (seq & kSeqMask);
         if (mono)
             w |= kClockMono;
         return w;
@@ -117,8 +119,8 @@ struct CondWord {
     static constexpr std::uint32_t Waiters(Storage w) noexcept {
         return static_cast<std::uint32_t>((w & kWaitersMask) >> kWaitersShift);
     }
-    static constexpr std::uint32_t Seq(Storage w) noexcept {
-        return static_cast<std::uint32_t>(w & kSeqMask);
+    static constexpr std::uint64_t Seq(Storage w) noexcept {
+        return w & kSeqMask;
     }
 };
 static_assert(sizeof(CondWord::Storage) == 8);

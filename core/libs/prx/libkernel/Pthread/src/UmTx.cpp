@@ -64,8 +64,24 @@ int UmutexLock(std::uint32_t* word, std::uint32_t tid, std::uint64_t deadline) n
                 return SyncWords::kSceOk;
             continue;
         }
-        if (owner == (tid & kUmutexOwnerMask))
-            return SyncWords::kSceEdeadlk;
+        if (owner == 0x20u)
+            return SyncWords::kSceEnotrecoverable;
+        if (owner == 0x10u) {
+            std::uint32_t expected = w;
+            const std::uint32_t want = (w & kUmutexContested) | (tid & kUmutexOwnerMask);
+            if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return SyncWords::kSceEownerdead;
+            continue;
+        }
+        if (owner == (tid & kUmutexOwnerMask)) {
+            // FreeBSD umutex: m_flags is the second 32-bit word. UMUTEX_ERROR_CHECK = 0x0002.
+            const auto* m = static_cast<const std::uint32_t*>(word);
+            const std::uint32_t flags = m[1];
+            if ((flags & 0x0002u) != 0)
+                return SyncWords::kSceEdeadlk;
+            // Normal mutex: self-relock waits (per FreeBSD spec).
+        }
         if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
             return SyncWords::kSceTimedOut;
         if ((w & kUmutexContested) == 0) {
@@ -165,8 +181,11 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             std::uint64_t deadline = FutexCore::kInfinite;
             if (uaddr) {
                 const auto* ts = static_cast<const KernelTimespec*>(uaddr);
-                if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL)
+                if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL) {
                     deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, false);
+                } else {
+                    return SyncWords::kSceEinval;
+                }
             }
             const std::uint64_t expect = ref.load(std::memory_order_acquire);
             if (expect != val)
@@ -183,8 +202,11 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         std::uint64_t deadline = FutexCore::kInfinite;
         if (uaddr) {
             const auto* ts = static_cast<const KernelTimespec*>(uaddr);
-            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL)
+            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL) {
                 deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, false);
+            } else {
+                return SyncWords::kSceEinval;
+            }
         }
         const std::uint32_t expect = ref.load(std::memory_order_acquire);
         if (expect != static_cast<std::uint32_t>(val))
@@ -194,15 +216,32 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         return SyncWords::kSceOk;
     }
     case kOpWake:
-    case kOpWakePrivate:
-    case kOpMutexWake: {
+    case kOpWakePrivate: {
         if (!obj)
             return SyncWords::kSceEinval;
         if (val == 0)
             return SyncWords::kSceOk;
-        const std::uint64_t wakeCount = std::min<std::uint64_t>(val, 1024ULL);
-        for (std::uint64_t i = 0; i < wakeCount; ++i)
+        for (std::uint64_t i = 0; i < val; ++i)
             FutexCore::WakeSingle(obj);
+        return SyncWords::kSceOk;
+    }
+    case kOpMutexWake: {
+        if (!obj)
+            return SyncWords::kSceEinval;
+        auto* w = static_cast<std::uint32_t*>(obj);
+        std::atomic_ref<std::uint32_t> ref(*w);
+        while (true) {
+            const std::uint32_t cur = ref.load(std::memory_order_acquire);
+            if ((cur & kUmutexOwnerMask) != 0)
+                break;
+            if ((cur & kUmutexContested) == 0)
+                break;
+            std::uint32_t expected = cur;
+            if (ref.compare_exchange_strong(expected, 0, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                break;
+        }
+        FutexCore::WakeSingle(obj);
         return SyncWords::kSceOk;
     }
     case kOpNwakePrivate: {
@@ -211,8 +250,7 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         if (val == 0)
             return SyncWords::kSceOk;
         auto* addresses = static_cast<void* const*>(obj);
-        const std::uint64_t count = std::min<std::uint64_t>(val, 1024ULL);
-        for (std::uint64_t i = 0; i < count; ++i) {
+        for (std::uint64_t i = 0; i < val; ++i) {
             if (addresses[i])
                 FutexCore::WakeAll(addresses[i]);
         }
@@ -226,8 +264,11 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         std::uint64_t deadline = FutexCore::kInfinite;
         if (uaddr) {
             const auto* ts = static_cast<const KernelTimespec*>(uaddr);
-            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL)
+            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL) {
                 deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, false);
+            } else {
+                return SyncWords::kSceEinval;
+            }
         }
         return UmutexLock(static_cast<std::uint32_t*>(obj), tid, deadline);
     }
@@ -237,8 +278,11 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         std::uint64_t deadline = FutexCore::kInfinite;
         if (uaddr) {
             const auto* ts = static_cast<const KernelTimespec*>(uaddr);
-            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL)
+            if (ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000LL) {
                 deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, false);
+            } else {
+                return SyncWords::kSceEinval;
+            }
         }
         // Wait-only: sleep until mutex is available without acquiring it.
         auto* w = static_cast<std::uint32_t*>(obj);
