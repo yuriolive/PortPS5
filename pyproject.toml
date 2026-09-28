@@ -24,11 +24,17 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "PIE", "RUF", "ISC", "FURB", "PLW1510"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "PIE", "RUF", "ISC", "FURB", "PLW1510", "D100", "D101", "D102", "D103", "D104", "D105", "D107"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["check_comments", "progress"]
+
+# Test methods (test_*) are self-describing by name; helper functions,
+# modules, classes and packages still require docstrings everywhere.
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D102"]
+"core/**/tests/**" = ["D102"]
 
 [tool.ruff.format]
 quote-style = "double"

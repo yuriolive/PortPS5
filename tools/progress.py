@@ -1,10 +1,9 @@
-# tools/progress.py
-# PortPS5 implementation-progress reporter, ported from AnyPS5 upstream/main.
-# Scans core/libs/prx for APS5_VABI definitions (done = no NotImplemented_nid_no_patch
-# in body) and the RDNA decoder opcode enum vs tools/rdna_isa.txt, then renders
-# progress.svg/.json, shields-style badges and an HTML summary. Outputs drive the
-# GitHub Pages site (workflows/progress.yml) and per-PR deltas (progress-report.yml
-# + progress-comment.yml). No game data needed; static source scan only.
+"""PortPS5 implementation-progress reporter (see tools/progress.py header).
+
+Scans core/libs/prx for APS5_VABI definitions and the RDNA decoder opcode
+enum against tools/rdna_isa.txt, rendering progress.json/svg, badges and HTML.
+"""
+
 import argparse
 import json
 import os
@@ -46,6 +45,7 @@ DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#1f6feb", "#0d1117", "#ffffff
 
 
 def body_end(text, start):
+    """Return the index of the closing brace matching the brace at *start*."""
     depth = 0
     for i in range(start, len(text)):
         if text[i] == "{":
@@ -57,16 +57,36 @@ def body_end(text, start):
     return len(text)
 
 
+def _code_only(text):
+    """Return *text* with // and /* */ comments removed.
+
+    The stub heuristic below must react to executable calls only: a STUB
+    mention inside a comment (or a disabled block) must not flip an
+    implemented export back to todo.
+    """
+    return re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.DOTALL)
+
+
 def scan_library(path):
+    """Scan one prx library directory for implemented vs stub exports.
+
+    A definition counts as done unless its body calls STUB (outside comments);
+    names shared by both sets resolve to done.
+    """
     done, todo = set(), set()
     for source in path.rglob("*.cpp"):
+        # Test doubles (e.g. APS5_VABI callbacks in tests/) are not shipped
+        # library functions: counting them inflates totals and creates false
+        # deltas whenever tests change.
+        if "tests" in source.relative_to(path).parts:
+            continue
         text = source.read_text(errors="ignore")
         for match in DEFINITION.finditer(text):
             name = match.group(1)
             if name.endswith("_nid_no_patch"):
                 continue
             body = text[match.end() - 1 : body_end(text, match.end() - 1)]
-            (todo if STUB in body else done).add(name)
+            (todo if STUB in _code_only(body) else done).add(name)
     todo -= done
     return {
         "name": path.name,
@@ -79,6 +99,7 @@ def scan_library(path):
 
 
 def summarize(groups):
+    """Aggregate per-group counts into done/total/percent plus the groups."""
     done = sum(g["done"] for g in groups)
     total = done + sum(g["todo"] for g in groups)
     return {
@@ -90,14 +111,22 @@ def summarize(groups):
 
 
 def collect_libraries(prx_dir=PRX):
+    """Collect the implementation summary for every library under *prx_dir*."""
     return summarize([scan_library(p) for p in sorted(prx_dir.iterdir()) if p.is_dir()])
 
 
 def camel(name):
+    """Convert an ISA UPPER_SNAKE name to decoder CamelCase (TEST_ADD -> TestAdd)."""
     return "".join(part.capitalize() for part in name.split("_"))
 
 
 def collect_shaders(opcodes_path=OPCODES, isa_path=ISA):
+    """Collect decoder coverage of the ISA list, grouped by encoding.
+
+    An ISA entry counts as supported when the decoder enum (modulo aliases)
+    names it; FLAT_ entries additionally cover their GLOBAL_/SCRATCH_ twins.
+    Opcodes the decoder knows but the ISA lacks are reported as extra.
+    """
     isa = {}
     for line in isa_path.read_text().splitlines():
         if line and not line.startswith("#"):
@@ -145,11 +174,13 @@ def collect_shaders(opcodes_path=OPCODES, isa_path=ISA):
 
 
 def worst_ratio(row, side):
+    """Return the worst squarify aspect ratio for *row* at the given side."""
     area = sum(row)
     return max(max(side * side * r / area**2, area**2 / (side * side * r)) for r in row)
 
 
 def place(row, x, y, w, h, rects):
+    """Lay *row* out along the short side of the (x, y, w, h) remainder."""
     thickness = sum(row) / min(w, h)
     offset = 0
     for area in row:
@@ -163,6 +194,7 @@ def place(row, x, y, w, h, rects):
 
 
 def squarify(values, x, y, w, h):
+    """Partition a rectangle into value-proportional cells (squarified treemap)."""
     total = sum(values)
     areas = [v * w * h / total for v in values]
     rects, row = [], []
@@ -179,6 +211,7 @@ def squarify(values, x, y, w, h):
 
 
 def cells(count, x, y, w, h):
+    """Split a group rectangle into *count* per-function cell rects."""
     if not count:
         return []
     rows = max(1, min(count, round((count * h / w) ** 0.5)))
@@ -191,6 +224,7 @@ def cells(count, x, y, w, h):
 
 
 def rect(x, y, w, h, color, stroke=0.5):
+    """Render one SVG rectangle element."""
     return (
         f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
         f'fill="{color}" stroke="{BORDER}" stroke-width="{stroke}"/>'
@@ -198,6 +232,7 @@ def rect(x, y, w, h, color, stroke=0.5):
 
 
 def text(x, y, value, size):
+    """Render one stroked SVG text label (readable over cell colors)."""
     return (
         f'<text x="{x:.2f}" y="{y:.2f}" font-family="sans-serif" font-size="{size}" fill="{TEXT}" '
         f'stroke="{BORDER}" stroke-width="3" paint-order="stroke">{escape(value)}</text>'
@@ -205,6 +240,7 @@ def text(x, y, value, size):
 
 
 def treemap(title, data, left):
+    """Render one treemap panel (title + per-group cells) as SVG fragments."""
     groups = sorted(
         (g for g in data["groups"] if g["done"] + g["todo"]), key=lambda g: -(g["done"] + g["todo"])
     )
@@ -233,6 +269,7 @@ def treemap(title, data, left):
 
 
 def render(libraries, shaders):
+    """Render the two-panel progress.svg document."""
     width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
@@ -245,6 +282,7 @@ def render(libraries, shaders):
 
 
 def badge(label, data):
+    """Render a shields-style SVG badge colored by completion percent."""
     percent = data["percent"]
     color = (
         "#4c1"
@@ -267,6 +305,7 @@ def badge(label, data):
 
 
 def table(heading, column, data):
+    """Render one HTML coverage table with a totals row."""
     rows = [
         f"<h2>{heading}</h2>",
         "<table>",
@@ -286,6 +325,7 @@ def table(heading, column, data):
 
 
 def summary(libraries, shaders):
+    """Render the index.html summary page (panels, tables, methodology notes)."""
     extra = ", ".join(f"<code>{escape(o)}</code>" for o in shaders["extra"])
     return (
         "\n".join(
@@ -324,10 +364,12 @@ def summary(libraries, shaders):
 
 
 def names(data, state):
+    """Return the {(group, name)} set for one done/todo state."""
     return {(g["name"], n) for g in data["groups"] for n in g.get(f"{state}_names", [])}
 
 
 def details(icon, title, column, items):
+    """Render a collapsible per-item markdown table (capped at REPORT_ROWS)."""
     if not items:
         return []
     rows = [
@@ -342,6 +384,7 @@ def details(icon, title, column, items):
 
 
 def compare(title, column, unit, base, head):
+    """Diff two snapshots into implemented/declared/regressed/removed markdown lines."""
     base_done, head_done = names(base, "done"), names(head, "done")
     base_all, head_all = base_done | names(base, "todo"), head_done | names(head, "todo")
     implemented, declared = head_done - base_done, head_all - base_all - head_done
@@ -368,6 +411,7 @@ def compare(title, column, unit, base, head):
 
 
 def report(base, head):
+    """Render the full base-vs-head markdown report (libraries + shaders)."""
     lines = compare(
         "System libraries", "Library", "functions", base["libraries"], head["libraries"]
     )

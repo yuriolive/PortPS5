@@ -10,11 +10,13 @@ from test_optional_plt import fixture
 
 
 def subsystem(pe):
+    """Read the PE optional-header subsystem word."""
     pe_offset = struct.unpack_from("<I", pe, 0x3C)[0]
     return struct.unpack_from("<H", pe, pe_offset + 24 + 68)[0]
 
 
 def main():
+    """Verify default CUI, --windows-gui GUI, and flag-without---windows rejection."""
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-gui-") as directory:
         work = Path(directory)

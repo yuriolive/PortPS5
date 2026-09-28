@@ -11,6 +11,7 @@ PT_SCE_VERSION = 0x6FFFFF01
 
 
 def fixture():
+    """Build a synthetic x86-64 ELF with mixed-alignment PT_LOAD segments."""
     image = bytearray(0x8000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, 0x4000, 64, 0, 0, 64, 56, 5, 64, 0, 0)
@@ -38,6 +39,7 @@ def fixture():
 
 
 def loads(elf):
+    """Parse an ELF into (type, flags, offset, vaddr, filesz, memsz, align) tuples."""
     (phoff,) = struct.unpack_from("<Q", elf, 0x20)
     phentsize, phnum = struct.unpack_from("<HH", elf, 0x36)
     headers = [
@@ -47,6 +49,7 @@ def loads(elf):
 
 
 def main():
+    """Verify the first PT_LOAD aligns to the largest segment alignment."""
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-align-") as directory:
         source = Path(directory) / "input.elf"

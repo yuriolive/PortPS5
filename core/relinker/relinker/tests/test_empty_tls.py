@@ -11,6 +11,7 @@ from test_optional_plt import fixture
 
 
 def main():
+    """Run empty-TLS conversion cases through the relinker (and execute on Windows)."""
     relinker = Path(sys.argv[1]).resolve()
     cases = [
         ("empty", 0, 0, False, None),

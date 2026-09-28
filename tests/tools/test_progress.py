@@ -62,6 +62,8 @@ def _names(data):
 
 
 class ProgressRootTests(unittest.TestCase):
+    """--root attribution: libraries, opcodes and ISA follow the selected root."""
+
     def test_libraries_measured_from_selected_root(self):
         # One implemented + one stub export in the synthetic root.
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,7 +142,54 @@ def _sample():
     return progress.summarize(groups)
 
 
+def _write_lib_with_edge_cases(lib):
+    lib.mkdir(parents=True)
+    (lib / "Export.cpp").write_text(
+        "int APS5_VABI sceRealDone(void* p) noexcept {\n"
+        "    return 0;\n"
+        "}\n"
+        "int APS5_VABI sceRealStub(void* p) noexcept {\n"
+        "    NotImplemented_nid_no_patch(__func__);\n"
+        "    return 0;\n"
+        "}\n"
+        "// sceMentionedOnly counts as done: the STUB token here is a comment.\n"
+        "// See NotImplemented_nid_no_patch for the unimplemented path.\n"
+        "int APS5_VABI sceMentionedOnly(void* p) noexcept {\n"
+        "    return 1;\n"
+        "}\n"
+    )
+    tests = lib / "tests"
+    tests.mkdir()
+    (tests / "Helper.cpp").write_text(
+        "int APS5_VABI testDouble(void* p) noexcept {\n    return 0;\n}\n"
+    )
+
+
+class ProgressScanTests(unittest.TestCase):
+    """Stub-heuristic edges: comment-only STUB mentions and tests/ exclusion."""
+
+    def test_comment_stub_mention_counts_as_done(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / "libSceEdge"
+            _write_lib_with_edge_cases(lib)
+            result = progress.scan_library(lib)
+            self.assertIn("sceMentionedOnly", result["done_names"])
+            self.assertIn("sceRealStub", result["todo_names"])
+            self.assertIn("sceRealDone", result["done_names"])
+
+    def test_tests_directory_excluded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp) / "libSceEdge"
+            _write_lib_with_edge_cases(lib)
+            result = progress.scan_library(lib)
+            self.assertNotIn("testDouble", result["done_names"])
+            self.assertNotIn("testDouble", result["todo_names"])
+            self.assertEqual(result["done"] + result["todo"], 3)
+
+
 class ProgressRenderTests(unittest.TestCase):
+    """Pure render/report helpers: badges, tables, treemap, compare output."""
+
     def test_badge_color_thresholds(self):
         # >=90 green, >=60 light-green, >=30 yellow, else orange; label shown.
         low = {"percent": 12.5, "done": 1, "total": 8}
@@ -234,6 +283,8 @@ class ProgressRenderTests(unittest.TestCase):
 
 
 class ProgressMainTests(unittest.TestCase):
+    """CLI entry: artifact rendering, --compare, and missing-ISA fallback."""
+
     def test_main_renders_all_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _write_tree(tmp, _ISA_WITH_TESTADD)

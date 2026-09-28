@@ -1,3 +1,10 @@
+"""Driver for the guest exception-runtime tests (host-side, not a unit).
+
+Builds the libc exception runtime and the ExceptionRuntime.cpp guest suite at
+-O0 and -O2, then executes the result. Invoked with --prx pointing at the
+built libc; failures raise through subprocess check.
+"""
+
 import argparse
 import base64
 import hashlib
@@ -15,6 +22,7 @@ arguments = parser.parse_args()
 
 
 def nid(symbol):
+    """Compute the Sony NID for *symbol* (SHA-1 based, see nid_patcher)."""
     digest = hashlib.sha1(
         symbol.encode() + bytes.fromhex("518d64a635ded8c1e6b039b1c3e55230")
     ).digest()
@@ -22,6 +30,7 @@ def nid(symbol):
 
 
 def run(*args):
+    """Run a build or test command, raising on failure."""
     subprocess.run([str(arg) for arg in args], check=True)
 
 

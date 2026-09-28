@@ -1,3 +1,5 @@
+"""Validate TLS function coverage through ELF conversion and PE execution."""
+
 import os
 import struct
 import subprocess
@@ -11,6 +13,7 @@ TLS_LOAD = bytes.fromhex("66 66 66 64 48 8b 04 25 00 00 00 00")
 
 
 def make_image(transfer, metadata, extent=None):
+    """Build a synthetic ELF carrying TLS transfer/metadata blocks."""
     image = fixture()
     image.extend(b"\x90" * 0x1000)
     struct.pack_into("<Q", image, 24, 0x1200)
@@ -69,6 +72,7 @@ def make_image(transfer, metadata, extent=None):
 
 
 def pe_bytes_at(pe, rva, size):
+    """Read *size* bytes at *rva* by walking the PE section table."""
     header = struct.unpack_from("<I", pe, 0x3C)[0]
     count = struct.unpack_from("<H", pe, header + 6)[0]
     sections = header + 24 + struct.unpack_from("<H", pe, header + 20)[0]
@@ -81,6 +85,7 @@ def pe_bytes_at(pe, rva, size):
 
 
 def main():
+    """Run TLS coverage cases through the relinker (and execute on Windows)."""
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-tls-coverage-") as directory:
         work = Path(directory)

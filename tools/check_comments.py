@@ -868,6 +868,10 @@ def format_violation(v, github_format=False):
 
 
 def main(argv=None):
+    """Run the comment policy check over the PR (or --all/--paths) scope.
+
+    Returns EXIT_OK (0), EXIT_VIOLATION (1) or EXIT_ERROR (2).
+    """
     parser = argparse.ArgumentParser(
         description="PortPS5 code comment and best-practice linter.",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 def fixture(extra_tags=()):
+    """Build a synthetic ELF with a relocated function-pointer call."""
     image = bytearray(0x1000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, 0x200, 64, 0, 0, 64, 56, 2, 64, 0, 0)
@@ -38,6 +39,7 @@ def fixture(extra_tags=()):
 
 
 def main():
+    """Run optional-PLT conversion cases (present and absent PLT)."""
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-plt-") as directory:
         work = Path(directory)
