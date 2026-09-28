@@ -1,7 +1,8 @@
 // core/shader/recompiler/tests/RecompilerFixesTests.cpp
 // Unit tests for shader recompiler Milestone 1 fixes:
 //   - v_movrels/v_movreld bounded select-chain lowering over the VGPR register file with VGPR[0] fallback
-//   - SharedMemoryBarrierInserter: wave-LDS barriers in wave64 compute programs (uniform and reconvergence points)
+//   - SharedMemoryBarrierInserter: wave-LDS barriers in wave64 compute programs (uniform blocks,
+//     reconvergence merge blocks for divergent writes, uniform headers for divergent reads)
 //   - SharedAtomicIAdd32 preservation: preserves workgroup synchronization effects even with zero addend
 //   - sSaveexec: instruction order and 32-bit bitwise typing
 //
@@ -611,7 +612,15 @@ TEST(RecompilerFixesTests, DivergentLoopWithoutMergeBlockEmitsDirectBarrier) {
     EXPECT_TRUE(loopBodyHasBarrier);
 }
 
-TEST(RecompilerFixesTests, DivergentRegionLdsReadTriggersBarrierAtReconvergence) {
+TEST(RecompilerFixesTests, DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader) {
+    // Behavioral invariant: an LDS read inside a lane-divergent region must be synchronized
+    // BEFORE it executes. A merge-block barrier would run after the read and order nothing
+    // for it, so the pass must place the barrier at the end of the outermost uniform header
+    // (the block holding the divergent branch), which every lane executes before diverging.
+    // Preconditions: entry (0) holds a divergent ExecZero branch over divBlock (1) with
+    // mergeBlock (2); divBlock holds a single LoadSharedU32 and no LDS write.
+    // Expected: exactly one Barrier, located in the uniform header (entry); divBlock and
+    // mergeBlock hold no Barrier (a read-only region needs no reconvergence barrier).
     IrProgram program;
     IrBlock& entry = program.CreateBlock();
     IrBlock& divBlock = program.CreateBlock();
@@ -654,11 +663,87 @@ TEST(RecompilerFixesTests, DivergentRegionLdsReadTriggersBarrierAtReconvergence)
     SharedMemoryBarrierInserter inserter;
     const auto stats = inserter.Insert(program, 64u);
 
-    // LoadSharedU32 in divergent block must cause a barrier at the uniform reconvergence merge block
+    // The pre-read barrier at the uniform header is the only barrier needed here.
     EXPECT_EQ(stats.insertedBarriers, 1u);
     for (IrValue* inst : divBlock.Instructions()) {
         EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
     }
+    for (IrValue* inst : mergeBlock.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+
+    // The header barrier must be the last instruction: it executes uniformly after the
+    // header's own work and before any divergent successor, hence before the read.
+    ASSERT_FALSE(entry.Instructions().empty());
+    EXPECT_EQ(entry.Instructions().back()->Opcode(), IrOpcode::Barrier);
+}
+
+TEST(RecompilerFixesTests, DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers) {
+    // Behavioral invariant: a divergent block holding an LDS write followed by an LDS read
+    // needs both sides of the maximal deadlock-free ordering: a pre-region barrier at the
+    // uniform header (before the read) and a reconvergence barrier at the merge block
+    // (after the write, for post-region readers). No Barrier may appear inside the
+    // divergent block itself (it would deadlock lane-divergent OpControlBarrier execution).
+    // Preconditions: entry (0) branches divergently over divBlock (1) with mergeBlock (2);
+    // divBlock holds WriteSharedU32 followed by LoadSharedU32.
+    // Expected: exactly two Barriers (header + merge), none in divBlock.
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& divBlock = program.CreateBlock();
+    IrBlock& mergeBlock = program.CreateBlock();
+
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &divBlock, &mergeBlock};
+
+    BlockInfo entryInfo{};
+    entryInfo.id = 0u;
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::VccNonZero;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 2u;
+    entryInfo.terminator.mergeBlock = 2u;
+
+    BlockInfo divInfo{};
+    divInfo.id = 1u;
+    divInfo.terminator.kind = TerminatorKind::Branch;
+    divInfo.terminator.trueBlock = 2u;
+
+    BlockInfo mergeInfo{};
+    mergeInfo.id = 2u;
+    mergeInfo.terminator.kind = TerminatorKind::Return;
+
+    program.Metadata().blockInfo = {entryInfo, divInfo, mergeInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(divBlock);
+
+    IrValue& addr = ir.Constant(16u);
+    IrValue& val = ir.Constant(42u);
+    IrValue& writeOp = program.CreateValue(IrOpcode::WriteSharedU32, IrType::Void);
+    writeOp.AddArgument(&addr);
+    writeOp.AddArgument(&val);
+    divBlock.AppendInstruction(&writeOp);
+
+    IrValue& readOp = program.CreateValue(IrOpcode::LoadSharedU32, IrType::U32);
+    readOp.AddArgument(&addr);
+    divBlock.AppendInstruction(&readOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 2u);
+    for (IrValue* inst : divBlock.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+
+    bool headerHasBarrier = false;
+    for (IrValue* inst : entry.Instructions()) {
+        if (inst && inst->Opcode() == IrOpcode::Barrier) {
+            headerHasBarrier = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(headerHasBarrier);
 
     bool mergeHasBarrier = false;
     for (IrValue* inst : mergeBlock.Instructions()) {

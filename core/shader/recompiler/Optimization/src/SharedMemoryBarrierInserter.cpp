@@ -3,6 +3,18 @@
 // wave-LDS barriers so writes from one subgroup are ordered before subsequent reads.
 // Barriers are inserted in uniform blocks or placed at uniform reconvergence points (merge blocks)
 // to prevent deadlocks in lane-divergent control flow.
+//
+// Ordering model (all placements are dynamically uniform, so no OpControlBarrier deadlock):
+//   - Divergent LDS write  -> barrier at the start of the region's merge block.
+//     Orders the write before every post-reconvergence LDS read.
+//   - Divergent LDS read   -> barrier at the end of the region's outermost uniform header
+//     (the block holding the divergent branch, which every lane executes before diverging).
+//     Orders all pre-region LDS writes before the divergent read. A merge-block barrier
+//     alone would execute AFTER the divergent read and provide no ordering for it.
+// Limitation: a divergent write followed by a divergent read inside the SAME region with no
+// intervening uniform point cannot be ordered by any workgroup barrier (no uniform point
+// exists between them); cross-lane communication there requires uniform control flow, which
+// is the M3 structurizer's scope (see docs/spec/shader-recompiler.md open questions).
 #include "Optimization/SharedMemoryBarrierInserter.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/IrOpcode.hpp"
@@ -65,6 +77,9 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
 
     // Analyze divergence from metadata if available
     std::unordered_map<std::uint32_t, std::uint32_t> divergentToMergeBlock;
+    // Direct header of each divergent block: the CFG id of the block holding the divergent
+    // branch whose region contains the key block (innermost region wins for nesting).
+    std::unordered_map<std::uint32_t, std::uint32_t> divergentToHeader;
     if (!blockInfoList.empty()) {
         std::unordered_map<std::uint32_t, const BlockInfo*> infoMap;
         for (const auto& info : blockInfoList) {
@@ -98,6 +113,7 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
                     // Nested divergent regions: inner branches overwrite outer merge mapping
                     // so that LDS writes are synchronized at the nearest/innermost reconvergence.
                     divergentToMergeBlock[curr] = mergeId;
+                    divergentToHeader[curr] = info.id;
 
                     if (visited.insert(curr).second) {
                         auto it = infoMap.find(curr);
@@ -122,6 +138,31 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
     }
 
     std::unordered_set<std::uint32_t> reconvergenceNeedingBarrier;
+    // Headers needing a pre-region barrier: every lane executes the divergent header uniformly
+    // before diverging, so a barrier at its end is a safe uniform point that executes BEFORE
+    // any divergent LDS read in the region (ordering pre-region writes before the read).
+    std::unordered_set<std::uint32_t> headersNeedingBarrier;
+
+    // Walk from a divergent block outward through nested regions to the outermost header whose
+    // own block is uniform. Returns InvalidControlFlowId when no safe uniform header exists
+    // (e.g. self-loop region); callers then skip the pre-read barrier (documented limitation).
+    const auto findOutermostUniformHeader = [&](std::uint32_t divCfgId) -> std::uint32_t {
+        std::unordered_set<std::uint32_t> seen;
+        std::uint32_t cursor = divCfgId;
+        while (divergentToHeader.contains(cursor) && seen.insert(cursor).second) {
+            const std::uint32_t candidate = divergentToHeader[cursor];
+            if (candidate == InvalidControlFlowId) {
+                return InvalidControlFlowId;
+            }
+            // Header inside another divergent region: keep walking outward.
+            if (divergentToMergeBlock.contains(candidate)) {
+                cursor = candidate;
+                continue;
+            }
+            return candidate;
+        }
+        return InvalidControlFlowId;
+    };
 
     // Scan all blocks in the program
     const std::size_t totalBlocks = blockOrder.empty() ? program.Blocks().size() : blockOrder.size();
@@ -167,13 +208,14 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
                     ++stats.insertedBarriers;
                 }
             } else if (access == SharedAccess::Read) {
-                // If this LDS read occurs in a divergent region, ensure prior divergent LDS writes
-                // that reconverge at mergeId are synchronized before this read at a safe uniform point
-                // (e.g. at the reconvergence point of the divergent region containing the write).
+                // An LDS read inside a divergent region needs synchronization BEFORE it executes:
+                // a merge-block barrier would run after the read and order nothing for it.
+                // Request a barrier at the end of the outermost uniform header dominating the
+                // read instead; it executes uniformly before the region diverges.
                 if (isDivergent) {
-                    const std::uint32_t mergeId = divIt->second;
-                    if (mergeId != InvalidControlFlowId && blockMap.contains(mergeId)) {
-                        reconvergenceNeedingBarrier.insert(mergeId);
+                    const std::uint32_t headerId = findOutermostUniformHeader(blockCfgId);
+                    if (headerId != InvalidControlFlowId && blockMap.contains(headerId)) {
+                        headersNeedingBarrier.insert(headerId);
                     }
                 }
             }
@@ -210,6 +252,34 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
             } else {
                 mergeBlock.AppendInstruction(&barrier);
             }
+            ++stats.insertedBarriers;
+        }
+    }
+
+    // Insert barriers at the end of uniform headers preceding divergent regions that contain
+    // LDS reads. Appending puts the barrier after the header's existing instructions but still
+    // before any successor executes; the header runs uniformly (lanes diverge only at its
+    // branch), so the barrier is dynamically uniform and orders pre-region LDS writes before
+    // the divergent read. A header that already holds a Barrier (e.g. after a uniform LDS
+    // write) needs no extra one: that barrier already executes before the region.
+    for (const std::uint32_t headerId : headersNeedingBarrier) {
+        auto it = blockMap.find(headerId);
+        if (it == blockMap.end() || !it->second) {
+            continue;
+        }
+        IrBlock& headerBlock = *it->second;
+
+        bool hasBarrier = false;
+        for (IrValue* val : headerBlock.Instructions()) {
+            if (val && val->Opcode() == IrOpcode::Barrier) {
+                hasBarrier = true;
+                break;
+            }
+        }
+
+        if (!hasBarrier) {
+            IrValue& barrier = program.CreateValue(IrOpcode::Barrier, IrType::Void);
+            headerBlock.AppendInstruction(&barrier);
             ++stats.insertedBarriers;
         }
     }

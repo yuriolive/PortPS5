@@ -165,7 +165,10 @@ Other facts:
   - [ ] Key stability: the same request gives the same `SourceKey` and `VariantKey` ([pipeline-cache.md](pipeline-cache.md#target-design)) across processes.
   - [ ] Idiom analysis, positive and negative.
   - [ ] Emission of BDA V#/SRT loads, user-data-buffer SGPR reads and the heap probe (§Target design 7).
-  - [x] Regression tests for saveexec `(vcc, vcc)`, atomic-zero, `v_movrels` and wave-LDS scope (`RecompilerFixesTests`).
+  - [x] Regression tests for saveexec `(vcc, vcc)`, atomic-zero, `v_movrels` and wave-LDS scope (`RecompilerFixesTests`),
+    including divergent-write barriers at reconvergence merge blocks and divergent-read barriers at
+    uniform region headers (`DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader`,
+    `DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers`).
   - [ ] Death tests (`EXPECT_DEATH`): verify that unresolvable opcodes trigger an immediate logging abort via `Unsupported()` without memory corruption.
 - **Ported Ecosystem Test Suites:**
   - [ ] **KytyPS5 `ShaderRecompilerComputeTests`:** comprehensive RDNA2 instruction lowering, resource descriptor bindings, texture sampling modes, and atomic memory operations.
@@ -206,3 +209,9 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
 3. Does the M1 intro-cinematic stage require bindless tables? PR #5's `29b4601` message says so *(unverified)*.
 4. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
 5. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
+6. Intra-divergent-region cross-lane LDS ordering: `SharedMemoryBarrierInserter` orders divergent writes
+   at reconvergence merges and divergent reads at uniform headers, but a divergent write followed by a
+   divergent read in the same region with no intervening uniform point cannot be ordered by any workgroup
+   barrier (no such barrier can execute both after the write and before the read while staying dynamically
+   uniform). Cross-lane communication there requires uniform control flow; restructuring is M3 structurizer
+   scope. Loop-carried LDS ordering across iterations of a divergently-controlled loop is likewise deferred.
