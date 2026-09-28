@@ -37,18 +37,32 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
         return stats;
     }
 
-    // Build block id -> IrBlock* mapping
+    const auto& blockInfoList = program.Metadata().blockInfo;
+    const auto& blockOrder = program.BlockOrder();
+
+    // Build CFG block id -> IrBlock* mapping using blockInfo if available, otherwise IrBlock::Id()
     std::unordered_map<std::uint32_t, IrBlock*> blockMap;
-    for (const auto& blockPtr : program.Blocks()) {
-        if (blockPtr) {
-            blockMap[blockPtr->Id()] = blockPtr.get();
+    std::unordered_map<const IrBlock*, std::uint32_t> blockToCfgId;
+
+    if (!blockInfoList.empty() && blockOrder.size() == blockInfoList.size()) {
+        for (std::size_t i = 0; i < blockOrder.size(); ++i) {
+            if (blockOrder[i]) {
+                const std::uint32_t cfgId = blockInfoList[i].id;
+                blockMap[cfgId] = blockOrder[i];
+                blockToCfgId[blockOrder[i]] = cfgId;
+            }
+        }
+    } else {
+        for (const auto& blockPtr : program.Blocks()) {
+            if (blockPtr) {
+                blockMap[blockPtr->Id()] = blockPtr.get();
+                blockToCfgId[blockPtr.get()] = blockPtr->Id();
+            }
         }
     }
 
     // Analyze divergence from metadata if available
     std::unordered_map<std::uint32_t, std::uint32_t> divergentToMergeBlock;
-    const auto& blockInfoList = program.Metadata().blockInfo;
-
     if (!blockInfoList.empty()) {
         std::unordered_map<std::uint32_t, const BlockInfo*> infoMap;
         for (const auto& info : blockInfoList) {
@@ -96,14 +110,17 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
     std::unordered_set<std::uint32_t> reconvergenceNeedingBarrier;
 
     // Scan all blocks in the program
-    for (const auto& blockPtr : program.Blocks()) {
+    const std::size_t totalBlocks = blockOrder.empty() ? program.Blocks().size() : blockOrder.size();
+    for (std::size_t bIdx = 0; bIdx < totalBlocks; ++bIdx) {
+        IrBlock* blockPtr = blockOrder.empty() ? program.Blocks()[bIdx].get() : blockOrder[bIdx];
         if (!blockPtr) {
             continue;
         }
         IrBlock& block = *blockPtr;
-        const std::uint32_t blockId = block.Id();
+        const auto cfgIt = blockToCfgId.find(&block);
+        const std::uint32_t blockCfgId = (cfgIt != blockToCfgId.end()) ? cfgIt->second : block.Id();
 
-        const auto divIt = divergentToMergeBlock.find(blockId);
+        const auto divIt = divergentToMergeBlock.find(blockCfgId);
         const bool isDivergent = (divIt != divergentToMergeBlock.end());
 
         // Collect instructions first to avoid iterator invalidation during mutation

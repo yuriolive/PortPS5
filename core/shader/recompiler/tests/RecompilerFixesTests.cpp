@@ -83,23 +83,29 @@ TEST(RecompilerFixesTests, DivergentBlockLdsWritePlacesBarrierAtReconvergence) {
     IrBlock& divBlock = program.CreateBlock();
     IrBlock& mergeBlock = program.CreateBlock();
     program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &divBlock, &mergeBlock};
 
-    // Set up CFG block info in metadata: entry has a divergent branch to divBlock and mergeBlock, with mergeBlock as merge.
+    // Set up CFG block info in metadata with CFG IDs distinct/shifted from physical IrBlock::Id().
+    // For example, CFG block IDs: divBlock is CFG 0, mergeBlock is CFG 1, and synthetic entry is CFG 2 (entryBlockId).
+    constexpr std::uint32_t kCfgDivId = 0u;
+    constexpr std::uint32_t kCfgMergeId = 1u;
+    constexpr std::uint32_t kCfgEntryId = 2u;
+
     BlockInfo entryInfo{};
-    entryInfo.id = entry.Id();
+    entryInfo.id = kCfgEntryId;
     entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
     entryInfo.terminator.condition = BranchCondition::ExecZero; // divergent condition
-    entryInfo.terminator.trueBlock = divBlock.Id();
-    entryInfo.terminator.falseBlock = mergeBlock.Id();
-    entryInfo.terminator.mergeBlock = mergeBlock.Id();
+    entryInfo.terminator.trueBlock = kCfgDivId;
+    entryInfo.terminator.falseBlock = kCfgMergeId;
+    entryInfo.terminator.mergeBlock = kCfgMergeId;
 
     BlockInfo divInfo{};
-    divInfo.id = divBlock.Id();
+    divInfo.id = kCfgDivId;
     divInfo.terminator.kind = TerminatorKind::Branch;
-    divInfo.terminator.trueBlock = mergeBlock.Id();
+    divInfo.terminator.trueBlock = kCfgMergeId;
 
     BlockInfo mergeInfo{};
-    mergeInfo.id = mergeBlock.Id();
+    mergeInfo.id = kCfgMergeId;
     mergeInfo.terminator.kind = TerminatorKind::Return;
 
     program.Metadata().blockInfo = {entryInfo, divInfo, mergeInfo};
