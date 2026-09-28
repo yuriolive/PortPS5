@@ -447,8 +447,9 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
     case kOpCvWait: {
         if (!obj || !uaddr)
             return SyncWords::kSceEinval;
-        constexpr std::uint64_t kCvWaitAbstime = 0x01;
-        constexpr std::uint64_t kCvWaitClockid = 0x02;
+        // FreeBSD sys/umtx.h: CVWAIT_ABSTIME = 0x02, CVWAIT_CLOCKID = 0x04
+        constexpr std::uint64_t kCvWaitAbstime = 0x02;
+        constexpr std::uint64_t kCvWaitClockid = 0x04;
 
         auto* cvWord = static_cast<std::uint32_t*>(obj);
         auto* mutexWord = static_cast<std::uint32_t*>(uaddr);

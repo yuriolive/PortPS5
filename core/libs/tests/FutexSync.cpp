@@ -489,14 +489,14 @@ static void TestUmtx() {
     }
     {
         // MUTEX trylock/lock/unlock over the 32-bit owner word.
-        alignas(4) std::uint32_t m = 0;
-        REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_OK);
-        REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_EBUSY);
-        REQUIRE(_umtx_op_nid_postfix(&m, 6, 0, nullptr, nullptr) == SCE_OK);
+        alignas(4) std::uint32_t m[4] = {0, 0, 0, 0};
+        REQUIRE(_umtx_op_nid_postfix(m, 4, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(m, 4, 0, nullptr, nullptr) == SCE_EBUSY);
+        REQUIRE(_umtx_op_nid_postfix(m, 6, 0, nullptr, nullptr) == SCE_OK);
 
         // Op 5: UMTX_OP_MUTEX_LOCK locks free mutex; unlocked via op 6.
-        REQUIRE(_umtx_op_nid_postfix(&m, 5, 0, nullptr, nullptr) == SCE_OK);
-        REQUIRE(_umtx_op_nid_postfix(&m, 6, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(m, 5, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(m, 6, 0, nullptr, nullptr) == SCE_OK);
 
         // Op 17: UMTX_OP_MUTEX_WAIT wait-only path.
         // Mutex is unlocked (0): returns SCE_OK immediately without acquiring ownership.
@@ -529,7 +529,7 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(&raw_word, 1, 0, nullptr, nullptr) == SCE_OK);
 
         // Unknown op -> EINVAL.
-        REQUIRE(_umtx_op_nid_postfix(&m, 999, 0, nullptr, nullptr) == SCE_EINVAL);
+        REQUIRE(_umtx_op_nid_postfix(m, 999, 0, nullptr, nullptr) == SCE_EINVAL);
     }
     {
         alignas(4) std::uint32_t wait_word = 1234;
@@ -617,32 +617,33 @@ static void TestUmtx() {
         // Multi-waiter CV test: multiple concurrent waiters capture generation without
         // modifying it, ensuring neither waiter spuriously wakes before signal/broadcast.
         alignas(4) std::uint32_t cvMulti[4] = {0, 0, 0, 0};
-        alignas(4) std::uint32_t mMulti[4] = {0, 0, 0, 0};
+        alignas(4) std::uint32_t mMulti1[4] = {0, 0, 0, 0};
+        alignas(4) std::uint32_t mMulti2[4] = {0, 0, 0, 0};
         std::atomic<bool> w1Waiting{false};
         std::atomic<bool> w2Waiting{false};
         std::atomic<int> r1{-1};
         std::atomic<int> r2{-1};
         std::thread t1([&] {
-            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
+            REQUIRE(_umtx_op_nid_postfix(mMulti1, 4, 0, nullptr, nullptr) == SCE_OK);
             w1Waiting.store(true);
-            r1.store(_umtx_op_nid_postfix(cvMulti, 8, 0, mMulti, nullptr));
-            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
-            REQUIRE(_umtx_op_nid_postfix(mMulti, 6, 0, nullptr, nullptr) == SCE_OK);
+            r1.store(_umtx_op_nid_postfix(cvMulti, 8, 0, mMulti1, nullptr));
+            REQUIRE(_umtx_op_nid_postfix(mMulti1, 4, 0, nullptr, nullptr) == SCE_OK);
+            REQUIRE(_umtx_op_nid_postfix(mMulti1, 6, 0, nullptr, nullptr) == SCE_OK);
         });
-        while (!w1Waiting.load())
+        while (!w1Waiting.load() || mMulti1[0] != 0)
             std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         // Verify w1 is still waiting and has not spuriously awakened.
         REQUIRE(r1.load() == -1);
 
         std::thread t2([&] {
-            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
+            REQUIRE(_umtx_op_nid_postfix(mMulti2, 4, 0, nullptr, nullptr) == SCE_OK);
             w2Waiting.store(true);
-            r2.store(_umtx_op_nid_postfix(cvMulti, 8, 0, mMulti, nullptr));
-            REQUIRE(_umtx_op_nid_postfix(mMulti, 4, 0, nullptr, nullptr) == SCE_OK);
-            REQUIRE(_umtx_op_nid_postfix(mMulti, 6, 0, nullptr, nullptr) == SCE_OK);
+            r2.store(_umtx_op_nid_postfix(cvMulti, 8, 0, mMulti2, nullptr));
+            REQUIRE(_umtx_op_nid_postfix(mMulti2, 4, 0, nullptr, nullptr) == SCE_OK);
+            REQUIRE(_umtx_op_nid_postfix(mMulti2, 6, 0, nullptr, nullptr) == SCE_OK);
         });
-        while (!w2Waiting.load())
+        while (!w2Waiting.load() || mMulti2[0] != 0)
             std::this_thread::yield();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         // Neither w1 nor w2 should have woken up yet!
@@ -656,20 +657,20 @@ static void TestUmtx() {
         REQUIRE(r1.load() == SCE_OK);
         REQUIRE(r2.load() == SCE_OK);
 
-        // CV wait with CVWAIT_ABSTIME (val = 1) and past timestamp returns timeout:
+        // CV wait with CVWAIT_ABSTIME (val = 2) and past timestamp returns timeout:
         alignas(4) std::uint32_t cvTime[4] = {0, 0, 0, 0};
         alignas(4) std::uint32_t mTime[4] = {0, 0, 0, 0};
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
         KernelTimespec pastTs{0, 1}; // epoch + 1ns
-        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1, mTime, &pastTs) == SCE_TIMEDOUT);
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2, mTime, &pastTs) == SCE_TIMEDOUT);
         // Re-lock mTime before second cv wait since cv wait returns with mutex unlocked:
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
-        // CV wait with CVWAIT_ABSTIME | CVWAIT_CLOCKID (val = 1 | 2 | (1 << 16)) for CLOCK_MONOTONIC:
-        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1 | 2 | (1 << 16), mTime, &pastTs) == SCE_TIMEDOUT);
+        // CV wait with CVWAIT_ABSTIME | CVWAIT_CLOCKID (val = 2 | 4 | (1 << 16)) for CLOCK_MONOTONIC:
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2 | 4 | (1 << 16), mTime, &pastTs) == SCE_TIMEDOUT);
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
 
-        // Reject invalid clock ID in CV wait (e.g. clockid = 99 -> val = 1 | 2 | (99 << 16)):
-        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1 | 2 | (99 << 16), mTime, &pastTs) == SCE_EINVAL);
+        // Reject invalid clock ID in CV wait (e.g. clockid = 99 -> val = 2 | 4 | (99 << 16)):
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 2 | 4 | (99 << 16), mTime, &pastTs) == SCE_EINVAL);
         REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
     }
     {
