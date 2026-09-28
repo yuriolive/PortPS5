@@ -4,7 +4,7 @@
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/yuriolive/PortPS5/codeql.yml?branch=main&label=CodeQL&style=flat-square)](https://github.com/yuriolive/PortPS5/actions/workflows/codeql.yml)
 [![License: GPL-2.0](https://img.shields.io/badge/license-GPL--2.0--only-blue?style=flat-square)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-informational?style=flat-square&logo=windows)](https://github.com/yuriolive/PortPS5)
-[![Language: C++20](https://img.shields.io/badge/language-C%2B%2B20-informational?style=flat-square&logo=cplusplus)](https://github.com/yuriolive/PortPS5)
+[![Language: C++23](https://img.shields.io/badge/language-C%2B%2B23-informational?style=flat-square&logo=cplusplus)](https://github.com/yuriolive/PortPS5)
 [![Vulkan 1.3](https://img.shields.io/badge/Vulkan-1.3-red?style=flat-square&logo=vulkan)](https://www.vulkan.org/)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/yuriolive?style=flat-square&logo=githubsponsors&color=ea4aaa)](https://github.com/sponsors/yuriolive)
 
