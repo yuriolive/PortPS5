@@ -546,6 +546,39 @@ static void TestUmtx() {
         REQUIRE(elapsed >= 30);  // Did not return immediately!
     }
     {
+        // UMTX_OP_WAIT (op 2) and UMTX_OP_WAIT_UINT (op 11) must complete and return SCE_OK
+        // when woken by UMTX_OP_WAKE (op 3), even when the watched word remains unchanged.
+        alignas(8) std::uint64_t wait64 = 0x1122334455667788ULL;
+        std::atomic<bool> thread64Waiting{false};
+        std::atomic<int> wait64Result{-1};
+        std::thread t64([&] {
+            thread64Waiting.store(true);
+            wait64Result.store(_umtx_op_nid_postfix(&wait64, 2, 0x1122334455667788ULL, nullptr, nullptr));
+        });
+        while (!thread64Waiting.load())
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Word is deliberately left unchanged.
+        REQUIRE(_umtx_op_nid_postfix(&wait64, 3, 1, nullptr, nullptr) == SCE_OK);
+        t64.join();
+        REQUIRE(wait64Result.load() == SCE_OK);
+
+        alignas(4) std::uint32_t wait32 = 42u;
+        std::atomic<bool> thread32Waiting{false};
+        std::atomic<int> wait32Result{-1};
+        std::thread t32([&] {
+            thread32Waiting.store(true);
+            wait32Result.store(_umtx_op_nid_postfix(&wait32, 11, 42u, nullptr, nullptr));
+        });
+        while (!thread32Waiting.load())
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Word is deliberately left unchanged.
+        REQUIRE(_umtx_op_nid_postfix(&wait32, 3, 1, nullptr, nullptr) == SCE_OK);
+        t32.join();
+        REQUIRE(wait32Result.load() == SCE_OK);
+    }
+    {
         // _umtx_op RWLOCK (ops 12, 13, 14).
         alignas(4) std::uint32_t rw[4] = {0, 0, 0, 0};
         // Acquire read lock (op 12).

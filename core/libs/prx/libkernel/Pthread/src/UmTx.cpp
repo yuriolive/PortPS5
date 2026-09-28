@@ -317,16 +317,9 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
-        while (true) {
-            const std::uint64_t expect = ref.load(std::memory_order_acquire);
-            if (expect != val)
-                return SyncWords::kSceOk;
-            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
-                return SyncWords::kSceTimedOut;
-            if (!FutexCore::WaitU64(reinterpret_cast<volatile std::uint64_t*>(w), expect,
-                                    deadline))
-                return SyncWords::kSceTimedOut;
-        }
+        if (!FutexCore::WaitU64(reinterpret_cast<volatile std::uint64_t*>(w), val, deadline))
+            return SyncWords::kSceTimedOut;
+        return SyncWords::kSceOk;
     }
     case kOpWaitUint:
     case kOpWaitUintPrivate: {
@@ -341,15 +334,10 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         const int err = ParseUmtxTimeout(uaddr, uaddr2, deadline);
         if (err != SyncWords::kSceOk)
             return err;
-        while (true) {
-            const std::uint32_t expect = ref.load(std::memory_order_acquire);
-            if (expect != static_cast<std::uint32_t>(val))
-                return SyncWords::kSceOk;
-            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
-                return SyncWords::kSceTimedOut;
-            if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(w), expect, deadline))
-                return SyncWords::kSceTimedOut;
-        }
+        if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(w),
+                                static_cast<std::uint32_t>(val), deadline))
+            return SyncWords::kSceTimedOut;
+        return SyncWords::kSceOk;
     }
     case kOpWake:
     case kOpWakePrivate: {

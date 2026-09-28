@@ -82,23 +82,22 @@ inline void WakeAll(volatile void* addr) noexcept {
     WakeByAddressAll(const_cast<void*>(addr));
 }
 
-// One wait slice. Returns true when the caller must re-check the word
-// (woken or slice expired but deadline not yet reached), false only when the
-// deadline has passed. The caller always loops and re-checks the word, so a
-// spurious TRUE is harmless but a lost wakeup is not: callers set the
-// CONTENDED/waiters bit BEFORE waiting and publish with release ordering.
+// Waits on address until woken by WakeByAddress* or value changes, or deadline expires.
+// Returns true when woken or value changed; returns false only when the deadline expires.
 inline bool WaitOnce(volatile void* addr, const void* expected, std::size_t size,
                      std::uint64_t deadline) noexcept {
-    if (deadline != kInfinite) {
+    if (deadline == kInfinite) {
+        WaitOnAddress(const_cast<void*>(addr), const_cast<void*>(expected), size, INFINITE);
+        return true;
+    }
+    while (true) {
         const std::uint64_t now = NowNanos();
         if (now >= deadline)
             return false;
         const std::uint64_t remaining = deadline - now;
         if (remaining < 1000000ULL) {
             // Sub-millisecond: spin at most 50us checking for a change,
-            // then yield so the outer loop re-checks in ~100us slices.
-            // Why 50us: bounds the spin cost while keeping timed-wait error
-            // small; the outer re-check loop provides the 100us cadence.
+            // then yield so the loop re-checks in ~100us slices.
             const std::uint64_t spinStart = now;
             if (size == 8) {
                 auto* a = reinterpret_cast<std::uint64_t*>(const_cast<void*>(addr));
@@ -126,25 +125,18 @@ inline bool WaitOnce(volatile void* addr, const void* expected, std::size_t size
             if (NowNanos() >= deadline)
                 return false;
             SwitchToThread();
-            return true;
+            continue;
         }
-        // Millisecond floor of the remaining time (spec: floor, not ceil, so
-        // we never overshoot the deadline in one slice).
         std::uint64_t ms = remaining / 1000000ULL;
         if (ms > 0xFFFFFFFEULL)
             ms = 0xFFFFFFFEULL;
         const BOOL ok = WaitOnAddress(const_cast<void*>(addr), const_cast<void*>(expected), size,
                                       static_cast<DWORD>(ms));
         if (ok)
-            return true;
-        // ERROR_TIMEOUT here means the slice expired, not necessarily the
-        // deadline: re-check time so the outer loop continues until deadline.
+            return true;  // Woken by WakeByAddress* or value changed.
         if (NowNanos() >= deadline)
-            return false;
-        return true;
+            return false;  // Deadline expired.
     }
-    WaitOnAddress(const_cast<void*>(addr), const_cast<void*>(expected), size, INFINITE);
-    return true;
 }
 
 inline bool WaitU64(volatile std::uint64_t* addr, std::uint64_t expected,
