@@ -99,13 +99,13 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 ## Tests
 
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
-  - Button OR-merging and stick displacement arbitration rules.
-  - Radial and axial dead-zone mathematics and clamp boundaries.
-  - Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
-  - TOML controller binding parsing and rejection of invalid identifiers.
-  - Monotonic timestamp advancement invariants on sequential `scePadRead` calls.
+  - [x] Button OR-merging and stick displacement arbitration rules (`PadHapticsTests.cpp`).
+  - [x] Radial and axial dead-zone mathematics and clamp boundaries (`PadHapticsTests.cpp`).
+  - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
+  - [ ] TOML controller binding parsing and rejection of invalid identifiers.
+  - [x] Monotonic timestamp advancement invariants on sequential `scePadRead` calls (`PadHapticsTests.cpp`).
 - **Ported Ecosystem Test Suites:**
-  - **KytyPS5 `PadHapticsTests`:** DualSense USB report parsing, radial deadzone calculation, motor vibration amplitude translation, and controller orientation telemetry.
+  - [x] **KytyPS5 `PadHapticsTests`:** DualSense USB report parsing, radial deadzone calculation, motor vibration amplitude translation, and controller orientation telemetry (`core/libs/tests/PadHapticsTests.cpp`).
 - **Replay determinism:** the same recorded input produces identical `PadData` sequences whatever controller backend is present.
 - **Manual matrix per release:** a small table recorded in the release notes (the device classes only, no personal hardware):
 
