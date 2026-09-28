@@ -182,13 +182,13 @@ Other facts:
 
 | Milestone | Recompiler deliverables | Exit evidence |
 |---|---|---|
-| M0 | C++23 flag. `recompiler_tests` and `agc_shader_memory_tests` in ctest. glslang made test-only. | ctest green |
-| M1 | Port `87911b3` and the flat-slot and hashed-key parts of `29b4601`. Bindless tables with bounds taken from device limits. `agc_shader_replay` and serializer. Remove every `APS5_*` read. The `recompiler-golden` job. The synthetic corpus. | M1 exit: every decoded class covered and green in CI, local corpus with 0 failures, DeS fill/copy kernels running as compiled shaders |
-| M2 | `SourceKey`/`VariantKey` as defined in [pipeline-cache.md](pipeline-cache.md#target-design), and variant (de)serialisation for the disk cache. Depth and sample-mask export verified. | 0 `spirv_compilations` with a warm cache (F7) |
-| M3 | Tier 2 structurizer. Bounded hash-indexed variants that compile outside the lock. V#/SRT loads on the GPU through BDA. SGPRs read from the user-data buffer. | Fuzz corpus with 0 structurizer throws |
-| M4 | Subgroup size control. `AnalyzeKernelIdiom` (`KernelIdiom`). Bindless on the GPU heap through the descriptor-heap hash probe, replacing the CPU material scan. | Bugsnax full run |
-| M5 | Optimizer pass-list tuning, measured against `shader.compile_ms` during cold runs | Perf bar |
-| M6 | R1 status: record whether the release binary contains SPIRV-Tools | Release notes |
+| M0 | - [x] C++23 flag. `recompiler_tests` and `agc_shader_memory_tests` in ctest. glslang made test-only. | ctest green |
+| M1 | - [ ] Port `87911b3` and the flat-slot and hashed-key parts of `29b4601`. Bindless tables with bounds taken from device limits. `agc_shader_replay` and serializer. Remove every `APS5_*` read. The `recompiler-golden` job. The synthetic corpus. | M1 exit: every decoded class covered and green in CI, local corpus with 0 failures, DeS fill/copy kernels running as compiled shaders |
+| M2 | - [ ] `SourceKey`/`VariantKey` as defined in [pipeline-cache.md](pipeline-cache.md#target-design), and variant (de)serialisation for the disk cache. Depth and sample-mask export verified. | 0 `spirv_compilations` with a warm cache (F7) |
+| M3 | - [ ] Tier 2 structurizer. Bounded hash-indexed variants that compile outside the lock. V#/SRT loads on the GPU through BDA. SGPRs read from the user-data buffer. | Fuzz corpus with 0 structurizer throws |
+| M4 | - [ ] Subgroup size control. `AnalyzeKernelIdiom` (`KernelIdiom`). Bindless on the GPU heap through the descriptor-heap hash probe, replacing the CPU material scan. | Bugsnax full run |
+| M5 | - [ ] Optimizer pass-list tuning, measured against `shader.compile_ms` during cold runs | Perf bar |
+| M6 | - [ ] R1 status: record whether the release binary contains SPIRV-Tools | Release notes |
 
 **Relink-time AOT stays post-1.0.** Four things block it:
 

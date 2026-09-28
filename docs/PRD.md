@@ -49,15 +49,15 @@ A title is replaced only by one of the same tier. For example, if a title's dump
 
 | ID | Requirement |
 |---|---|
-| F1 | A CLI converts a decrypted dump directory into a runnable Windows executable plus runtime libraries, locally, with clear errors for unsupported inputs. |
-| F2 | Save/load works: the player saves in game, quits, relaunches and continues from the save. |
-| F3 | Audio plays correctly, including ATRAC9 and the title's mixing path. During FMV the audio/video offset stays within ±80 ms, and there is at most 1 audio underrun per 10 minutes (both logged by telemetry). |
-| F4 | FMV plays: in-game video (e.g. Bink) decodes and plays. Skipping a video is not a pass. |
-| F5 | Input: XInput controllers, DualSense over USB, and keyboard/mouse mapping. |
-| F6 | A per-game TOML config keyed by title ID holds resolution scale, present mode, and any documented per-title workaround. |
-| F7 | A disk pipeline cache keeps compiled shaders and pipelines across runs. With a warm cache, telemetry logs 0 shader compilations and 0 pipeline creations during a regression pass. |
-| F8 | Online, PSN and trophy calls return offline behaviour and never block progression. |
-| F9 | Runtime telemetry covers frame-time log, crash and softlock watchdog, and structured logs. It feeds the verification protocol. |
+| F1 | - [ ] A CLI converts a decrypted dump directory into a runnable Windows executable plus runtime libraries, locally, with clear errors for unsupported inputs. |
+| F2 | - [ ] Save/load works: the player saves in game, quits, relaunches and continues from the save. |
+| F3 | - [ ] Audio plays correctly, including ATRAC9 and the title's mixing path. During FMV the audio/video offset stays within ±80 ms, and there is at most 1 audio underrun per 10 minutes (both logged by telemetry). |
+| F4 | - [ ] FMV plays: in-game video (e.g. Bink) decodes and plays. Skipping a video is not a pass. |
+| F5 | - [ ] Input: XInput controllers, DualSense over USB, and keyboard/mouse mapping. |
+| F6 | - [ ] A per-game TOML config keyed by title ID holds resolution scale, present mode, and any documented per-title workaround. |
+| F7 | - [ ] A disk pipeline cache keeps compiled shaders and pipelines across runs. With a warm cache, telemetry logs 0 shader compilations and 0 pipeline creations during a regression pass. |
+| F8 | - [ ] Online, PSN and trophy calls return offline behaviour and never block progression. |
+| F9 | - [ ] Runtime telemetry covers frame-time log, crash and softlock watchdog, and structured logs. It feeds the verification protocol. |
 
 ### 4.3 Performance bar
 

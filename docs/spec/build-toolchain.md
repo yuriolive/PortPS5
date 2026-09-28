@@ -159,11 +159,11 @@ Tests are progressively consolidated from standalone single-function executables
 
 ## Milestones
 
-- **M0:** C++23; CMakePresets; the pinned toolchain file and CI download with checksum; every existing test in `ctest` with labels; runtime DLL copy; CONVENTIONS rewrite; TechnicalDebt clean-up; `build`, `unit` and `policy` jobs. `DummyShaders` extraction also lands in M0 because it touches licence posture.
-- **M1:** `golden` and `lavapipe` labels and jobs (`recompiler-golden`, `driver-lavapipe`), the `agc_shader_replay` port from PR #5, the PR #5 relinker tests, and the `APS5_EXPORT_FN` migration. The toml++ and xxHash pins, and the pinned `llvm-mc` build-time tool for the synthetic corpus.
-- **M2:** `tools/regress` build target and its `local` label. SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled.
-- **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
-- **M6:** release preset used for the release commit, with the R1 status recorded.
+- [x] **M0:** C++23; CMakePresets; the pinned toolchain file and CI download with checksum; every existing test in `ctest` with labels; runtime DLL copy; CONVENTIONS rewrite; TechnicalDebt clean-up; `build`, `unit` and `policy` jobs. `DummyShaders` extraction also lands in M0 because it touches licence posture.
+- [ ] **M1:** `golden` and `lavapipe` labels and jobs (`recompiler-golden`, `driver-lavapipe`), the `agc_shader_replay` port from PR #5, the PR #5 relinker tests, and the `APS5_EXPORT_FN` migration. The toml++ and xxHash pins, and the pinned `llvm-mc` build-time tool for the synthetic corpus.
+- [ ] **M2:** `tools/regress` build target and its `local` label. SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled.
+- [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
+- [ ] **M6:** release preset used for the release commit, with the R1 status recorded.
 
 ## Open questions
 

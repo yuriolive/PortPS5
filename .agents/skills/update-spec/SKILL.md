@@ -12,8 +12,9 @@ description: Keep PortPS5 docs (PRD, ROADMAP, docs/spec/*.md) in sync with a cod
    - Target design, Interfaces, Failure modes, Tests.
    - Milestones: keep them consistent with `docs/ROADMAP.md`.
 3. **Cross-doc consistency:**
-   - If a milestone's scope moves, update `docs/ROADMAP.md`, including its traceability table.
+   - If a milestone's scope moves or finishes, update `docs/ROADMAP.md` (and mark completed items with `- [x]`), including its traceability table.
    - If a 1.0 requirement changes, update `docs/PRD.md`.
+   - Keep task checkboxes (`- [ ]` / `- [x]`) in `docs/spec/*.md` synchronized with delivered scope.
 4. **Hardware wording:** only the generic reference tier. Check with `grep -rniE '(RTX|RX) ?[0-9]{4}|Ryzen [0-9]|Core i[3579]|my PC|your PC' docs`, which must print nothing.
 5. **Structure check:** every `docs/spec/<subsystem>.md` except `README.md` and `verification.md` contains the headings Scope, Current state, Decision, Target design, Interfaces, Failure modes, Tests, Milestones, Open questions:
    `for f in docs/spec/*.md; do case $f in *README.md|*verification.md) continue;; esac; for h in Scope 'Current state' Decision 'Target design' Interfaces 'Failure modes' Tests Milestones 'Open questions'; do grep -q "^## $h" "$f" || echo "$f missing $h"; done; done`
