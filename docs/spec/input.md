@@ -121,7 +121,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] Port PR #5's `scePadRead`. Import inventory for Mouse and Keyboard. Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input`. |
+| M1 | - [ ] Port PR #5's `scePadRead`. Import inventory for Mouse and Keyboard. Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input`. Raw-port status (PR #28, not yet adapted): the mouse backend (`libSceMouse/src/mouse_impl.cpp`, `include/MouseState.hpp`, `include/mouse_structs.h`) is byte-identical to upstream `53bda68`; `libSceMouse/Export.cpp` still throws, so the Current-state row above stands. Debt: the process-global `std::mutex mouseMutex` (`mouse_impl.cpp:9`) violates the no-global-locks rule and must go; `tests/Mouse.cpp:16,18` uses `abort()`/`main()` and must become GTest via `portps5_add_gtest`. |
 | M2 | - [ ] Everything in the target design. XInput, DualSense USB and keyboard/mouse pass the matrix on Dreaming Sarah and TMNT (the F5 delivery milestone). |
 | M3–M5 | - [ ] Regression only. Add analog-trigger and multi-button coverage as the 3D titles demand. |
 | M6 | - [ ] The release matrix is published in the release notes. |
