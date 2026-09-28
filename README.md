@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.jpg" alt="PortPS5 Logo" width="200" />
+</p>
+
 # PortPS5
 
 [![CI](https://img.shields.io/github/actions/workflow/status/yuriolive/PortPS5/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/yuriolive/PortPS5/actions/workflows/ci.yml)
