@@ -104,6 +104,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
   - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
   - [ ] TOML controller binding parsing and rejection of invalid identifiers.
   - [x] Monotonic timestamp advancement invariants on sequential `scePadRead` calls (`PadHapticsTests.cpp`).
+  - [ ] Mouse open/read/close error contract + SDL routing + ring overflow (`libSceMouse/tests/Mouse.cpp`, M2-gated DISABLED GTest; builds in CI, enables with the M2 exports).
 - **Ported Ecosystem Test Suites:**
   - [x] **KytyPS5 `PadHapticsTests`:** DualSense USB report parsing, radial deadzone calculation, motor vibration amplitude translation, and controller orientation telemetry (`core/libs/tests/PadHapticsTests.cpp`).
 - **Replay determinism:** the same recorded input produces identical `PadData` sequences whatever controller backend is present.
