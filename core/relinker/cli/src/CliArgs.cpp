@@ -1,3 +1,8 @@
+// Relinker CLI parsing — converts argv into Cli::Args with validation.
+// Usage errors throw std::runtime_error (host tool, never guest-reachable).
+// Flags: --windows, --windows-diagnostics, --windows-gui (requires --windows),
+// --skip-syscall-check, --skip-sce-module, --to-intel, unused-filter, --registry,
+// --rpath, --lazy-binding, --autorun.
 #include <Cli.hpp>
 #include <iostream>
 #include <stdexcept>

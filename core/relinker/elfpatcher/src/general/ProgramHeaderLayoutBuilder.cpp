@@ -1,3 +1,6 @@
+// Program header layout builder — places the synthetic header block and extra
+// block for the Linux guest-module path. The header block becomes the first
+// PT_LOAD, aligned to the largest kept segment alignment.
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>

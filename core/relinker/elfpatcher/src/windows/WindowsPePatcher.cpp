@@ -1,3 +1,5 @@
+// Windows PE patcher implementation — guest ELF to PE conversion driver.
+// Carries the --windows-gui option into the PE writer's subsystem field.
 #include <elfpatcher/windows/WindowsElfPatcher.hpp>
 #include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>

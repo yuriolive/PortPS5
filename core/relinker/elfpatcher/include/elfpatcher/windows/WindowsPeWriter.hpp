@@ -1,3 +1,5 @@
+// Windows PE writer interface — serializes sections into a PE image.
+// The subsystem field defaults to CUI; --windows-gui selects GUI.
 #ifndef ELFPATCHER_WINDOWS_PEWRITER_HPP
 #define ELFPATCHER_WINDOWS_PEWRITER_HPP
 

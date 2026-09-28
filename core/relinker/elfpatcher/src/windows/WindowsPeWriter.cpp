@@ -1,3 +1,5 @@
+// Windows PE writer implementation — hand-rolled PE serialization.
+// Magic offsets follow the PE32+ optional header layout; subsystem at +68.
 #include <elfpatcher/windows/WindowsPeWriter.hpp>
 #include <domain/Types.hpp>
 #include <io/BufferUtils.hpp>

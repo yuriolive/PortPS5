@@ -1,3 +1,5 @@
+// Relinker command-line interface — argument struct shared by CliArgs parsing
+// and the pipeline driver in main.cpp. Plain data; validation lives in ParseArgs.
 #ifndef CORE_RELINKER_CLI_INCLUDE_CLI_HPP
 #define CORE_RELINKER_CLI_INCLUDE_CLI_HPP
 

@@ -1,3 +1,5 @@
+// Windows ELF patcher interface — IElfPatcher implementation emitting PE images.
+// Owns the GUI-subsystem option plumbed from --windows-gui through main.cpp.
 #ifndef ELFPATCHER_WINDOWS_WINDOWSELFPATCHER_HPP
 #define ELFPATCHER_WINDOWS_WINDOWSELFPATCHER_HPP
 

@@ -1,3 +1,6 @@
+// Relinker driver — host CLI tool converting decrypted guest ELFs to PE images.
+// Parses args, runs the pipeline, reports NID/conversion stats. Host-only;
+// usage errors throw, conversion errors return Domain::RelinkerException text.
 #include <Cli.hpp>
 #include <domain/Types.hpp>
 #include <io/FileReader.hpp>
