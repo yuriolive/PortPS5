@@ -13,8 +13,12 @@
 //     alone would execute AFTER the divergent read and provide no ordering for it.
 // Limitation: a divergent write followed by a divergent read inside the SAME region with no
 // intervening uniform point cannot be ordered by any workgroup barrier (no uniform point
-// exists between them); cross-lane communication there requires uniform control flow, which
-// is the M3 structurizer's scope (see docs/spec/shader-recompiler.md open questions).
+// exists between them: every point after the write and before the read is skipped by lanes
+// not taking the branch, so a barrier there deadlocks instead of ordering). Cross-lane
+// communication there requires uniform control flow, which is the M3 structurizer's scope
+// (see docs/spec/shader-recompiler.md open questions). Headers on a control-flow cycle are
+// additionally skipped, since per-iteration execution under divergent loop control would
+// break barrier uniformity.
 #include "Optimization/SharedMemoryBarrierInserter.hpp"
 #include "IntermediateRepresentation/IrBlock.hpp"
 #include "IntermediateRepresentation/IrOpcode.hpp"
@@ -136,6 +140,58 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
             }
         }
     }
+
+    // Successor map over the same CFG edges the region traversal follows. Used to detect
+    // headers that lie on a control-flow cycle (loops).
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> successors;
+    if (!blockInfoList.empty()) {
+        for (const auto& info : blockInfoList) {
+            auto& outs = successors[info.id];
+            if (info.terminator.trueBlock != InvalidControlFlowId) {
+                outs.push_back(info.terminator.trueBlock);
+            }
+            if (info.terminator.falseBlock != InvalidControlFlowId) {
+                outs.push_back(info.terminator.falseBlock);
+            }
+            for (const std::uint32_t target : info.terminator.indirectTargets) {
+                if (target != InvalidControlFlowId) {
+                    outs.push_back(target);
+                }
+            }
+        }
+    }
+
+    // True when a CFG walk starting from headerId can return to headerId, i.e. the header
+    // executes per loop iteration. A header barrier there would execute repeatedly; when the
+    // loop is divergently controlled, lanes iterate differently and the barrier is no longer
+    // dynamically uniform (workgroup deadlock). Per-iteration uniformity is undecidable from
+    // BlockInfo alone (it needs loop-latch uniformity analysis), so cyclic headers are
+    // conservatively skipped: pre-region uniform writes already carry their own direct
+    // barriers, and region writes still reconverge at the merge block.
+    const auto headerOnCycle = [&](std::uint32_t headerId) -> bool {
+        std::unordered_set<std::uint32_t> visited;
+        std::vector<std::uint32_t> stack;
+        const auto seedIt = successors.find(headerId);
+        if (seedIt == successors.end()) {
+            return false;
+        }
+        stack.insert(stack.end(), seedIt->second.begin(), seedIt->second.end());
+        while (!stack.empty()) {
+            const std::uint32_t curr = stack.back();
+            stack.pop_back();
+            if (curr == headerId) {
+                return true;
+            }
+            if (!visited.insert(curr).second) {
+                continue;
+            }
+            const auto it = successors.find(curr);
+            if (it != successors.end()) {
+                stack.insert(stack.end(), it->second.begin(), it->second.end());
+            }
+        }
+        return false;
+    };
 
     std::unordered_set<std::uint32_t> reconvergenceNeedingBarrier;
     // Headers needing a pre-region barrier: every lane executes the divergent header uniformly
@@ -261,10 +317,15 @@ SharedMemoryBarrierStats SharedMemoryBarrierInserter::Insert(IrProgram& program,
     // before any successor executes; the header runs uniformly (lanes diverge only at its
     // branch), so the barrier is dynamically uniform and orders pre-region LDS writes before
     // the divergent read. A header that already holds a Barrier (e.g. after a uniform LDS
-    // write) needs no extra one: that barrier already executes before the region.
+    // write) needs no extra one: that barrier already executes before the region. Headers on
+    // a control-flow cycle are skipped (see headerOnCycle): per-iteration execution under a
+    // divergently-controlled loop would break barrier uniformity.
     for (const std::uint32_t headerId : headersNeedingBarrier) {
         auto it = blockMap.find(headerId);
         if (it == blockMap.end() || !it->second) {
+            continue;
+        }
+        if (headerOnCycle(headerId)) {
             continue;
         }
         IrBlock& headerBlock = *it->second;

@@ -755,6 +755,66 @@ TEST(RecompilerFixesTests, DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBa
     EXPECT_TRUE(mergeHasBarrier);
 }
 
+TEST(RecompilerFixesTests, DivergentReadWithCyclicHeaderSkipsPreReadBarrier) {
+    // Behavioral invariant: a divergent-region header that lies on a control-flow cycle
+    // executes per loop iteration, so a header barrier there is only uniform when loop control
+    // is uniform -- which BlockInfo alone cannot prove. The pass must skip the pre-read header
+    // barrier rather than risk a dynamically non-uniform workgroup barrier (GPU deadlock).
+    // Preconditions: entry header (0) branches divergently over divBlock (1) with mergeBlock (3),
+    // and the merge block doubles as a loop latch branching back to the header (3 -> 0), so the
+    // header reaches itself; divBlock holds a single LoadSharedU32 and the region has no write.
+    // Expected: zero Barriers anywhere (no write needs reconvergence; the cyclic header is skipped).
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    IrBlock& divBlock = program.CreateBlock();
+    IrBlock& mergeBlock = program.CreateBlock();
+
+    program.SetEntryBlock(entry);
+    program.BlockOrder() = {&entry, &divBlock, &mergeBlock};
+
+    BlockInfo entryInfo{};
+    entryInfo.id = 0u;
+    entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+    entryInfo.terminator.condition = BranchCondition::ExecNonZero;
+    entryInfo.terminator.trueBlock = 1u;
+    entryInfo.terminator.falseBlock = 3u;
+    entryInfo.terminator.mergeBlock = 3u;
+
+    BlockInfo divInfo{};
+    divInfo.id = 1u;
+    divInfo.terminator.kind = TerminatorKind::Branch;
+    divInfo.terminator.trueBlock = 3u;
+
+    BlockInfo mergeInfo{};
+    mergeInfo.id = 3u;
+    mergeInfo.terminator.kind = TerminatorKind::Branch;
+    mergeInfo.terminator.trueBlock = 0u; // loop latch backedge: header lies on a cycle
+
+    program.Metadata().blockInfo = {entryInfo, divInfo, mergeInfo};
+
+    IrBuilder ir(program);
+    ir.SetInsertionPoint(divBlock);
+
+    IrValue& addr = ir.Constant(64u);
+    IrValue& readOp = program.CreateValue(IrOpcode::LoadSharedU32, IrType::U32);
+    readOp.AddArgument(&addr);
+    divBlock.AppendInstruction(&readOp);
+
+    SharedMemoryBarrierInserter inserter;
+    const auto stats = inserter.Insert(program, 64u);
+
+    EXPECT_EQ(stats.insertedBarriers, 0u);
+    for (IrValue* inst : entry.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+    for (IrValue* inst : divBlock.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+    for (IrValue* inst : mergeBlock.Instructions()) {
+        EXPECT_NE(inst->Opcode(), IrOpcode::Barrier);
+    }
+}
+
 } // namespace
 } // namespace ShaderRecompiler
 

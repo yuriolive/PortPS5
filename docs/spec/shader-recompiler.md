@@ -166,9 +166,10 @@ Other facts:
   - [ ] Idiom analysis, positive and negative.
   - [ ] Emission of BDA V#/SRT loads, user-data-buffer SGPR reads and the heap probe (§Target design 7).
   - [x] Regression tests for saveexec `(vcc, vcc)`, atomic-zero, `v_movrels` and wave-LDS scope (`RecompilerFixesTests`),
-    including divergent-write barriers at reconvergence merge blocks and divergent-read barriers at
-    uniform region headers (`DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader`,
-    `DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers`).
+    including divergent-write barriers at reconvergence merge blocks, divergent-read barriers at
+    outermost uniform headers (`DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader`,
+    `DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers`), and the cyclic-header skip
+    (`DivergentReadWithCyclicHeaderSkipsPreReadBarrier`).
   - [ ] Death tests (`EXPECT_DEATH`): verify that unresolvable opcodes trigger an immediate logging abort via `Unsupported()` without memory corruption.
 - **Ported Ecosystem Test Suites:**
   - [ ] **KytyPS5 `ShaderRecompilerComputeTests`:** comprehensive RDNA2 instruction lowering, resource descriptor bindings, texture sampling modes, and atomic memory operations.
@@ -210,8 +211,13 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
 4. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
 5. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
 6. Intra-divergent-region cross-lane LDS ordering: `SharedMemoryBarrierInserter` orders divergent writes
-   at reconvergence merges and divergent reads at uniform headers, but a divergent write followed by a
-   divergent read in the same region with no intervening uniform point cannot be ordered by any workgroup
-   barrier (no such barrier can execute both after the write and before the read while staying dynamically
-   uniform). Cross-lane communication there requires uniform control flow; restructuring is M3 structurizer
-   scope. Loop-carried LDS ordering across iterations of a divergently-controlled loop is likewise deferred.
+   at reconvergence merges and divergent reads at outermost uniform headers (skipped when the header
+   lies on a control-flow cycle, where per-iteration execution under divergent loop control would break
+   barrier uniformity). A divergent write followed by a divergent read in the SAME region with no
+   intervening uniform point cannot be ordered by any workgroup barrier, by uniformity: every point
+   after the write and before the read is skipped by lanes not taking the branch, so a barrier there is
+   dynamically non-uniform (deadlock/UB) instead of ordering. Same-lane write-then-read needs no barrier
+   (program order) and is unaffected. The M3 fix is a structurizer transform, not barrier placement:
+   split the region with an intermediate reconvergence (barrier at the intermediate merge, which all lanes
+   execute) and re-diverge on the same condition for the read. Loop-carried LDS ordering across iterations
+   of a divergently-controlled loop is likewise deferred to M3 (it needs loop-latch uniformity analysis).
