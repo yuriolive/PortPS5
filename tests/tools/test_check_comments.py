@@ -37,6 +37,9 @@ from check_comments import (  # noqa: E402
     TEST_RE,
     EXIT_OK,
     EXIT_VIOLATION,
+    EXIT_ERROR,
+    get_default_base,
+    is_statically_true_condition,
 )
 
 
@@ -60,6 +63,11 @@ class TestIsCommentLine(unittest.TestCase):
 
     def test_not_a_comment(self):
         self.assertFalse(is_comment_line('int x;'))
+
+    def test_pointer_dereference_not_comment(self):
+        self.assertFalse(is_comment_line('*ptr = value;'))
+        self.assertFalse(is_comment_line('*ptr += 1;'))
+        self.assertFalse(is_comment_line('*(ptr++) = 5;'))
 
     def test_empty_line(self):
         self.assertFalse(is_comment_line(''))
@@ -104,6 +112,10 @@ class TestHasDocCommentBefore(unittest.TestCase):
     def test_block_comment_before(self):
         lines = ['/** Doc */\n', 'int APS5_VABI foo();\n']
         self.assertTrue(has_doc_comment_before(lines, 1))
+
+    def test_block_comment_closing_line_without_leading_asterisk(self):
+        lines = ['/**\n', 'role and parameters */\n', 'int APS5_VABI foo();\n']
+        self.assertTrue(has_doc_comment_before(lines, 2))
 
     def test_at_file_start(self):
         lines = ['int APS5_VABI foo();\n']
@@ -670,6 +682,83 @@ class TestPreprocessorAndLiterals(unittest.TestCase):
             '#endif\n',
         ]
         self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+
+    def test_statically_false_condition_variants(self):
+        self.assertTrue(is_statically_false_condition('( 0 )'))
+        self.assertTrue(is_statically_false_condition('((0))'))
+        self.assertTrue(is_statically_false_condition('0U'))
+        self.assertTrue(is_statically_false_condition('(0L)'))
+        self.assertTrue(is_statically_false_condition('0UL'))
+        self.assertTrue(is_statically_false_condition('( 0u )'))
+        self.assertFalse(is_statically_false_condition('1'))
+        self.assertFalse(is_statically_false_condition('0 || 1'))
+
+    def test_statically_true_condition_variants(self):
+        self.assertTrue(is_statically_true_condition('1'))
+        self.assertTrue(is_statically_true_condition('( 1 )'))
+        self.assertTrue(is_statically_true_condition('1U'))
+        self.assertTrue(is_statically_true_condition('true'))
+        self.assertFalse(is_statically_true_condition('0'))
+        self.assertFalse(is_statically_true_condition('SOME_MACRO'))
+
+    def test_test_macro_args_on_next_line(self):
+        lines = [
+            'TEST\n',
+            '    (SuiteName, CaseName) {\n',
+            '}\n',
+        ]
+        violations = check_test_docs('tests/foo.cpp', lines)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0].line, 1)
+
+    def test_test_f_macro_args_on_next_line_with_comment(self):
+        lines = [
+            '// Verifies feature works across line breaks.\n',
+            'TEST_F\n',
+            '    (FixtureName, CaseName) {\n',
+            '}\n',
+        ]
+        self.assertEqual(check_test_docs('tests/foo.cpp', lines), [])
+
+    def test_non_literal_if_else_both_branches_linted(self):
+        lines = [
+            '#if FEATURE_X\n',
+            'int APS5_VABI branch1();\n',
+            '#else\n',
+            'int APS5_VABI branch2();\n',
+            '#endif\n',
+        ]
+        violations = check_vabi_docs('core/foo.cpp', lines)
+        self.assertEqual(len(violations), 2)
+        func_names = [v.message for v in violations]
+        self.assertTrue(any('branch1' in m for m in func_names))
+        self.assertTrue(any('branch2' in m for m in func_names))
+
+    def test_literal_if_1_else_only_true_branch_linted(self):
+        lines = [
+            '#if 1\n',
+            'int APS5_VABI enabled();\n',
+            '#else\n',
+            'int APS5_VABI disabled();\n',
+            '#endif\n',
+        ]
+        violations = check_vabi_docs('core/foo.cpp', lines)
+        self.assertEqual(len(violations), 1)
+        self.assertIn('enabled', violations[0].message)
+
+    def test_raw_string_literal_with_at_delimiter(self):
+        lines = [
+            'const char* code = R"@(\n',
+            'int APS5_VABI not_real_func();\n',
+            'TEST(NotRealSuite, NotRealCase) {}\n',
+            ')@";\n',
+        ]
+        self.assertEqual(check_vabi_docs('core/foo.cpp', lines), [])
+        self.assertEqual(check_test_docs('tests/foo.cpp', lines), [])
+
+    def test_check_file_raises_on_unreadable_file(self):
+        with self.assertRaises((IOError, OSError)):
+            check_file('core/non_existent_file.cpp', 'core/non_existent_file.cpp')
 
 
 if __name__ == '__main__':

@@ -63,8 +63,10 @@ TESTS_DIR = 'tests'
 #: not a pointer-type alias like  (APS5_VABI *).
 VABI_FUNC_RE = re.compile(r'(?<![\w*])APS5_VABI\s+\w+\s*\(')
 
-#: Regex matching TEST( or TEST_F( at the start of a line (ignoring indentation).
-TEST_RE = re.compile(r'^\s*TEST(_F)?\s*\(')
+#: Regex matching TEST or TEST_F at the start of an identifier/line.
+TEST_NAME_RE = re.compile(r'^\s*TEST(?:_F)?\b')
+TEST_RE = TEST_NAME_RE
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -99,7 +101,7 @@ def is_comment_line(line):
     return (
         stripped.startswith('//')
         or stripped.startswith('/*')
-        or stripped.startswith('*')
+        or (stripped.startswith('*') and (len(stripped) == 1 or stripped[1].isspace() or stripped[1] == '/'))
     )
 
 
@@ -145,6 +147,12 @@ def has_doc_comment_before(lines, idx, skip_attrs=True):
             continue
         if is_comment_line(prev):
             return True
+        if prev.endswith('*/'):
+            k = j - 1
+            while k >= 0:
+                if '/*' in lines[k]:
+                    return True
+                k -= 1
         break
     return False
 
@@ -164,10 +172,20 @@ def is_statically_false_condition(cond):
     cond = re.sub(r'//.*$', '', cond)
     cond = re.sub(r'/\*.*?\*/', '', cond)
     cond = cond.strip()
-    if cond in ('0', '(0)', 'false', 'FALSE', '!1', '(!1)', '!true', '(!true)'):
+    if re.fullmatch(r'\(*\s*0(?:[uUlL]*)\s*\)*', cond) or cond in ('false', 'FALSE', '!1', '(!1)', '!true', '(!true)'):
         return True
     # In C++, 0 && ... is statically false by short-circuit logic (unlike 0 || ...).
     if re.match(r'^(?:0|\(0\)|false|FALSE)\s*&&', cond):
+        return True
+    return False
+
+
+def is_statically_true_condition(cond):
+    """Return True if a preprocessor condition expression is statically known to be true."""
+    cond = re.sub(r'//.*$', '', cond)
+    cond = re.sub(r'/\*.*?\*/', '', cond)
+    cond = cond.strip()
+    if re.fullmatch(r'\(*\s*[1-9]\d*(?:[uUlL]*)\s*\)*', cond) or cond in ('true', 'TRUE', '!0', '(!0)', '!false', '(!false)'):
         return True
     return False
 
@@ -217,7 +235,7 @@ def sanitize_source_file(lines):
     def is_currently_active():
         return all(frame['branch_active'] for frame in pp_stack)
 
-    raw_string_start_re = re.compile(r'^R"([a-zA-Z0-9_{}\[\]#<>%:;?*+\-/\^&|~!=,\.]*)\(')
+    raw_string_start_re = re.compile(r'^R"([^\s()\\]{0,16})\(')
 
     line_idx = 0
     num_lines = len(lines)
@@ -249,35 +267,37 @@ def sanitize_source_file(lines):
                 if directive == 'if':
                     parent = is_currently_active()
                     if not parent:
-                        pp_stack.append({'parent_active': False, 'branch_active': False, 'any_branch_taken': True})
+                        pp_stack.append({'parent_active': False, 'branch_active': False, 'known_branch_taken': True})
                     else:
                         disabled = is_statically_false_condition(remainder)
                         active = not disabled
-                        pp_stack.append({'parent_active': True, 'branch_active': active, 'any_branch_taken': active})
+                        known_taken = is_statically_true_condition(remainder)
+                        pp_stack.append({'parent_active': True, 'branch_active': active, 'known_branch_taken': known_taken})
                 elif directive in ('ifdef', 'ifndef'):
                     parent = is_currently_active()
                     if not parent:
-                        pp_stack.append({'parent_active': False, 'branch_active': False, 'any_branch_taken': True})
+                        pp_stack.append({'parent_active': False, 'branch_active': False, 'known_branch_taken': True})
                     else:
-                        pp_stack.append({'parent_active': True, 'branch_active': True, 'any_branch_taken': True})
+                        # Non-literal condition: active to lint this branch, but alternate branches are also eligible
+                        pp_stack.append({'parent_active': True, 'branch_active': True, 'known_branch_taken': False})
                 elif directive == 'elif':
                     if pp_stack:
                         frame = pp_stack[-1]
-                        if not frame['parent_active'] or frame['any_branch_taken']:
+                        if not frame['parent_active'] or frame['known_branch_taken']:
                             frame['branch_active'] = False
                         else:
                             disabled = is_statically_false_condition(remainder)
                             frame['branch_active'] = not disabled
-                            if frame['branch_active']:
-                                frame['any_branch_taken'] = True
+                            if is_statically_true_condition(remainder):
+                                frame['known_branch_taken'] = True
                 elif directive == 'else':
                     if pp_stack:
                         frame = pp_stack[-1]
-                        if not frame['parent_active'] or frame['any_branch_taken']:
+                        if not frame['parent_active'] or frame['known_branch_taken']:
                             frame['branch_active'] = False
                         else:
                             frame['branch_active'] = True
-                            frame['any_branch_taken'] = True
+                            frame['known_branch_taken'] = True
                 elif directive == 'endif':
                     if pp_stack:
                         pp_stack.pop()
@@ -536,6 +556,8 @@ def check_test_docs(rel_path, lines):
 
     Uses tokenize/sanitize pass to ignore inactive preprocessor blocks (e.g. #if 0)
     and string/character literals that mention TEST(...).
+    Scans macro invocations across preprocessing-line boundaries so TEST / TEST_F
+    with arguments on subsequent lines is detected.
     """
     violations = []
     sanitized = sanitize_source_file(lines)
@@ -545,8 +567,29 @@ def check_test_docs(rel_path, lines):
             continue
 
         cleaned = sline.cleaned
-        match = TEST_RE.match(cleaned)
+        match = TEST_NAME_RE.match(cleaned)
         if not match:
+            continue
+
+        # Check if '(' follows, either on the same line or on subsequent active lines before other tokens
+        rem = cleaned[match.end():].lstrip()
+        is_test_call = False
+        if rem.startswith('('):
+            is_test_call = True
+        elif rem == '':
+            # Lookahead on subsequent lines
+            for j in range(i + 1, len(sanitized)):
+                next_line = sanitized[j]
+                if not next_line.is_active:
+                    continue
+                next_cleaned = next_line.cleaned.strip()
+                if not next_cleaned:
+                    continue
+                if next_cleaned.startswith('('):
+                    is_test_call = True
+                break
+
+        if not is_test_call:
             continue
 
         if not has_doc_comment_before(lines, i, skip_attrs=False):
@@ -595,11 +638,7 @@ def check_file(rel_path, abs_path):
     list[Violation]
     """
     violations = []
-    try:
-        lines = read_source_lines(abs_path)
-    except (IOError, OSError) as exc:
-        print(f"WARNING: could not read {rel_path}: {exc}", file=sys.stderr)
-        return violations
+    lines = read_source_lines(abs_path)
 
     # Rule 1 — file-level header (core/, tests/, tools/ only, exempt dirs excluded).
     if any(_in_dir(rel_path, d) for d in RULE1_DIRS) and not _is_exempt(rel_path):
@@ -686,8 +725,11 @@ def get_changed_files(base_ref, repo_root):
 
 
 def get_default_base(repo_root):
-    """Return the default git ref to diff against (origin/main, else main)."""
-    for candidate in ('origin/main', 'main', 'HEAD~1'):
+    """Return the default git ref to diff against (origin/main, else main).
+
+    Returns None if neither ref exists.
+    """
+    for candidate in ('origin/main', 'main'):
         try:
             result = subprocess.run(
                 ['git', '-C', repo_root, 'rev-parse', '--verify', candidate],
@@ -697,7 +739,7 @@ def get_default_base(repo_root):
                 return candidate
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
-    return 'origin/main'  # Best-guess fallback.
+    return None
 
 
 def get_files_to_check(args, repo_root):
@@ -724,7 +766,16 @@ def get_files_to_check(args, repo_root):
         return collect_source_files(repo_root)
 
     # Default: PR scope via git diff.
-    base = args.base or get_default_base(repo_root)
+    base = args.base
+    if not base:
+        base = get_default_base(repo_root)
+        if not base:
+            print(
+                "ERROR: neither 'origin/main' nor 'main' git ref found. "
+                "Specify an explicit base ref with --base <ref> or use --all.",
+                file=sys.stderr,
+            )
+            return None
     changed = get_changed_files(base, repo_root)
     return changed
 
@@ -787,14 +838,19 @@ def main(argv=None):
         elif args.all:
             print("No source files found.")
         else:
-            base = args.base or get_default_base(repo_root)
+            base = args.base or get_default_base(repo_root) or 'unknown'
             print(f"OK: No changed C++ source files to check against base '{base}'.")
         return EXIT_OK
 
     all_violations = []
     for f in sorted(files):
         rel = normalize_path(os.path.relpath(f, repo_root))
-        all_violations.extend(check_file(rel, f))
+        try:
+            violations = check_file(rel, f)
+        except (IOError, OSError) as exc:
+            print(f"ERROR: could not read {rel}: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        all_violations.extend(violations)
 
     # Sort by file path then line number for stable output.
     all_violations.sort(key=lambda v: (v.file, v.line))

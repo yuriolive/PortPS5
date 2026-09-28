@@ -433,4 +433,11 @@ target_include_directories(offline_stubs_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(offline_stubs_tests PRIVATE libSceNpManager libSceNpAuth libSceNpWebApi2 libSceNpCommerce libSceNpEntitlementAccess libSceNpSessionSignaling libSceNpGameIntent libSceNpTrophy2 libSceNpUniversalDataSystem libSceUserService libSceSystemService libSceMsgDialog libSceSaveDataDialog.native libSceCommonDialog libScePad libkernel libc)
 configure_windows_unwind(offline_stubs_tests)
 portps5_add_test(offline_stubs offline_stubs_tests)
+
+# --- slice input: test registration ---
+add_executable(pad_haptics_tests tests/PadHapticsTests.cpp)
+target_include_directories(pad_haptics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(pad_haptics_tests PRIVATE libScePad libkernel libc)
+configure_windows_unwind(pad_haptics_tests)
+portps5_add_test(pad_haptics pad_haptics_tests)
 endif()
