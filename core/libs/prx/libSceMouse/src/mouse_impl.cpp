@@ -104,3 +104,9 @@ void Publish(const MouseInputEvent& event) {
 }
 
 }
+
+// NID-postfix routing seam: libSceVideoOut's MouseInput (MouseInput.cpp:54)
+// publishes host events through this symbol. It forwards to the Mouse::
+// backend above; the guest-visible sceMouse* exports stay Unsupported()
+// stubs until the M2 mouse-export implementation (docs/spec/input.md).
+extern "C" void MousePublishInput_nid_postfix(const MouseInputEvent& event) { Mouse::Publish(event); }

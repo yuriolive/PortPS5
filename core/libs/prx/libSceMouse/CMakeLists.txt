@@ -6,17 +6,17 @@ target_include_directories(libSceMouse PRIVATE ${LIBS_INCLUDE_DIR})
 set_target_properties(libSceMouse PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceMouse)
 
+# Mouse backend unit tests (M2-gated): GTest cases in tests/Mouse.cpp are
+# DISABLED until the M2 mouse-export implementation lands (exports are
+# Unsupported() stubs in M1). portps5_add_gtest links GTest::gtest_main so no
+# manual main() is needed; the binary compiles in CI to pin the backend API.
 if(BUILD_TESTING)
-    add_executable(mouse_tests
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/Mouse.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/MouseInput.cpp
+    portps5_add_gtest(mouse_tests
+        SOURCES  ${CMAKE_CURRENT_SOURCE_DIR}/tests/Mouse.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/MouseInput.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+        LIBRARIES libSceMouse libkernel libc
+        LABELS   unit
     )
-    target_include_directories(mouse_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
-    target_link_libraries(mouse_tests PRIVATE libSceMouse libkernel libc)
-    configure_windows_unwind(mouse_tests)
-    add_test(NAME mouse_input COMMAND mouse_tests)
-    if(WIN32)
-        set_tests_properties(mouse_input PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMouse>")
-    endif()
 endif()
