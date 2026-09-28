@@ -825,6 +825,9 @@ static void TestUmtx() {
         alignas(4) std::uint32_t rwTest[4] = {0, 0x02u /* URWLOCK_PREFER_READER */, 0x12345678u, 0x87654321u};
         // Acquire write lock:
         REQUIRE(_umtx_op_nid_postfix(rwTest, 13, 0, nullptr, nullptr) == SCE_OK);
+        // Verify rw_state has URWLOCK_WRITE_OWNER (0x80000000u) and reader count is 0 (low 29 bits untouched):
+        REQUIRE((rwTest[0] & 0x80000000u) == 0x80000000u);
+        REQUIRE((rwTest[0] & 0x1FFFFFFFu) == 0u);
         // Verify rw_blocked_readers and rw_blocked_writers remain untouched:
         REQUIRE(rwTest[2] == 0x12345678u);
         REQUIRE(rwTest[3] == 0x87654321u);
