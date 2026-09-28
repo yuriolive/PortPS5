@@ -442,9 +442,14 @@ configure_windows_unwind(offline_stubs_tests)
 portps5_add_test(offline_stubs offline_stubs_tests)
 
 # --- slice input: test registration ---
-add_executable(pad_haptics_tests tests/PadHapticsTests.cpp)
-target_include_directories(pad_haptics_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(pad_haptics_tests PRIVATE libScePad libkernel libc)
-configure_windows_unwind(pad_haptics_tests)
-portps5_add_test(pad_haptics pad_haptics_tests)
+# PadHapticsTests uses GTest fixtures (TEST_F / gtest_discover_tests) and the
+# portps5_add_gtest helper, which links GTest::gtest_main so no manual main()
+# is needed.  SDL2 include is required for PadInputTypes.hpp → SDL_scancode.h.
+portps5_add_gtest(pad_haptics_tests
+    SOURCES  tests/PadHapticsTests.cpp
+    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+             ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LIBRARIES libScePad libkernel libc
+    LABELS   unit
+)
 endif()

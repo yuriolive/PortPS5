@@ -43,3 +43,4 @@
 - [ ] **Specs in sync:** If subsystem behaviour, interfaces, or decisions changed, the corresponding specs under `docs/spec/` are updated in this PR ([rules/docs-and-specs.md](.agents/rules/docs-and-specs.md)).
 - [ ] **Hardware references:** Hardware is described strictly as the generic reference tier (PRD §4.4); no personal hardware names or personal specs ([rules/docs-and-specs.md](.agents/rules/docs-and-specs.md)).
 - [ ] **Conventional commits:** Commits follow Conventional Commits format with subject <= 72 characters and an explanation of why ([rules/git-workflow.md](.agents/rules/git-workflow.md)).
+- [ ] **GoogleTest framework:** All new or ported C++ tests use GoogleTest (`portps5_add_gtest`, `TEST`/`TEST_F`, `EXPECT_*`/`ASSERT_*`); no ad-hoc `abort()`, custom `Require()`, or manual `main()` functions ([rules/testing.md](.agents/rules/testing.md)).

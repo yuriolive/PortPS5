@@ -47,6 +47,7 @@ Short version:
    - **Acceptance Criteria:** Concrete, verifiable deliverables using checkboxes (`- [ ]` / `- [x]`).
    - **Out of Scope:** Explicit boundaries and deferred items.
    - **Summary of Changes:** Specific files, implementations, tests, or docs modified.
+10. Mandatory GoogleTest (GTest + GMock) for all C++ tests via `portps5_add_gtest`. Never write ad-hoc C++ test runners using bare `abort()`, custom `Require()`, or manual `main()` functions. Always use standard GoogleTest assertions (`EXPECT_*` / `ASSERT_*`) and GTest discovery.
 
 ## Skills
 
