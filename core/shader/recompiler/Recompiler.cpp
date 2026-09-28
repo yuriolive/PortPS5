@@ -1,3 +1,8 @@
+// core/shader/recompiler/Recompiler.cpp
+// Core translation orchestrator and pipeline coordinator for RDNA2 bytecode to SPIR-V.
+// Decodes GCN/RDNA2 instructions, builds control flow graphs, converts to SSA IR,
+// runs optimization passes (constant folding, dead-code elimination, wave-LDS barriers),
+// and invokes the SPIR-V backend emitter.
 #include "Recompiler.hpp"
 #include "CacheKey.hpp"
 #include <mutex>
@@ -16,6 +21,7 @@
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
+#include "Optimization/include/Optimization/SharedMemoryBarrierInserter.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
@@ -118,6 +124,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request) {
 
     constexpr ResourceTracker resourceTracker;
     resourceTracker.Track(program);
+    deadCodeEliminator.Eliminate(program);
+
+    constexpr SharedMemoryBarrierInserter barrierInserter;
+    static_cast<void>(barrierInserter.Insert(program, translateOptions.waveSize));
     deadCodeEliminator.Eliminate(program);
 
     return program;
