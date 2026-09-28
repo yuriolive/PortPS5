@@ -77,7 +77,7 @@ int ParseUmtxTimeout(const void* uaddr, const void* uaddr2, std::uint64_t& outDe
         size = reinterpret_cast<std::uintptr_t>(uaddr);
     } else if (uaddr != nullptr) {
         timePtr = uaddr;
-        size = sizeof(UmtxTime);
+        size = sizeof(KernelTimespec);
     } else {
         return SyncWords::kSceOk;
     }
@@ -102,6 +102,9 @@ int ParseUmtxTimeout(const void* uaddr, const void* uaddr2, std::uint64_t& outDe
     }
 
     if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL)
+        return SyncWords::kSceEinval;
+
+    if (clockid != 0 && clockid != 4 && clockid != 5 && clockid != 12)
         return SyncWords::kSceEinval;
 
     const bool isMono = (clockid == 4 || clockid == 5 || clockid == 12);
@@ -142,6 +145,19 @@ int UmutexLock(std::uint32_t* word, std::uint32_t tid, std::uint64_t deadline,
                 return SyncWords::kSceEownerdead;
             continue;
         }
+        if (isUmutexStruct) {
+            // FreeBSD umutex: m_flags is the second 32-bit word, m_ceilings is third.
+            // UMUTEX_ERROR_CHECK = 0x0002, UMUTEX_PRIO_PROTECT = 0x0008.
+            const auto* m = static_cast<const std::uint32_t*>(word);
+            const std::uint32_t flags = m[1];
+            if ((flags & 0x0008u) != 0) {
+                // Priority protect: m[2] is m_ceilings[0]. Reject if priority exceeds ceiling (FreeBSD RTP_PRIO_MAX = 700).
+                const std::uint32_t ceiling = m[2];
+                if (ceiling > 700u) {
+                    return SyncWords::kSceEinval;
+                }
+            }
+        }
         const std::uint32_t owner = w & kUmutexOwnerMask;
         if (owner == 0) {
             std::uint32_t expected = w;
@@ -152,17 +168,8 @@ int UmutexLock(std::uint32_t* word, std::uint32_t tid, std::uint64_t deadline,
             continue;
         }
         if (isUmutexStruct) {
-            // FreeBSD umutex: m_flags is the second 32-bit word, m_ceilings is third.
-            // UMUTEX_ERROR_CHECK = 0x0002, UMUTEX_PRIO_PROTECT = 0x0008.
             const auto* m = static_cast<const std::uint32_t*>(word);
             const std::uint32_t flags = m[1];
-            if ((flags & 0x0008u) != 0) {
-                // Priority protect: m[2] is m_ceilings[0]. Reject if priority exceeds ceiling.
-                const std::uint32_t ceiling = m[2];
-                if (ceiling != 0 && ceiling < 700u) {
-                    return SyncWords::kSceEinval;
-                }
-            }
             if (owner == (tid & kUmutexOwnerMask)) {
                 if ((flags & 0x0002u) != 0)
                     return SyncWords::kSceEdeadlk;
@@ -422,9 +429,19 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         if (!obj)
             return SyncWords::kSceEinval;
         auto* m = static_cast<std::uint32_t*>(obj);
+        // FreeBSD UMUTEX_PRIO_PROTECT = 0x0008: umutex must be priority-protect.
+        if ((m[1] & 0x0008u) == 0)
+            return SyncWords::kSceEinval;
+        if (val > 700u)
+            return SyncWords::kSceEinval;
+        // Lock umutex to serialize ceiling update:
+        const int lockRc = UmutexLock(m, tid, FutexCore::kInfinite, true);
+        if (lockRc != SyncWords::kSceOk)
+            return lockRc;
         if (uaddr)
             *static_cast<std::uint32_t*>(uaddr) = m[2];
         m[2] = static_cast<std::uint32_t>(val);
+        UmutexUnlock(m, tid);
         return SyncWords::kSceOk;
     }
     case kOpCvWait: {
@@ -449,6 +466,8 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             }
             const bool isMono = (clockid == 1 || clockid == 4 || clockid == 5 ||
                                  clockid == 7 || clockid == 8 || clockid == 11 || clockid == 12);
+            if (!isMono && clockid != 0 && clockid != 9 && clockid != 10 && clockid != 13)
+                return SyncWords::kSceEinval;
             if ((val & kCvWaitAbstime) != 0) {
                 deadline = FutexCore::AbsoluteToDeadline(ts->tv_sec, ts->tv_nsec, isMono);
             } else {
@@ -523,8 +542,9 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         constexpr std::uint32_t kRwMaxReaders = 0x1FFFFFFFu;
         constexpr std::uint32_t kRwPreferReader = 0x02u;
 
+        // Honor URWLOCK_PREFER_READER from either val flags or struct flags (rwWord[1]).
         std::uint32_t wrflags = kRwWriteOwner;
-        if ((val & kRwPreferReader) == 0)
+        if (((val | rwWord[1]) & kRwPreferReader) == 0)
             wrflags |= kRwWriteWaiters;
 
         while (true) {
@@ -566,19 +586,43 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         constexpr std::uint32_t kRwReadWaiters = 0x20000000u;
         constexpr std::uint32_t kRwMaxReaders = 0x1FFFFFFFu;
 
+        auto cleanupWaitersOnTimeout = [&]() noexcept {
+            while (true) {
+                std::uint32_t s = stateRef.load(std::memory_order_acquire);
+                if ((s & kRwWriteWaiters) == 0)
+                    break;
+                std::uint32_t exp = s;
+                if (stateRef.compare_exchange_strong(exp, s & ~kRwWriteWaiters,
+                                                     std::memory_order_acq_rel,
+                                                     std::memory_order_acquire)) {
+                    // Wake potential readers blocked on kRwWriteWaiters.
+                    FutexCore::WakeAll(rwWord);
+                    break;
+                }
+            }
+        };
+
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
+            // Recursive write lock detection: rwWord[2] holds the writer's TID.
+            if ((state & kRwWriteOwner) != 0 && rwWord[2] == tid)
+                return SyncWords::kSceEdeadlk;
+
             // Acquire write lock if no writer holds and no readers hold.
             if ((state & (kRwWriteOwner | kRwMaxReaders)) == 0) {
                 std::uint32_t expected = state;
                 const std::uint32_t desired = kRwWriteOwner | (state & (kRwWriteWaiters | kRwReadWaiters));
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
-                                                     std::memory_order_acquire))
+                                                     std::memory_order_acquire)) {
+                    rwWord[2] = tid;
                     return SyncWords::kSceOk;
+                }
                 continue;
             }
-            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline)
+            if (deadline != FutexCore::kInfinite && FutexCore::NowNanos() >= deadline) {
+                cleanupWaitersOnTimeout();
                 return SyncWords::kSceTimedOut;
+            }
             if ((state & kRwWriteWaiters) == 0) {
                 std::uint32_t expected = state;
                 stateRef.compare_exchange_strong(expected, state | kRwWriteWaiters,
@@ -587,8 +631,10 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
             const std::uint32_t expect = stateRef.load(std::memory_order_acquire);
             if ((expect & (kRwWriteOwner | kRwMaxReaders)) == 0)
                 continue;
-            if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(rwWord), expect, deadline))
+            if (!FutexCore::WaitU32(reinterpret_cast<volatile std::uint32_t*>(rwWord), expect, deadline)) {
+                cleanupWaitersOnTimeout();
                 return SyncWords::kSceTimedOut;
+            }
         }
     }
     case kOpRwUnlock: {
@@ -604,7 +650,11 @@ extern "C" int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t v
         while (true) {
             std::uint32_t state = stateRef.load(std::memory_order_acquire);
             if ((state & kRwWriteOwner) != 0) {
-                // Writer release: clear owner bit and wake all waiters.
+                // Writer release: verify calling thread is the writer that holds the lock.
+                if (rwWord[2] != tid)
+                    return SyncWords::kSceEperm;
+                rwWord[2] = 0;
+                // Clear owner bit and wake all waiters.
                 std::uint32_t expected = state;
                 const std::uint32_t desired = 0;
                 if (stateRef.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,

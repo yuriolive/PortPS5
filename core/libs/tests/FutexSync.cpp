@@ -92,6 +92,12 @@ int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t val, void* u
 int APS5_VABI sceKernelUsleep_nid_postfix(unsigned int microseconds) noexcept;
 }
 
+struct UmtxTime {
+    KernelTimespec timeout;
+    std::uint32_t flags;   // UMTX_ABSTIME = 0x01
+    std::uint32_t clockid;
+};
+
 template <typename T>
 static T* SlotOf(std::uint64_t& storage) {
     return reinterpret_cast<T*>(&storage);
@@ -526,12 +532,6 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(&m, 999, 0, nullptr, nullptr) == SCE_EINVAL);
     }
     {
-        // _umtx_time relative timeout parsing.
-        struct UmtxTime {
-            KernelTimespec timeout;
-            std::uint32_t flags;   // UMTX_ABSTIME = 0x01
-            std::uint32_t clockid;
-        };
         alignas(4) std::uint32_t wait_word = 1234;
         UmtxTime ut{};
         ut.timeout.tv_sec = 0;
@@ -667,7 +667,89 @@ static void TestUmtx() {
         // CV wait with CVWAIT_ABSTIME | CVWAIT_CLOCKID (val = 1 | 2 | (1 << 16)) for CLOCK_MONOTONIC:
         REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1 | 2 | (1 << 16), mTime, &pastTs) == SCE_TIMEDOUT);
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
+
+        // Reject invalid clock ID in CV wait (e.g. clockid = 99 -> val = 1 | 2 | (99 << 16)):
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1 | 2 | (99 << 16), mTime, &pastTs) == SCE_EINVAL);
         REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
+    }
+    {
+        // Priority ceiling validation and UMTX_OP_SET_CEILING (op 7):
+        // m_flags (m[1]) must have UMUTEX_PRIO_PROTECT (0x0008).
+        // Ceiling <= 700 is valid; ceiling > 700 returns EINVAL.
+        alignas(4) std::uint32_t mPrio[4] = {0, 0x0008u, 25u, 0};
+        REQUIRE(_umtx_op_nid_postfix(mPrio, 5, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(mPrio, 6, 0, nullptr, nullptr) == SCE_OK);
+
+        // Ceiling > 700 is rejected:
+        alignas(4) std::uint32_t mPrioInvalid[4] = {0, 0x0008u, 701u, 0};
+        REQUIRE(_umtx_op_nid_postfix(mPrioInvalid, 5, 0, nullptr, nullptr) == SCE_EINVAL);
+
+        // SET_CEILING requires UMUTEX_PRIO_PROTECT in m[1]:
+        alignas(4) std::uint32_t mNonPrio[4] = {0, 0x0000u, 0, 0};
+        std::uint32_t oldCeiling = 0;
+        REQUIRE(_umtx_op_nid_postfix(mNonPrio, 7, 30, &oldCeiling, nullptr) == SCE_EINVAL);
+
+        // SET_CEILING rejects ceiling > 700:
+        REQUIRE(_umtx_op_nid_postfix(mPrio, 7, 701, &oldCeiling, nullptr) == SCE_EINVAL);
+
+        // SET_CEILING succeeds with valid ceiling, returns previous ceiling:
+        REQUIRE(_umtx_op_nid_postfix(mPrio, 7, 35, &oldCeiling, nullptr) == SCE_OK);
+        REQUIRE(oldCeiling == 25u);
+        REQUIRE(mPrio[2] == 35u);
+    }
+    {
+        // Reject invalid clockid in ParseUmtxTimeout:
+        alignas(4) std::uint32_t wait_word = 1234;
+        UmtxTime ut{};
+        ut.timeout.tv_sec = 0;
+        ut.timeout.tv_nsec = 1000;
+        ut.flags = 0;
+        ut.clockid = 99; // Invalid clock ID
+        REQUIRE(_umtx_op_nid_postfix(&wait_word, 11, 1234,
+                                     reinterpret_cast<void*>(sizeof(UmtxTime)), &ut) == SCE_EINVAL);
+    }
+    {
+        // RWLOCK owner TID verification, EDEADLK detection, and rwWord[1] URWLOCK_PREFER_READER:
+        alignas(4) std::uint32_t rwTest[4] = {0, 0x02u /* URWLOCK_PREFER_READER */, 0, 0};
+        // Acquire write lock:
+        REQUIRE(_umtx_op_nid_postfix(rwTest, 13, 0, nullptr, nullptr) == SCE_OK);
+        // Recursive write lock from same thread must return SCE_EDEADLK:
+        REQUIRE(_umtx_op_nid_postfix(rwTest, 13, 0, nullptr, nullptr) == SCE_EDEADLK);
+
+        // Unlocking from another thread must return SCE_EPERM:
+        std::atomic<int> otherUnlockRc{0};
+        std::thread otherThread([&] {
+            otherUnlockRc.store(_umtx_op_nid_postfix(rwTest, 14, 0, nullptr, nullptr));
+        });
+        otherThread.join();
+        REQUIRE(otherUnlockRc.load() == SCE_EPERM);
+
+        // Owner unlocks successfully:
+        REQUIRE(_umtx_op_nid_postfix(rwTest, 14, 0, nullptr, nullptr) == SCE_OK);
+
+        // Reader preference in rwWord[1] allows reader acquisition even if writer is waiting:
+        // Also test wrlock timeout cleans up kRwWriteWaiters bit:
+        UmtxTime shortTimeout{};
+        shortTimeout.timeout.tv_sec = 0;
+        shortTimeout.timeout.tv_nsec = 10 * 1000 * 1000; // 10ms
+        shortTimeout.flags = 0;
+        shortTimeout.clockid = 0;
+
+        // Hold read lock:
+        REQUIRE(_umtx_op_nid_postfix(rwTest, 12, 0, nullptr, nullptr) == SCE_OK);
+        // Thread tries wrlock and times out:
+        std::atomic<int> timedOutRc{0};
+        std::thread wrTimeoutThread([&] {
+            timedOutRc.store(_umtx_op_nid_postfix(rwTest, 13, 0,
+                             reinterpret_cast<void*>(sizeof(UmtxTime)), &shortTimeout));
+        });
+        wrTimeoutThread.join();
+        REQUIRE(timedOutRc.load() == SCE_TIMEDOUT);
+        // kRwWriteWaiters must have been cleared on timeout, so word state is just 1 (1 reader):
+        REQUIRE(rwTest[0] == 1u);
+        // Unlock reader:
+        REQUIRE(_umtx_op_nid_postfix(rwTest, 14, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(rwTest[0] == 0u);
     }
     std::printf("PASS umtx wait/wake 4+8, mutex word, robust non-collision, timeout, rwlock, cv\n");
 }
