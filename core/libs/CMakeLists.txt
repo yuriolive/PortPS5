@@ -420,6 +420,15 @@ if(BUILD_TESTING)
     configure_windows_unwind(futex_sync_tests)
     portps5_add_test(futex_sync futex_sync_tests)
 
+    # GuestKernelErrors uses GTest cases (TEST / gtest_discover_tests) via the
+    # portps5_add_gtest helper: equeue wait/delete and error-check mutex contracts.
+    portps5_add_gtest(kernel_errors_tests
+        SOURCES  tests/GuestKernelErrors.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libkernel libc
+        LABELS   unit
+    )
+
     get_property(ALL_LIB_TESTS DIRECTORY PROPERTY TESTS)
     set_property(TEST ${ALL_LIB_TESTS} PROPERTY LABELS "unit")
 # --- slice audio: test registration ---
