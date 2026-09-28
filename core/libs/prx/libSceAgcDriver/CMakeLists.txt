@@ -289,6 +289,13 @@ if(BUILD_TESTING)
         endif()
         set_tests_properties(${agcTestName} PROPERTIES LABELS "lavapipe")
     endforeach()
+
+    portps5_add_gtest(recompiler_fixes_tests
+        SOURCES  ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/RecompilerFixesTests.cpp
+        INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   unit
+    )
 endif()
 
 option(AGC_BUILD_VISUAL_TEST "Enable the standalone AGC SPIR-V visual test" OFF)
