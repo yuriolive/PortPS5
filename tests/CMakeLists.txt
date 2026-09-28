@@ -75,3 +75,13 @@ portps5_add_gtest(filesystem_sandbox_path_tests
     LABELS
         unit
 )
+
+# Python unit tests for tools/check_comments.py — verifies the comment
+# policy linter logic (Rules 1-3) in isolation with no game data required.
+portps5_add_test(check_comments_unit_tests
+    ${Python3_EXECUTABLE}
+    LABELS
+        unit
+    ARGS
+        -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tools -p "test_check_comments.py" -v
+)

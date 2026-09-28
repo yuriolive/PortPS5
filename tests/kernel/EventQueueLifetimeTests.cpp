@@ -1,3 +1,7 @@
+// tests/kernel/EventQueueLifetimeTests.cpp
+// Verification test suite for libkernel event queue (kqueue/equeue) lifetime and concurrency invariants.
+// Verifies refcounting, callback ownership, handle non-aliasing, and thread-safety under concurrent deletion.
+
 #include "common/TestHarness.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 
@@ -51,6 +55,9 @@ void PoisonDuplicateEvent(KernelEqueueEvent*, void*) {
     FAIL() << "duplicate add replaced trigger callback";
 }
 
+// Verifies that re-adding an event with the same identifier updates user metadata
+// while preserving original event filter callbacks and retaining the original owner
+// object until the event is explicitly deleted.
 TEST(EventQueueLifetime, DuplicateAddPreservesEventState) {
     KernelEqueue queue = 0;
     ASSERT_SCE_OK(sceKernelCreateEqueue(&queue, "duplicate-add"));
@@ -164,6 +171,8 @@ void DetachSimulatedVideoOutEvent(KernelEqueue queue, KernelEqueueEvent* event) 
     EXPECT_EQ(registration->marker, 0x123456789abcdef0ull);
 }
 
+// Verifies that when a queue is deleted concurrently, detached event callbacks and their
+// associated state objects outlive the port/queue lifecycle and are destroyed safely without use-after-free.
 TEST(EventQueueLifetime, CallbackStateOutlivesPort) {
     KernelEqueue queue = 0;
     ASSERT_SCE_OK(sceKernelCreateEqueue(&queue, "shared-port-state"));
@@ -239,6 +248,8 @@ void DeleteOwnedEvent(KernelEqueue queue, KernelEqueueEvent* event) {
     EXPECT_EQ(payload->marker, 0xc0dec0dec0dec0deull) << "owned callback payload remains valid";
 }
 
+// Verifies that an event callback holds a shared reference to its payload so that the
+// payload remains valid throughout callback execution even after the owning registration is unlinked.
 TEST(EventQueueLifetime, CallbackOwnsPayload) {
     KernelEqueue queue = 0;
     ASSERT_SCE_OK(sceKernelCreateEqueue(&queue, "owned-callback"));
@@ -280,6 +291,8 @@ TEST(EventQueueLifetime, CallbackOwnsPayload) {
         << "owned callback payload destroyed exactly once";
 }
 
+// Verifies that closing a queue pinned by another thread removes the queue from the
+// handle registry immediately, triggers cleanup callbacks once, and rejects subsequent operations with SCE_KERNEL_ERROR_EBADF.
 TEST(EventQueueLifetime, PinnedClose) {
     KernelEqueue queue = 0;
     ASSERT_SCE_OK(sceKernelCreateEqueue(&queue, "pinned-close"));
@@ -307,6 +320,8 @@ TEST(EventQueueLifetime, PinnedClose) {
         << "deferred destruction does not repeat callback";
 }
 
+// Verifies handle monotonicity: closed equeue handles are never recycled, and stale handles
+// cannot observe or mutate newly allocated queues that happen to occupy adjacent table slots.
 TEST(EventQueueLifetime, StaleHandleNeverAliasesNewQueue) {
     KernelEqueue stale = 0;
     ASSERT_SCE_OK(sceKernelCreateEqueue(&stale, "stale-handle"));
@@ -325,6 +340,8 @@ TEST(EventQueueLifetime, StaleHandleNeverAliasesNewQueue) {
     EXPECT_SCE_OK(sceKernelDeleteEqueue(replacement));
 }
 
+// Verifies thread safety during race conditions between concurrent event triggers and queue
+// deletion, ensuring delete callbacks are invoked exactly once per event without duplicate execution.
 TEST(EventQueueLifetime, ConcurrentCloseCallback) {
     for (uint32_t iteration = 0; iteration < 64; iteration++) {
         KernelEqueue queue = 0;
@@ -357,6 +374,8 @@ TEST(EventQueueLifetime, ConcurrentCloseCallback) {
     }
 }
 
+// Verifies that racing concurrent add, trigger, and delete operations against an asynchronous
+// sceKernelDeleteEqueue cannot cause memory corruption, deadlocks, or registry leaks.
 TEST(EventQueueLifetime, ConcurrentDelete) {
     for (uint32_t iteration = 0; iteration < 64; iteration++) {
         KernelEqueue queue = 0;
