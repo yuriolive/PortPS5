@@ -1,6 +1,23 @@
-## Summary
+## Context
 
-<!-- Brief summary of what this PR does and why. -->
+<!-- Root problem, motivation, and current state. -->
+
+## Higher Goal
+
+<!-- Architectural intent, systemic benefits, and why this matters. -->
+
+## Acceptance Criteria
+
+<!-- Concrete, verifiable deliverables using checkboxes. -->
+- [ ] 
+
+## Out of Scope
+
+<!-- Explicit boundaries, deferred items, and non-goals. -->
+
+## Summary of Changes
+
+<!-- Specific files, implementations, tests, or docs modified. -->
 
 ## Roadmap & Specs
 
