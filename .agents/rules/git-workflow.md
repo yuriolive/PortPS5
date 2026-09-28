@@ -5,8 +5,8 @@
 - **Local Verification Before Commit:**
   - Always iterate and verify changes locally (clean compile and test run) before creating a commit or pushing to remote. Do not rely on hosted CI as a syntax/link checker.
   - Local worktrees share `ccache` at `%LOCALAPPDATA%\ccache` across the machine, keeping rebuilds across branches and worktrees down to seconds.
-- **PRs:**
-  - Structure PR descriptions and task plans with: Context, Higher Goal, Acceptance Criteria (`- [ ]` / `- [x]`), Out of Scope, and Summary of Changes.
+- **PRs and Tasks:**
+  - Structure PR descriptions, task plans, and issue tracking (including beads/`bd` issues and tasks) with: Context, Higher Goal, Acceptance Criteria (`- [ ]` / `- [x]`), Out of Scope, and Summary of Changes.
   - Say which ROADMAP milestone and which spec files the PR touches, and mark finished checkboxes as done (`- [x]`).
   - List the tests you added and how you verified the change.
   - Never attach game footage, logs containing game data, or dumps.
