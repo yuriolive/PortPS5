@@ -1,3 +1,8 @@
+// Mouse backend state — input subsystem scope (M2-gated), ported from AnyPS5.
+// Ring buffer, open/init state, and the Mouse:: backend API used by
+// mouse_impl.cpp. Guest-visible exports stay stubs until M2
+// (docs/spec/input.md). Debt: shares the process-global mouseMutex in
+// mouse_impl.cpp, which must go with the M2 work.
 #ifndef CORE_LIBS_PRX_LIBSCEMOUSE_MOUSESTATE_HPP
 #define CORE_LIBS_PRX_LIBSCEMOUSE_MOUSESTATE_HPP
 

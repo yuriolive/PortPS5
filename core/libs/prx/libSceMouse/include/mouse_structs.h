@@ -1,3 +1,5 @@
+// libSceMouse guest-visible structs and codes — input scope (M2-gated).
+// Ported from AnyPS5 upstream/main. Explicit-width types; ABI-structural.
 #ifndef CORE_LIBS_PRX_LIBSCEMOUSE_MOUSE_STRUCTS_H
 #define CORE_LIBS_PRX_LIBSCEMOUSE_MOUSE_STRUCTS_H
 

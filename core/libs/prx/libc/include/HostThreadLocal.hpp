@@ -1,3 +1,8 @@
+// Host thread-local storage — libc scope, ported from AnyPS5 upstream/main.
+// Provides HostThreadLocal<T, Tag> slots with FLS cleanup. Debt: throws
+// std::runtime_error on slot exhaustion (must become the logging abort path;
+// a guest catch(...) swallows host exceptions). Covered by
+// core/libs/tests/HostThreadLocal.cpp (balance suite, green).
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_HOSTTHREADLOCAL_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_HOSTTHREADLOCAL_HPP
 

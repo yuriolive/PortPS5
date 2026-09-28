@@ -1,3 +1,5 @@
+// SDL mouse-event routing implementation — input scope (M2-gated).
+// Ported from AnyPS5 upstream/main. See MouseInput.hpp.
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 

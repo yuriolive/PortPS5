@@ -1,3 +1,9 @@
+// Mouse backend implementation — input subsystem scope (M2-gated).
+// Ported from AnyPS5 upstream/main. Implements the Mouse:: backend (init,
+// open, read, publish) consumed by the VideoOut routing seam
+// (MousePublishInput_nid_postfix, defined below) and, from M2, the guest
+// exports. Debt: process-global std::mutex mouseMutex violates the
+// no-global-locks rule; must go with the M2 work (docs/spec/input.md).
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 
