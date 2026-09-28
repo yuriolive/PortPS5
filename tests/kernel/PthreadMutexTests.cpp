@@ -196,4 +196,25 @@ TEST(PthreadMutex, HandOffToSecondThread) {
     EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
 }
 
+// Verifies timedlock edge cases: zero timeout on held mutex returns EBUSY immediately;
+// timedlock on an unheld mutex with a large timeout acquires immediately.
+TEST(PthreadMutex, ZeroTimeoutAndImmediateAcquisition) {
+    PthreadMutex mutex = nullptr;
+    ASSERT_EQ(scePthreadMutexInit(&mutex, nullptr, "test_timed_edge"), 0);
+
+    // Timedlock with large timeout on unheld mutex acquires immediately without delay
+    EXPECT_EQ(scePthreadMutexTimedlock(&mutex, 1000000), 0);
+
+    // While held by main, another thread calling timedlock with 0 usec returns SCE_TIMEDOUT (0x8002003C) immediately
+    std::atomic<int> zero_result{-1};
+    std::thread other([&] {
+        zero_result.store(scePthreadMutexTimedlock(&mutex, 0), std::memory_order_release);
+    });
+    other.join();
+    EXPECT_EQ(zero_result.load(std::memory_order_acquire), static_cast<int>(0x8002003Cu));
+
+    EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
+    EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
+}
+
 } // namespace

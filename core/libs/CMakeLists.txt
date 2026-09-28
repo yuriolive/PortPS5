@@ -413,6 +413,13 @@ if(BUILD_TESTING)
         endif()
     endif()
 
+    # --- slice threading: test registration ---
+    add_executable(futex_sync_tests tests/FutexSync.cpp)
+    target_include_directories(futex_sync_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(futex_sync_tests PRIVATE libkernel libc synchronization)
+    configure_windows_unwind(futex_sync_tests)
+    portps5_add_test(futex_sync futex_sync_tests)
+
     get_property(ALL_LIB_TESTS DIRECTORY PROPERTY TESTS)
     set_property(TEST ${ALL_LIB_TESTS} PROPERTY LABELS "unit")
 # --- slice audio: test registration ---

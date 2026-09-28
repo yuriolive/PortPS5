@@ -1,5 +1,14 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #ifndef CORE_LIBS_PRX_LIBKERNEL_PTHREAD_PTHREAD_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_PTHREAD_PTHREAD_HPP
+
+// M1 threading slice: guest sync objects are in-place futex words, not host
+// pointers (docs/spec/threading.md Target design). The 8-byte guest slot IS
+// a MutexWord/CondWord/RwlockWord (see SyncWords.hpp); this header only keeps
+// the small attr structs and the host-side thread handle. No process-global
+// lock lives here: hot paths use CAS + WaitOnAddress only.
 
 #include <sched.h>
 #include "SceTypes.hpp"
@@ -22,13 +31,9 @@ struct PthreadMutexattrPrivate {
 };
 
 struct PthreadMutexPrivate {
-    std::recursive_timed_mutex _rmtx;
-    std::timed_mutex _mtx;
-    MutexType _type;
-    std::atomic<std::thread::id> _owner;
-    int _count;
-
-    PthreadMutexPrivate() : _type(MutexType::Normal), _owner(std::thread::id{}), _count(0) {}
+    // Unused in the futex design: the guest slot holds the word directly.
+    // Kept so old sizeof assumptions fail loudly if anything dereferences it.
+    std::uint64_t _reserved = 0;
 };
 
 struct PthreadCondattrPrivate {
@@ -36,7 +41,15 @@ struct PthreadCondattrPrivate {
 };
 
 struct PthreadCondPrivate {
-    std::condition_variable_any _cv;
+    std::uint64_t _reserved = 0;
+};
+
+struct PthreadRwlockPrivate {
+    std::uint64_t _reserved = 0;
+};
+
+struct PthreadRwlockattrPrivate {
+    int _type = 0;
 };
 
 struct PthreadAttrPrivate {
@@ -46,6 +59,10 @@ struct PthreadAttrPrivate {
     int _schedpriority;
     int _schedpolicy;
     int _inheritsched;
+    // Recorded, never applied: guest masks name console cores, not host
+    // cores (threading.md: affinity recorded, not applied; this spec owns it).
+    std::uint64_t _affinity = 0;
+    std::size_t _guardsize = 4096;
 };
 
 struct PthreadPrivate {
@@ -58,11 +75,21 @@ struct PthreadPrivate {
 #endif
     void* stackAddress = nullptr;
     std::size_t stackSize = 0;
+    std::size_t guardSize = 4096;
     std::atomic<bool> _finished;
     void* _retval;
-    bool _detached;
+    std::atomic<bool> _detached;
     std::mutex _join_mtx;
     std::condition_variable _join_cv;
+    // Compact guest tid in [1, 2^24), allocated at thread entry and recycled
+    // after join (joinable) or on exit (detached). It is the owner field in
+    // every futex word and the value scePthreadGetthreadid returns.
+    std::uint32_t guestTid = 0;
+    // Recorded, never applied (see above).
+    std::atomic<std::uint64_t> affinityMask = 0;
+    std::atomic<int> schedPriority = 700;
+    char threadName[32] = {};
+    std::mutex _name_mtx;
 
     PthreadPrivate() : _finished(false), _retval(nullptr), _detached(false) {}
 };

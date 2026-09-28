@@ -1,164 +1,421 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
+#include "../include/FutexCore.hpp"
+#include "../include/GuestTid.hpp"
+#include "../include/SyncWords.hpp"
+#include "prx/libc/include/General.hpp"
+#include <atomic>
 #include <chrono>
-#include <limits>
-#include <memory>
-#include <stdexcept>
+#include <cstdint>
 
 namespace {
 
-constexpr int sceBusy = static_cast<int>(0x80020010u);
-constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
-std::mutex initializationMutex;
+using SyncWords::kSceEagain;
+using SyncWords::kSceEbusy;
+using SyncWords::kSceEdeadlk;
+using SyncWords::kSceEinval;
+using SyncWords::kSceEperm;
+using SyncWords::kSceOk;
+using SyncWords::kSceTimedOut;
+using MW = SyncWords::MutexWord;
 
-PthreadMutex destroyedMutex() {
-    return reinterpret_cast<PthreadMutex>(std::uintptr_t{2});
+// The slot address IS the word address: PthreadMutex* points at 8 bytes of
+// guest storage, accessed as uint64_t via atomic_ref. INIT (bit 63) never
+// collides with canonical user pointers, so pointer/word confusion is
+// impossible; 0/1 are the static initializers.
+inline std::uint64_t* WordPtr(PthreadMutex* slot) noexcept {
+    return reinterpret_cast<std::uint64_t*>(slot);
 }
 
-PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
-    if (!mutex)
-        throw std::invalid_argument("Mutex pointer is null");
-    std::lock_guard lock(initializationMutex);
-    if (*mutex == destroyedMutex())
-        throw std::runtime_error("Mutex has been destroyed");
-    if (reinterpret_cast<std::uintptr_t>(*mutex) == 1)
-        throw std::runtime_error("Adaptive mutex initializer is unsupported");
-    if (!*mutex) {
-        if (!initialize)
-            throw std::runtime_error("Mutex is not initialized");
-        *mutex = new PthreadMutexPrivate();
+inline std::atomic_ref<std::uint64_t> WordRef(PthreadMutex* slot) noexcept {
+    return std::atomic_ref<std::uint64_t>(*WordPtr(slot));
+}
+
+// Map an attr type to the 3-bit word type. Null attr means Normal for
+// explicit init (static slot 0 still lazily becomes ErrorCheck).
+inline std::uint32_t AttrType(const PthreadMutexattr* attr) noexcept {
+    if (!attr || !*attr)
+        return MW::kNormal;
+    switch ((*attr)->type) {
+    case MutexType::ErrorCheck: return MW::kErrCheck;
+    case MutexType::Recursive: return MW::kRecursive;
+    case MutexType::Normal: return MW::kNormal;
+    default: return MW::kNormal;
     }
-    return *mutex;
 }
 
-template<typename TAcquire>
-int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool tryOnly) {
-    const auto thread = std::this_thread::get_id();
-    const bool owned = mutex->_owner.load(std::memory_order_acquire) == thread;
-    if (owned && mutex->_type != MutexType::Recursive) {
-        if (tryOnly)
-            return sceBusy;
-        throw std::runtime_error("Mutex is already owned by the current thread");
-    }
-    if (owned && mutex->_count == std::numeric_limits<int>::max())
-        throw std::overflow_error("Recursive mutex lock count overflow");
-    if (mutex->_type == MutexType::Recursive) {
-        if (!acquire(mutex->_rmtx))
-            return unavailable;
-        ++mutex->_count;
-    } else {
-        if (!acquire(mutex->_mtx))
-            return unavailable;
-    }
-    mutex->_owner.store(thread, std::memory_order_release);
-    return 0;
+// Fast uncontended acquire: CAS(unlocked INIT|type -> locked INIT|type|tid).
+// Returns kSceOk on success, -1 when the word was not in the expected
+// unlocked state (caller falls through to the contended path).
+int TryFastAcquire(std::atomic_ref<std::uint64_t>& ref, std::uint64_t unlocked,
+                   std::uint32_t tid) noexcept {
+    const std::uint64_t desired =
+        MW::Make(MW::Type(unlocked), tid, 0, false);
+    std::uint64_t expected = unlocked;
+    if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                    std::memory_order_acquire))
+        return kSceOk;
+    return -1;
 }
 
+// Core lock with optional deadline (kInfinite = blocking). No global mutex:
+// Drepper three-state (unlocked / locked / locked+CONTENDED) over the word.
+int LockInternal(PthreadMutex* slot, FutexCore::Deadline deadline) noexcept {
+    if (!slot)
+        return kSceEinval;
+    const std::uint32_t tid = GuestTid::Ensure();
+    if (tid == 0)
+        return kSceEagain;  // >2^24 live threads.
+    auto ref = WordRef(slot);
+
+    // Lazy static init + acquisition in one CAS lives inside the loop below
+    // (words 0 and 1 have no INIT bit).
+    while (true) {
+        std::uint64_t w = ref.load(std::memory_order_acquire);
+
+        // Static defaults: 0 -> ErrorCheck, 1 -> Normal (adaptive).
+        if (w == 0 || w == 1) {
+            const std::uint32_t type = (w == 0) ? MW::kErrCheck : MW::kNormal;
+            const std::uint64_t desired = MW::Make(type, tid, 0, false);
+            if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return kSceOk;
+            continue;  // Lost the INIT race; exactly one winner, retry.
+        }
+
+        if (!MW::IsInit(w)) {
+            // Old pointer representation without INIT: a guest bug (copied or
+            // forged slot). POSIX calls memcpy of a live object undefined;
+            // report EINVAL rather than corrupt.
+            return kSceEinval;
+        }
+        if (MW::IsDestroyed(w))
+            return kSceEinval;
+
+        const std::uint32_t type = MW::Type(w);
+        if (type != MW::kErrCheck && type != MW::kRecursive && type != MW::kNormal)
+            return kSceEinval;
+        const std::uint32_t owner = MW::Owner(w);
+
+        if (owner == tid) {
+            // Relock by owner.
+            if (type == MW::kRecursive) {
+                const std::uint32_t rec = MW::RecStored(w);
+                if (rec == 0xFFFFu)
+                    return kSceEagain;  // recursion overflow.
+                const std::uint64_t desired =
+                    MW::Make(type, tid, rec + 1, MW::IsContended(w));
+                if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
+                                                std::memory_order_acquire))
+                    return kSceOk;
+                continue;
+            }
+            // ErrorCheck AND Normal relock report EDEADLK (Normal relock is
+            // POSIX-undefined; returning instead of deadlocking keeps a guest
+            // bug diagnosable and avoids hanging the watchdog).
+            return kSceEdeadlk;
+        }
+
+        if (owner == 0) {
+            // Unlocked INIT word: try the fast CAS (clears CONTENDED).
+            const std::uint64_t unlocked = MW::Make(type, 0, 0, false);
+            if (w == unlocked) {
+                if (TryFastAcquire(ref, unlocked, tid) == kSceOk)
+                    return kSceOk;
+                continue;
+            }
+            // Unlocked but CONTENDED flag set (waiters queued): steal it with
+            // CAS to locked, preserving CONTENDED so the next unlock wakes them.
+            const std::uint64_t desired = MW::Make(type, tid, 0, true);
+            if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return kSceOk;
+            continue;
+        }
+
+        // Locked by another thread.
+        if (deadline.IsExpired())
+            return kSceTimedOut;
+        // Mark CONTENDED before sleeping (release), so unlock's load sees us
+        // and wakes exactly one waiter. Then re-check before sleeping: if the
+        // word became unlocked between marking and loading (unlock raced
+        // ahead and already returned, so no further wake is coming), retry
+        // acquisition instead of sleeping on an unlocked word forever.
+        std::uint64_t withContended = w | MW::kContended;
+        if (w != withContended)
+            ref.compare_exchange_strong(w, withContended, std::memory_order_acq_rel,
+                                        std::memory_order_acquire);
+        const std::uint64_t expect = ref.load(std::memory_order_acquire);
+        if (!MW::IsInit(expect) || MW::IsDestroyed(expect))
+            continue;  // next loop returns EINVAL.
+        if (MW::Owner(expect) == 0)
+            continue;  // unlocked now: retry acquire, do not wait.
+        if (MW::Owner(expect) == tid)
+            continue;  // raced with our own relock: re-evaluate (EDEADLK/recursive).
+        // If the word changed between marking and waiting, WaitOnce returns
+        // immediately (expected mismatch) and we retry without sleeping.
+        const bool progress = FutexCore::WaitU64(WordPtr(slot), expect, deadline);
+        if (!progress) {
+            if (deadline == 0)
+                return kSceEbusy;
+            return kSceTimedOut;
+        }
+    }
 }
+
+int UnlockInternal(PthreadMutex* slot) noexcept {
+    if (!slot)
+        return kSceEinval;
+    const std::uint32_t tid = GuestTid::Ensure();
+    if (tid == 0)
+        return kSceEagain;
+    auto ref = WordRef(slot);
+    while (true) {
+        const std::uint64_t w = ref.load(std::memory_order_acquire);
+        if (w == 0 || w == 1)
+            return kSceEperm;  // never locked static.
+        if (!MW::IsInit(w) || MW::IsDestroyed(w))
+            return kSceEinval;
+        const std::uint32_t type = MW::Type(w);
+        if (type != MW::kErrCheck && type != MW::kRecursive && type != MW::kNormal)
+            return kSceEinval;
+        if (MW::Owner(w) != tid)
+            return kSceEperm;
+        if (type == MW::kRecursive && MW::RecStored(w) != 0) {
+            // Recursive inner unlock: decrement, keep owner, no wake.
+            const std::uint64_t desired =
+                MW::Make(type, tid, MW::RecStored(w) - 1, MW::IsContended(w));
+            std::uint64_t expected = w;
+            if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return kSceOk;
+            continue;
+        }
+        // Final unlock: clear owner, preserving CONTENDED if waiters were queued
+        // so the next owner wakes the remaining waiters (Drepper handoff).
+        const bool hadWaiters = MW::IsContended(w);
+        const std::uint64_t desired = MW::Make(type, 0, 0, hadWaiters);
+        std::uint64_t expected = w;
+        if (ref.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                        std::memory_order_acquire)) {
+            if (hadWaiters)
+                FutexCore::WakeSingle(WordPtr(slot));
+            return kSceOk;
+        }
+    }
+}
+
+}  // namespace
 
 int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstime) {
-    if (!abstime || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
-        throw std::invalid_argument("Invalid absolute mutex timeout");
-    const auto maximum = std::chrono::nanoseconds::max().count();
-    if (abstime->tv_sec > (maximum - abstime->tv_nsec) / 1000000000)
-        throw std::overflow_error("Absolute mutex timeout exceeds the host clock range");
-    const auto duration = std::chrono::nanoseconds(abstime->tv_sec * 1000000000 + abstime->tv_nsec);
-    if (std::chrono::duration<long double>(duration) >= std::chrono::duration<long double>(std::chrono::system_clock::duration::max()))
-        throw std::overflow_error("Absolute mutex timeout exceeds the host clock range");
-    const auto deadline = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(duration));
-    return acquireMutex(resolveMutex(mutex, true), [&](auto& native) { return native.try_lock_until(deadline); }, sceTimedOut, false);
+    if (!mutex || !abstime)
+        return kSceEinval;
+    if (abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000LL)
+        return kSceEinval;
+    // POSIX absolute timeout is REALTIME; convert to a Deadline.
+    const FutexCore::Deadline deadline =
+        FutexCore::AbsoluteToDeadline(abstime->tv_sec, abstime->tv_nsec, false);
+    return LockInternal(mutex, deadline);
 }
 
 extern "C" {
 
-int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) {
+/**
+ * @brief scePthreadMutexattrInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) noexcept {
     if (!attr)
-        throw std::invalid_argument("Mutex attribute pointer is null");
-    *attr = new PthreadMutexattrPrivate{MutexType::Normal};
-    return 0;
+        return kSceEinval;
+    *attr = new (std::nothrow) PthreadMutexattrPrivate{MutexType::Normal};
+    return *attr ? kSceOk : SyncWords::kSceEnomem;
 }
 
-int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) {
+/**
+ * @brief scePthreadMutexattrDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) noexcept {
     if (!attr || !*attr)
-        throw std::invalid_argument("Mutex attributes are not initialized");
+        return kSceEinval;
     delete *attr;
     *attr = nullptr;
-    return 0;
+    return kSceOk;
 }
 
-int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
+/**
+ * @brief scePthreadMutexattrSettype implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) noexcept {
     if (!attr || !*attr)
-        throw std::invalid_argument("Mutex attributes are not initialized");
+        return kSceEinval;
     switch (type) {
-    case 1: (*attr)->type = MutexType::ErrorCheck; break;
-    case 2: (*attr)->type = MutexType::Recursive; break;
-    case 3: (*attr)->type = MutexType::Normal; break;
-    default: throw std::invalid_argument("Invalid mutex type");
+    case 1: (*attr)->type = MutexType::ErrorCheck; return kSceOk;
+    case 2: (*attr)->type = MutexType::Recursive; return kSceOk;
+    case 3: (*attr)->type = MutexType::Normal; return kSceOk;
+    default: return kSceEinval;
     }
-    return 0;
 }
 
-int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) {
+/**
+ * @brief scePthreadMutexattrSetprotocol implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) noexcept {
     if (!attr || !*attr)
-        throw std::invalid_argument("Mutex attributes are not initialized");
-    if (protocol != 0)
-        throw std::invalid_argument("Mutex priority inheritance and protection are unsupported");
-    return 0;
+        return kSceEinval;
+    // Only PROTOCOL_NONE (0); inheritance/protection are unsupported but the
+    // call itself is meaningful, so EINVAL (not Unsupported).
+    return (protocol == 0) ? kSceOk : kSceEinval;
 }
 
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char*) {
+/**
+ * @brief scePthreadMutexInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr,
+                                 const char*) noexcept {
     if (!mutex)
-        throw std::invalid_argument("Mutex pointer is null");
+        return kSceEinval;
     if (attr && !*attr)
-        throw std::invalid_argument("Mutex attributes are not initialized");
-    auto replacement = std::make_unique<PthreadMutexPrivate>();
-    if (attr)
-        replacement->_type = (*attr)->type;
-    std::lock_guard lock(initializationMutex);
-    *mutex = replacement.release();
-    return 0;
+        return kSceEinval;
+    const std::uint32_t type = AttrType(attr);
+    // Explicit init writes an unlocked INIT word (re-init after destroy is
+    // allowed; re-init of a locked word is POSIX-undefined, so EINVAL when
+    // the current word shows a live owner).
+    auto ref = WordRef(mutex);
+    const std::uint64_t cur = ref.load(std::memory_order_acquire);
+    if (MW::IsInit(cur) && !MW::IsDestroyed(cur) && MW::Owner(cur) != 0)
+        return kSceEbusy;
+    ref.store(MW::Make(type, 0, 0, false), std::memory_order_release);
+    return kSceOk;
 }
 
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) {
+/**
+ * @brief scePthreadMutexDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) noexcept {
     if (!mutex)
-        throw std::invalid_argument("Mutex pointer is null");
-    std::lock_guard lock(initializationMutex);
-    if (*mutex == destroyedMutex())
-        throw std::runtime_error("Mutex has already been destroyed");
-    if (reinterpret_cast<std::uintptr_t>(*mutex) == 1)
-        throw std::runtime_error("Adaptive mutex initializer is unsupported");
-    if (*mutex && (*mutex)->_owner.load(std::memory_order_acquire) != std::thread::id{})
-        throw std::runtime_error("Cannot destroy a locked mutex");
-    delete *mutex;
-    *mutex = destroyedMutex();
-    return 0;
-}
-
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) {
-    return acquireMutex(resolveMutex(mutex, true), [](auto& native) { native.lock(); return true; }, 0, false);
-}
-
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) {
-    auto* current = resolveMutex(mutex, false);
-    if (current->_owner.load(std::memory_order_acquire) != std::this_thread::get_id())
-        throw std::runtime_error("Cannot unlock a mutex owned by another thread");
-    if (current->_type == MutexType::Recursive) {
-        if (--current->_count == 0)
-            current->_owner.store(std::thread::id{}, std::memory_order_release);
-        current->_rmtx.unlock();
-    } else {
-        current->_owner.store(std::thread::id{}, std::memory_order_release);
-        current->_mtx.unlock();
+        return kSceEinval;
+    auto ref = WordRef(mutex);
+    while (true) {
+        std::uint64_t w = ref.load(std::memory_order_acquire);
+        if (w == 0 || w == 1) {
+            // Never-touched static: mark destroyed so later use is EINVAL.
+            if (ref.compare_exchange_strong(w, MW::kDestroyedWord, std::memory_order_acq_rel,
+                                            std::memory_order_acquire))
+                return kSceOk;
+            continue;
+        }
+        if (!MW::IsInit(w) || MW::IsDestroyed(w))
+            return kSceEinval;
+        if (MW::Owner(w) != 0)
+            return kSceEbusy;
+        std::uint64_t expected = w;
+        if (ref.compare_exchange_strong(expected, MW::kDestroyedWord,
+                                        std::memory_order_acq_rel, std::memory_order_acquire))
+            return kSceOk;
     }
-    return 0;
 }
 
-int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) {
-    return acquireMutex(resolveMutex(mutex, true), [=](auto& native) { return native.try_lock_for(std::chrono::microseconds(usec)); }, sceTimedOut, false);
+/**
+ * @brief scePthreadMutexLock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) noexcept {
+    return LockInternal(mutex, FutexCore::kInfinite);
 }
 
-int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) {
-    return acquireMutex(resolveMutex(mutex, true), [](auto& native) { return native.try_lock(); }, sceBusy, true);
+/**
+ * @brief scePthreadMutexUnlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) noexcept {
+    return UnlockInternal(mutex);
+}
+
+/**
+ * @brief scePthreadMutexTimedlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) noexcept {
+    if (!mutex)
+        return kSceEinval;
+    const std::uint64_t deadline = FutexCore::NowNanos() + static_cast<std::uint64_t>(usec) * 1000ULL;
+    return LockInternal(mutex, deadline);
+}
+
+/**
+ * @brief scePthreadMutexTrylock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
+int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) noexcept {
+    if (!mutex)
+        return kSceEinval;
+    // Sentinel deadline 0 would collide with a valid QPC time; use a flag:
+    // attempt exactly one fast acquire, else EBUSY without sleeping.
+    const std::uint32_t tid = GuestTid::Ensure();
+    if (tid == 0)
+        return kSceEagain;
+    auto ref = WordRef(mutex);
+    std::uint64_t w = ref.load(std::memory_order_acquire);
+    if (w == 0 || w == 1) {
+        const std::uint32_t type = (w == 0) ? MW::kErrCheck : MW::kNormal;
+        const std::uint64_t desired = MW::Make(type, tid, 0, false);
+        if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return kSceOk;
+        return kSceEbusy;
+    }
+    if (!MW::IsInit(w) || MW::IsDestroyed(w))
+        return kSceEinval;
+    const std::uint32_t type = MW::Type(w);
+    if (type != MW::kErrCheck && type != MW::kRecursive && type != MW::kNormal)
+        return kSceEinval;
+    const std::uint32_t owner = MW::Owner(w);
+    if (owner == tid) {
+        if (type == MW::kRecursive) {
+            while (true) {
+                const std::uint32_t rec = MW::RecStored(w);
+                if (rec == 0xFFFFu)
+                    return kSceEagain;
+                const std::uint64_t desired = MW::Make(type, tid, rec + 1, MW::IsContended(w));
+                if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
+                                                std::memory_order_acquire))
+                    return kSceOk;
+                if (!MW::IsInit(w) || MW::Type(w) != type || MW::Owner(w) != tid)
+                    return kSceEbusy;
+            }
+        }
+        return kSceEbusy;  // trylock on owned non-recursive: EBUSY (not EDEADLK).
+    }
+    if (owner == 0) {
+        const std::uint64_t unlocked = MW::Make(type, 0, 0, false);
+        if (w == unlocked && TryFastAcquire(ref, unlocked, tid) == kSceOk)
+            return kSceOk;
+        // Stale CONTENDED variant of unlocked: steal it.
+        const std::uint64_t desired = MW::Make(type, tid, 0, false);
+        if (ref.compare_exchange_strong(w, desired, std::memory_order_acq_rel,
+                                        std::memory_order_acquire))
+            return kSceOk;
+        return kSceEbusy;
+    }
+    return kSceEbusy;
 }
 
 }
