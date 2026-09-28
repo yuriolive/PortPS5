@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #include "../include/Pthread.hpp"
 #include "../include/Rwlock.hpp"
 #include "prx/libkernel/Pthread/include/FutexCore.hpp"
@@ -158,6 +161,11 @@ int WrlockInternal(PthreadRwlock* slot, bool tryOnly) noexcept {
 
 extern "C" {
 
+/**
+ * @brief scePthreadRwlockattrInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) noexcept {
     if (!attr)
         return kSceEinval;
@@ -165,6 +173,11 @@ int APS5_VABI scePthreadRwlockattrInit(PthreadRwlockattr* attr) noexcept {
     return *attr ? kSceOk : SyncWords::kSceEnomem;
 }
 
+/**
+ * @brief scePthreadRwlockattrDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
@@ -173,6 +186,11 @@ int APS5_VABI scePthreadRwlockattrDestroy(PthreadRwlockattr* attr) noexcept {
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadRwlockattrSettype implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
@@ -180,6 +198,11 @@ int APS5_VABI scePthreadRwlockattrSettype(PthreadRwlockattr* attr, int type) noe
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadRwlockInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr,
                                   const char* name) noexcept {
     (void)name;
@@ -191,6 +214,11 @@ int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockatt
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadRwlockDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock) noexcept {
     if (!rwlock)
         return kSceEinval;
@@ -208,22 +236,47 @@ int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock) noexcept {
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadRwlockRdlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock) noexcept {
     return RdlockInternal(rwlock, false);
 }
 
+/**
+ * @brief scePthreadRwlockTryrdlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) noexcept {
     return RdlockInternal(rwlock, true);
 }
 
+/**
+ * @brief scePthreadRwlockWrlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock) noexcept {
     return WrlockInternal(rwlock, false);
 }
 
+/**
+ * @brief scePthreadRwlockTrywrlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) noexcept {
     return WrlockInternal(rwlock, true);
 }
 
+/**
+ * @brief scePthreadRwlockUnlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) noexcept {
     if (!rwlock)
         return kSceEinval;

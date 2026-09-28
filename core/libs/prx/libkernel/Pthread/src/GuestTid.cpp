@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #ifdef _WIN32
 #include <windows.h>
 #include <fibersapi.h>

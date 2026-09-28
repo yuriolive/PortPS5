@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #include "../include/Pthread.hpp"
 #include "../include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/GuestTid.hpp"
@@ -203,6 +206,11 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
 
 extern "C" {
 
+/**
+ * @brief scePthreadCreate implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry,
                                void* arg, const char* name) noexcept {
     if (!thread || !entry)
@@ -323,6 +331,11 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadJoin implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadJoin(Pthread thread, void** retval) noexcept {
     if (!thread)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -359,6 +372,11 @@ int APS5_VABI scePthreadJoin(Pthread thread, void** retval) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadDetach implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadDetach(Pthread thread) noexcept {
     if (!thread)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -382,6 +400,11 @@ int APS5_VABI scePthreadDetach(Pthread thread) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadExit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 void APS5_VABI scePthreadExit(void* retval) noexcept {
     if (!currentThread) {
 #ifdef _WIN32
@@ -409,10 +432,20 @@ void APS5_VABI scePthreadExit(void* retval) noexcept {
 #endif
 }
 
+/**
+ * @brief scePthreadSelf implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 Pthread APS5_VABI scePthreadSelf() noexcept {
     return currentThread;
 }
 
+/**
+ * @brief scePthreadYield implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 void APS5_VABI scePthreadYield() noexcept {
     // Both yield paths call SwitchToThread (spec): it yields to a ready
     // same-priority thread without the variable sleep of std::yield.
@@ -423,16 +456,31 @@ void APS5_VABI scePthreadYield() noexcept {
 #endif
 }
 
+/**
+ * @brief scePthreadCancel implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCancel(Pthread thread) noexcept {
     (void)thread;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
+/**
+ * @brief scePthreadEqual implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadEqual(Pthread thread1, Pthread thread2) noexcept {
     return (thread1 == thread2) ? 1 : 0;
 }
 
+/**
+ * @brief scePthreadGetaffinity implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) noexcept {
     if (!mask)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -447,6 +495,11 @@ int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) noexcep
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadGetname implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadGetname(Pthread thread, char* name) noexcept {
     if (!name)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -458,6 +511,11 @@ int APS5_VABI scePthreadGetname(Pthread thread, char* name) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadGetprio implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) noexcept {
     if (!prio)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -468,12 +526,22 @@ int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadGetthreadid implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadGetthreadid(void) noexcept {
     // Compact tid in [1, 2^24): owner field + Getthreadid value (spec).
     const std::uint32_t tid = GuestTid::Ensure();
     return static_cast<int>(tid);
 }
 
+/**
+ * @brief scePthreadRename implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) noexcept {
     PthreadPrivate* self = thread ? thread : currentThread;
     if (!self || !name)
@@ -484,6 +552,11 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadSetaffinity implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) noexcept {
     // Recorded, not applied: guest masks name console cores, not host cores.
     PthreadPrivate* self = thread ? thread : currentThread;
@@ -493,6 +566,11 @@ int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) noexcept
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadSetcancelstate implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) noexcept {
     (void)state;
     (void)old_state;
@@ -500,6 +578,11 @@ int APS5_VABI scePthreadSetcancelstate(int state, int* old_state) noexcept {
     return 0;
 }
 
+/**
+ * @brief scePthreadSetcanceltype implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadSetcanceltype(int type, int* old_type) noexcept {
     (void)type;
     (void)old_type;
@@ -507,6 +590,11 @@ int APS5_VABI scePthreadSetcanceltype(int type, int* old_type) noexcept {
     return 0;
 }
 
+/**
+ * @brief scePthreadSetprio implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadSetprio(Pthread thread, int prio) noexcept {
     PthreadPrivate* self = thread ? thread : currentThread;
     if (!self)
@@ -524,6 +612,11 @@ int APS5_VABI scePthreadSetprio(Pthread thread, int prio) noexcept {
 
 extern "C" {
 
+/**
+ * @brief __pthread_cxa_finalize_nid_postfix implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 void APS5_VABI __pthread_cxa_finalize_nid_postfix(void* argument) noexcept {
     (void)argument;
     NotImplemented_nid_no_patch(__func__);

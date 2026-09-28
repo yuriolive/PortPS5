@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -282,6 +285,11 @@ int CondOperations::AbsoluteTimedwait(PthreadCond* cond, PthreadMutex* mutex,
 
 extern "C" {
 
+/**
+ * @brief scePthreadCondattrInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) noexcept {
     if (!attr)
         return kSceEinval;
@@ -289,6 +297,11 @@ int APS5_VABI scePthreadCondattrInit(PthreadCondattr* attr) noexcept {
     return *attr ? kSceOk : SyncWords::kSceEnomem;
 }
 
+/**
+ * @brief scePthreadCondattrDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
@@ -297,6 +310,11 @@ int APS5_VABI scePthreadCondattrDestroy(PthreadCondattr* attr) noexcept {
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadCondattrSetclock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid clockId) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
@@ -307,6 +325,11 @@ int APS5_VABI scePthreadCondattrSetclock(PthreadCondattr* attr, KernelClockid cl
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadCondInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr,
                                 const char*) noexcept {
     if (!cond)
@@ -323,6 +346,11 @@ int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr,
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadCondDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) noexcept {
     if (!cond)
         return kSceEinval;
@@ -340,6 +368,11 @@ int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) noexcept {
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadCondSignal implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept {
     if (!cond)
         return kSceEinval;
@@ -373,6 +406,11 @@ int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept {
     }
 }
 
+/**
+ * @brief scePthreadCondBroadcast implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
     if (!cond)
         return kSceEinval;
@@ -414,16 +452,31 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
     }
 }
 
+/**
+ * @brief scePthreadCondSignalto implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) noexcept {
     (void)thread;
     // POSIX permits broadcast-as-signal (spurious wakeup); matches PR5.
     return scePthreadCondBroadcast(cond);
 }
 
+/**
+ * @brief scePthreadCondWait implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) noexcept {
     return WaitInternal(cond, mutex, FutexCore::kInfinite, false);
 }
 
+/**
+ * @brief scePthreadCondTimedwait implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex,
                                       KernelUseconds usec) noexcept {
     if (!cond || !mutex)

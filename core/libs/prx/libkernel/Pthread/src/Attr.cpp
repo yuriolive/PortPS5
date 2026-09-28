@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libc/include/General.hpp"
 #include <new>
@@ -18,6 +21,11 @@ static constexpr int SCHED_FIFO_PS5 = 1;
 
 extern "C" {
 
+/**
+ * @brief scePthreadAttrInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrInit(PthreadAttr* attr) noexcept {
     if (!attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -36,6 +44,11 @@ int APS5_VABI scePthreadAttrInit(PthreadAttr* attr) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr) noexcept {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -44,6 +57,11 @@ int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetdetachstate implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetdetachstate(PthreadAttr* attr, int detachstate) noexcept {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -53,6 +71,11 @@ int APS5_VABI scePthreadAttrSetdetachstate(PthreadAttr* attr, int detachstate) n
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetschedparam implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param) noexcept {
     if (!attr || !*attr || !param)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -60,6 +83,11 @@ int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedPa
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetstacksize implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksize) noexcept {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -75,6 +103,11 @@ int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stacksiz
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGetstack implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetstack(const PthreadAttr* attr, void** stackaddr,
                                      std::size_t* stacksize) noexcept {
     if (!attr || !*attr || !stackaddr || !stacksize)
@@ -84,6 +117,11 @@ int APS5_VABI scePthreadAttrGetstack(const PthreadAttr* attr, void** stackaddr,
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGet implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) noexcept {
     if (!thread || !attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -97,6 +135,11 @@ int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) noexcept {
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGetaffinity implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask) noexcept {
     // Recorded, not applied (threading.md: guest masks name console cores).
     if (!attr || !*attr || !mask)
@@ -105,6 +148,11 @@ int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* 
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGetdetachstate implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state) noexcept {
     if (!attr || !*attr || !state)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -112,6 +160,11 @@ int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state) 
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGetguardsize implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetguardsize(const PthreadAttr* attr, size_t* guard_size) noexcept {
     if (!attr || !*attr || !guard_size)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -119,6 +172,11 @@ int APS5_VABI scePthreadAttrGetguardsize(const PthreadAttr* attr, size_t* guard_
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGetschedparam implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param) noexcept {
     if (!attr || !*attr || !param)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -126,6 +184,11 @@ int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedPa
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGetsolosched implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched) noexcept {
     (void)attr;
     (void)solosched;
@@ -133,6 +196,11 @@ int APS5_VABI scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched
     return 0;
 }
 
+/**
+ * @brief scePthreadAttrGetstackaddr implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stack_addr) noexcept {
     if (!attr || !*attr || !stack_addr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -140,6 +208,11 @@ int APS5_VABI scePthreadAttrGetstackaddr(const PthreadAttr* attr, void** stack_a
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrGetstacksize implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_size) noexcept {
     if (!attr || !*attr || !stack_size)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -147,6 +220,11 @@ int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, size_t* stack_
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetaffinity implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask) noexcept {
     // Recorded, not applied (see above).
     if (!attr || !*attr)
@@ -155,6 +233,11 @@ int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask) n
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetguardsize implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetguardsize(PthreadAttr* attr, size_t guard_size) noexcept {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -162,6 +245,11 @@ int APS5_VABI scePthreadAttrSetguardsize(PthreadAttr* attr, size_t guard_size) n
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetinheritsched implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inherit_sched) noexcept {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -169,6 +257,11 @@ int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inherit_sched
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetschedpolicy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy) noexcept {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -176,6 +269,11 @@ int APS5_VABI scePthreadAttrSetschedpolicy(PthreadAttr* attr, int policy) noexce
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetsolosched implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched) noexcept {
     (void)attr;
     (void)solosched;
@@ -183,6 +281,11 @@ int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched) noexc
     return 0;
 }
 
+/**
+ * @brief scePthreadAttrSetstack implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, size_t size) noexcept {
     if (!attr || !*attr || !addr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -193,6 +296,11 @@ int APS5_VABI scePthreadAttrSetstack(PthreadAttr* attr, void* addr, size_t size)
     return SCE_OK;
 }
 
+/**
+ * @brief scePthreadAttrSetstackaddr implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadAttrSetstackaddr(PthreadAttr* attr, void* addr) noexcept {
     if (!attr || !*attr || !addr)
         return SCE_KERNEL_ERROR_EINVAL;

@@ -35,33 +35,57 @@ static constexpr int SCE_EOWNERDEAD = static_cast<int>(0x80020060u);
 static constexpr int SCE_ENOTRECOVERABLE = static_cast<int>(0x8002005Fu);
 
 extern "C" {
+// Documented test prototype for scePthreadMutexattrInit.
 int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) noexcept;
+// Documented test prototype for scePthreadMutexattrDestroy.
 int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) noexcept;
+// Documented test prototype for scePthreadMutexattrSettype.
 int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) noexcept;
+// Documented test prototype for scePthreadMutexInit.
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr,
                                  const char* name) noexcept;
+// Documented test prototype for scePthreadMutexDestroy.
 int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) noexcept;
+// Documented test prototype for scePthreadMutexLock.
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) noexcept;
+// Documented test prototype for scePthreadMutexUnlock.
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) noexcept;
+// Documented test prototype for scePthreadMutexTimedlock.
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) noexcept;
+// Documented test prototype for scePthreadMutexTrylock.
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) noexcept;
+// Documented test prototype for scePthreadCondInit.
 int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr,
                                 const char* name) noexcept;
+// Documented test prototype for scePthreadCondDestroy.
 int APS5_VABI scePthreadCondDestroy(PthreadCond* cond) noexcept;
+// Documented test prototype for scePthreadCondSignal.
 int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept;
+// Documented test prototype for scePthreadCondBroadcast.
 int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept;
+// Documented test prototype for scePthreadCondWait.
 int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex) noexcept;
+// Documented test prototype for scePthreadCondTimedwait.
 int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex,
                                       KernelUseconds usec) noexcept;
+// Documented test prototype for scePthreadRwlockInit.
 int APS5_VABI scePthreadRwlockInit(PthreadRwlock* rwlock, const PthreadRwlockattr* attr,
                                   const char* name) noexcept;
+// Documented test prototype for scePthreadRwlockDestroy.
 int APS5_VABI scePthreadRwlockDestroy(PthreadRwlock* rwlock) noexcept;
+// Documented test prototype for scePthreadRwlockRdlock.
 int APS5_VABI scePthreadRwlockRdlock(PthreadRwlock* rwlock) noexcept;
+// Documented test prototype for scePthreadRwlockTryrdlock.
 int APS5_VABI scePthreadRwlockTryrdlock(PthreadRwlock* rwlock) noexcept;
+// Documented test prototype for scePthreadRwlockWrlock.
 int APS5_VABI scePthreadRwlockWrlock(PthreadRwlock* rwlock) noexcept;
+// Documented test prototype for scePthreadRwlockTrywrlock.
 int APS5_VABI scePthreadRwlockTrywrlock(PthreadRwlock* rwlock) noexcept;
+// Documented test prototype for scePthreadRwlockUnlock.
 int APS5_VABI scePthreadRwlockUnlock(PthreadRwlock* rwlock) noexcept;
+// Documented test prototype for scePthreadGetthreadid.
 int APS5_VABI scePthreadGetthreadid(void) noexcept;
+// Documented test prototype for _umtx_op_nid_postfix.
 int APS5_VABI _umtx_op_nid_postfix(void* obj, int op, std::uint64_t val, void* uaddr,
                                    void* uaddr2) noexcept;
 }
@@ -413,6 +437,9 @@ static void TestUmtx() {
         // Wake with no waiters is a no-op success.
         REQUIRE(_umtx_op_nid_postfix(&w, 16, 1, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(&w, 3, 0, nullptr, nullptr) == SCE_OK);
+        // Wake with INT_MAX / UINT32_MAX sentinel wakes all and returns promptly.
+        REQUIRE(_umtx_op_nid_postfix(&w, 3, 2147483647ULL, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(&w, 3, 0xFFFFFFFFULL, nullptr, nullptr) == SCE_OK);
     }
     {
         alignas(8) std::uint64_t w = 0xABCDEF;
@@ -431,17 +458,86 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_EBUSY);
         REQUIRE(_umtx_op_nid_postfix(&m, 6, 0, nullptr, nullptr) == SCE_OK);
-        // Robust mutex state 0x20 -> SCE_ENOTRECOVERABLE.
-        alignas(4) std::uint32_t m_notrecov = 0x20u;
+
+        // Robust mutex state (bit 29) -> SCE_ENOTRECOVERABLE.
+        alignas(4) std::uint32_t m_notrecov = 0x20000000u;
         REQUIRE(_umtx_op_nid_postfix(&m_notrecov, 4, 0, nullptr, nullptr) == SCE_ENOTRECOVERABLE);
-        // Robust mutex state 0x10 -> SCE_EOWNERDEAD (and acquired).
-        alignas(4) std::uint32_t m_ownerdead = 0x10u;
+        // Robust mutex state (bit 30) -> SCE_EOWNERDEAD (and acquired).
+        alignas(4) std::uint32_t m_ownerdead = 0x40000000u;
         REQUIRE(_umtx_op_nid_postfix(&m_ownerdead, 4, 0, nullptr, nullptr) == SCE_EOWNERDEAD);
         REQUIRE((m_ownerdead & 0xFFFFFFu) != 0);  // acquired by current thread tid.
+
+        // Guest TID 16 (0x10) and TID 32 (0x20) must NOT collide with robust markers!
+        alignas(4) std::uint32_t m_tid16 = 16u;
+        REQUIRE(_umtx_op_nid_postfix(&m_tid16, 4, 0, nullptr, nullptr) == SCE_EBUSY);
+        alignas(4) std::uint32_t m_tid32 = 32u;
+        REQUIRE(_umtx_op_nid_postfix(&m_tid32, 4, 0, nullptr, nullptr) == SCE_EBUSY);
+
+        // Raw 4-byte word lock/unlock (ops 0 and 1) does not read past allocation.
+        alignas(4) std::uint32_t raw_word = 0;
+        REQUIRE(_umtx_op_nid_postfix(&raw_word, 0, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(&raw_word, 1, 0, nullptr, nullptr) == SCE_OK);
+
         // Unknown op -> EINVAL.
         REQUIRE(_umtx_op_nid_postfix(&m, 999, 0, nullptr, nullptr) == SCE_EINVAL);
     }
-    std::printf("PASS umtx wait/wake 4+8, mutex word, unknown EINVAL\n");
+    {
+        // _umtx_time relative timeout parsing.
+        struct UmtxTime {
+            KernelTimespec timeout;
+            std::uint32_t flags;   // UMTX_ABSTIME = 0x01
+            std::uint32_t clockid;
+        };
+        alignas(4) std::uint32_t wait_word = 1234;
+        UmtxTime ut{};
+        ut.timeout.tv_sec = 0;
+        ut.timeout.tv_nsec = 50 * 1000 * 1000; // 50ms relative
+        ut.flags = 0; // Relative
+        ut.clockid = 0;
+        const auto t0 = std::chrono::steady_clock::now();
+        REQUIRE(_umtx_op_nid_postfix(&wait_word, 11, 1234,
+                                     reinterpret_cast<void*>(sizeof(UmtxTime)), &ut) == SCE_TIMEDOUT);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - t0).count();
+        REQUIRE(elapsed >= 30);  // Did not return immediately!
+    }
+    {
+        // _umtx_op RWLOCK (ops 12, 13, 14).
+        alignas(4) std::uint32_t rw[4] = {0, 0, 0, 0};
+        // Acquire read lock (op 12).
+        REQUIRE(_umtx_op_nid_postfix(rw, 12, 0, nullptr, nullptr) == SCE_OK);
+        // Second reader lock succeeds.
+        REQUIRE(_umtx_op_nid_postfix(rw, 12, 0, nullptr, nullptr) == SCE_OK);
+        // Release readers (op 14).
+        REQUIRE(_umtx_op_nid_postfix(rw, 14, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(rw, 14, 0, nullptr, nullptr) == SCE_OK);
+        // Acquire write lock (op 13).
+        REQUIRE(_umtx_op_nid_postfix(rw, 13, 0, nullptr, nullptr) == SCE_OK);
+        // Release write lock (op 14).
+        REQUIRE(_umtx_op_nid_postfix(rw, 14, 0, nullptr, nullptr) == SCE_OK);
+    }
+    {
+        // _umtx_op CV (ops 8, 9, 10).
+        alignas(4) std::uint32_t cv[4] = {0, 0, 0, 0};
+        alignas(4) std::uint32_t mutex[4] = {0, 0, 0, 0};
+        std::atomic<bool> threadWaiting{false};
+        std::atomic<int> waitResult{-1};
+        std::thread t([&] {
+            REQUIRE(_umtx_op_nid_postfix(mutex, 4, 0, nullptr, nullptr) == SCE_OK);
+            threadWaiting.store(true);
+            waitResult.store(_umtx_op_nid_postfix(cv, 8, 0, mutex, nullptr));
+            REQUIRE(_umtx_op_nid_postfix(mutex, 6, 0, nullptr, nullptr) == SCE_OK);
+        });
+        while (!threadWaiting.load()) {
+            std::this_thread::yield();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Signal CV (op 9).
+        REQUIRE(_umtx_op_nid_postfix(cv, 9, 0, nullptr, nullptr) == SCE_OK);
+        t.join();
+        REQUIRE(waitResult.load() == SCE_OK);
+    }
+    std::printf("PASS umtx wait/wake 4+8, mutex word, robust non-collision, timeout, rwlock, cv\n");
 }
 
 static void Microbenchmark() {

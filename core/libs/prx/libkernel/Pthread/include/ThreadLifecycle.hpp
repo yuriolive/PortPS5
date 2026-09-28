@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #ifndef CORE_LIBS_PRX_LIBKERNEL_PTHREAD_THREADLIFECYCLE_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_PTHREAD_THREADLIFECYCLE_HPP
 
@@ -10,6 +13,11 @@ public:
     static void SetThreadAtexitReport(thread_atexit_report_func_t callback);
 };
 
+/**
+ * @brief scePthreadExit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 extern "C" void APS5_VABI scePthreadExit(void* retval) noexcept;
 
 #endif

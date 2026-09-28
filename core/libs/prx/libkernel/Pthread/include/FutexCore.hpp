@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #ifndef CORE_LIBS_PRX_LIBKERNEL_PTHREAD_INCLUDE_FUTEXCORE_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_PTHREAD_INCLUDE_FUTEXCORE_HPP
 

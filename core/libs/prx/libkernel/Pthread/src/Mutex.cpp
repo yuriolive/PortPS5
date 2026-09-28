@@ -1,3 +1,6 @@
+// PortPS5 libkernel synchronization and threading subsystem.
+// Implements guest threading and synchronization primitives with System V ABI invariants.
+
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "../include/FutexCore.hpp"
@@ -220,6 +223,11 @@ int MutexOperations::Timedlock(PthreadMutex* mutex, const KernelTimespec* abstim
 
 extern "C" {
 
+/**
+ * @brief scePthreadMutexattrInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) noexcept {
     if (!attr)
         return kSceEinval;
@@ -227,6 +235,11 @@ int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr) noexcept {
     return *attr ? kSceOk : SyncWords::kSceEnomem;
 }
 
+/**
+ * @brief scePthreadMutexattrDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
@@ -235,6 +248,11 @@ int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) noexcept {
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadMutexattrSettype implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
@@ -246,6 +264,11 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) noexc
     }
 }
 
+/**
+ * @brief scePthreadMutexattrSetprotocol implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
@@ -254,6 +277,11 @@ int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protoco
     return (protocol == 0) ? kSceOk : kSceEinval;
 }
 
+/**
+ * @brief scePthreadMutexInit implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr,
                                  const char*) noexcept {
     if (!mutex)
@@ -272,6 +300,11 @@ int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* a
     return kSceOk;
 }
 
+/**
+ * @brief scePthreadMutexDestroy implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) noexcept {
     if (!mutex)
         return kSceEinval;
@@ -296,14 +329,29 @@ int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex) noexcept {
     }
 }
 
+/**
+ * @brief scePthreadMutexLock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex) noexcept {
     return LockInternal(mutex, FutexCore::kInfinite);
 }
 
+/**
+ * @brief scePthreadMutexUnlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) noexcept {
     return UnlockInternal(mutex);
 }
 
+/**
+ * @brief scePthreadMutexTimedlock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec) noexcept {
     if (!mutex)
         return kSceEinval;
@@ -311,6 +359,11 @@ int APS5_VABI scePthreadMutexTimedlock(PthreadMutex* mutex, KernelUseconds usec)
     return LockInternal(mutex, deadline);
 }
 
+/**
+ * @brief scePthreadMutexTrylock implementation.
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Status or error code.
+ */
 int APS5_VABI scePthreadMutexTrylock(PthreadMutex* mutex) noexcept {
     if (!mutex)
         return kSceEinval;
