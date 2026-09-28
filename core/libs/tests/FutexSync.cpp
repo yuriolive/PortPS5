@@ -462,6 +462,13 @@ static void TestUmtx() {
         // Wake with INT_MAX / UINT32_MAX sentinel wakes all and returns promptly.
         REQUIRE(_umtx_op_nid_postfix(&w, 3, 2147483647ULL, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(&w, 3, 0xFFFFFFFFULL, nullptr, nullptr) == SCE_OK);
+
+        // Op 21: NWAKE_PRIVATE wakes all private waiters across an array of addresses.
+        // val == 0 is a no-op that returns SCE_OK.
+        alignas(4) std::uint32_t nw[2] = {1, 2};
+        void* nwAddrs[2] = {&nw[0], &nw[1]};
+        REQUIRE(_umtx_op_nid_postfix(nwAddrs, 21, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(nwAddrs, 21, 2, nullptr, nullptr) == SCE_OK);
     }
     {
         alignas(8) std::uint64_t w = 0xABCDEF;
@@ -480,6 +487,21 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(&m, 4, 0, nullptr, nullptr) == SCE_EBUSY);
         REQUIRE(_umtx_op_nid_postfix(&m, 6, 0, nullptr, nullptr) == SCE_OK);
+
+        // Op 5: UMTX_OP_MUTEX_LOCK locks free mutex; unlocked via op 6.
+        REQUIRE(_umtx_op_nid_postfix(&m, 5, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(_umtx_op_nid_postfix(&m, 6, 0, nullptr, nullptr) == SCE_OK);
+
+        // Op 17: UMTX_OP_MUTEX_WAIT wait-only path.
+        // Mutex is unlocked (0): returns SCE_OK immediately without acquiring ownership.
+        alignas(4) std::uint32_t mWait = 0;
+        REQUIRE(_umtx_op_nid_postfix(&mWait, 17, 0, nullptr, nullptr) == SCE_OK);
+        REQUIRE(mWait == 0); // Not acquired!
+        // Mutex is locked: timed wait with past deadline expires with SCE_TIMEDOUT.
+        REQUIRE(_umtx_op_nid_postfix(&mWait, 4, 0, nullptr, nullptr) == SCE_OK); // locked
+        KernelTimespec pastWait{0, 0};
+        REQUIRE(_umtx_op_nid_postfix(&mWait, 17, 0, &pastWait, nullptr) == SCE_TIMEDOUT);
+        REQUIRE(_umtx_op_nid_postfix(&mWait, 6, 0, nullptr, nullptr) == SCE_OK); // unlock
 
         // Robust mutex state (bit 29) -> SCE_ENOTRECOVERABLE.
         alignas(4) std::uint32_t m_notrecov = 0x20000000u;
@@ -640,6 +662,10 @@ static void TestUmtx() {
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
         KernelTimespec pastTs{0, 1}; // epoch + 1ns
         REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1, mTime, &pastTs) == SCE_TIMEDOUT);
+        // Re-lock mTime before second cv wait since cv wait returns with mutex unlocked:
+        REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
+        // CV wait with CVWAIT_ABSTIME | CVWAIT_CLOCKID (val = 1 | 2 | (1 << 16)) for CLOCK_MONOTONIC:
+        REQUIRE(_umtx_op_nid_postfix(cvTime, 8, 1 | 2 | (1 << 16), mTime, &pastTs) == SCE_TIMEDOUT);
         REQUIRE(_umtx_op_nid_postfix(mTime, 4, 0, nullptr, nullptr) == SCE_OK);
         REQUIRE(_umtx_op_nid_postfix(mTime, 6, 0, nullptr, nullptr) == SCE_OK);
     }
@@ -647,7 +673,7 @@ static void TestUmtx() {
 }
 
 /**
- * @brief Tests sub-millisecond sleep precision.
+ * @brief Tests sub-millisecond sleep precision and chunked millisecond sleeping.
  * Verifies that sceKernelUsleep does not return immediately when no other thread is ready.
  */
 static void TestSubMillisecondSleep() {
@@ -660,6 +686,13 @@ static void TestSubMillisecondSleep() {
     const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t0).count();
     REQUIRE(elapsedUs >= 400);
+
+    // Multi-millisecond sleep (e.g. 2000us): exercises chunked millisecond Sleep path.
+    const auto t1 = std::chrono::steady_clock::now();
+    REQUIRE(sceKernelUsleep_nid_postfix(2000) == SCE_OK);
+    const auto elapsedMsUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - t1).count();
+    REQUIRE(elapsedMsUs >= 1800);
     std::printf("PASS sub-millisecond sleep duration precision\n");
 }
 

@@ -39,6 +39,7 @@ Short version:
 5. A change to a subsystem's behaviour updates its spec in `docs/spec/` in the same PR.
 6. Docs describe hardware only as the generic reference tier. Never name a specific personal machine.
 7. Enforce code comments across all new files, public interfaces, and test fixtures: document file purpose, non-obvious rationale, ABI invariants, and workarounds inline in the code. Iterate and verify builds and unit tests locally before committing.
+8. Every issue, bug report, or review finding is a potential test: always add a unit or regression test for any edge case, race condition, or bug identified during review or development.
 
 ## Skills
 

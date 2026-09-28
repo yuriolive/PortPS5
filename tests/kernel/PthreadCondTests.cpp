@@ -216,4 +216,39 @@ TEST(PthreadCond, MultipleWaitersSequentialSignal) {
     EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
 }
 
+// Verifies condition attribute clock configuration and validation.
+TEST(PthreadCond, CondattrClockValidation) {
+    PthreadCondattr attr = nullptr;
+    ASSERT_EQ(scePthreadCondattrInit(&attr), 0);
+    ASSERT_NE(attr, nullptr);
+
+    // Valid clocks: 0 (realtime), 1 (monotonic), 13
+    EXPECT_EQ(scePthreadCondattrSetclock(&attr, 0), 0);
+    EXPECT_EQ(scePthreadCondattrSetclock(&attr, 1), 0);
+    EXPECT_EQ(scePthreadCondattrSetclock(&attr, 13), 0);
+
+    // Invalid clocks (< 0 or > 13) return SCE EINVAL (0x80020016)
+    EXPECT_EQ(scePthreadCondattrSetclock(&attr, -1), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadCondattrSetclock(&attr, 14), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadCondattrSetclock(&attr, 99), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadCondattrSetclock(nullptr, 0), static_cast<int>(0x80020016u));
+
+    // Initialize condvar with monotonic clock attribute
+    EXPECT_EQ(scePthreadCondattrSetclock(&attr, 1), 0);
+    PthreadCond cond = nullptr;
+    ASSERT_EQ(scePthreadCondInit(&cond, &attr, "mono_cond"), 0);
+
+    PthreadMutex mutex = nullptr;
+    ASSERT_EQ(scePthreadMutexInit(&mutex, nullptr, "mono_mtx"), 0);
+
+    // Verify timedwait expires properly on monotonic condvar
+    EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+    EXPECT_EQ(scePthreadCondTimedwait(&cond, &mutex, 10000), static_cast<int>(0x8002003Cu));
+    EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
+
+    EXPECT_EQ(scePthreadCondDestroy(&cond), 0);
+    EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
+    EXPECT_EQ(scePthreadCondattrDestroy(&attr), 0);
+}
+
 } // namespace

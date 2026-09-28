@@ -7,7 +7,7 @@ The protocol is in `docs/spec/verification.md`.
 - **Local-only checks** run on a maintainer's GPU machine with their own dumps.
   - They cover boot, save-checkpoint replay, frame comparisons and full runs.
   - Their only output is the results JSON (use the `compat-result` skill).
-- **Every bug fix** adds a test that fails without the fix, wherever it can run without game data.
+- **Every bug fix, issue, or review finding** adds a test that fails without the fix, wherever it can run without game data. Every review comment, edge case, or bug report is a test candidate: never resolve a review finding or issue without adding a corresponding regression unit test.
 - **Every new or changed PS5 library function** gets a unit test for its return codes and edge cases.
 - **Standard framework is GoogleTest (GTest + GMock).**
   - Use `EXPECT_EQ`, `EXPECT_NE`, `ASSERT_TRUE`, etc. Never use bare `abort()` or custom unformatted `Require()` in new tests.
