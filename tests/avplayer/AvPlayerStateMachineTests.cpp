@@ -189,13 +189,13 @@ TEST(AvPlayerStateMachine, StreamControl) {
     EXPECT_EQ(sceAvPlayerClose(player), 0);
 }
 
-// Layout matching FrameInfoEx in Export.cpp
+// Layout matching VideoDetailsEx in Export.cpp
 struct VideoDetailsExMock {
     uint32_t width;
     uint32_t height;
     float aspectRatio;
     uint8_t language[4];
-    uint8_t reserved0[4];
+    uint32_t framerate;
     uint32_t cropLeftOffset;
     uint32_t cropRightOffset;
     uint32_t cropTopOffset;
@@ -210,6 +210,7 @@ struct VideoDetailsExMock {
     uint32_t transferCharacteristics;
     uint8_t reserved2[16];
 };
+static_assert(offsetof(VideoDetailsExMock, framerate) == 16, "VideoDetailsExMock framerate offset ABI");
 
 struct FrameInfoExMock {
     void* data;
@@ -220,8 +221,8 @@ struct FrameInfoExMock {
 static_assert(sizeof(FrameInfoExMock) == 104, "FrameInfoExMock size ABI");
 static_assert(offsetof(FrameInfoExMock, video) == 24, "FrameInfoExMock video offset ABI");
 
-// Verifies delivering video frames via sceAvPlayerGetVideoDataEx with custom allocator.
-TEST(AvPlayerStateMachine, VideoDataDelivery) {
+// Verifies delivering video frames via sceAvPlayerGetVideoDataEx with custom allocator and verifies framerate at offset 16.
+TEST(AvPlayerStateMachine, VideoDataDeliveryAndFramerate) {
     int dummyMem = 42;
     InitData init{};
     init.memObject = &dummyMem;
@@ -240,6 +241,96 @@ TEST(AvPlayerStateMachine, VideoDataDelivery) {
     EXPECT_EQ(gotFrame, 1);
     EXPECT_NE(frame.data, nullptr);
     EXPECT_EQ(frame.video.height, 1080u);
+    EXPECT_GT(frame.video.framerate, 0u);
+
+    EXPECT_EQ(sceAvPlayerClose(player), 0);
+}
+
+// Re-entrant allocator that calls sceAvPlayerCurrentTime during texture allocation to verify no deadlock.
+static void* g_reentrantPlayerHandle = nullptr;
+void* APS5_VABI TestReentrantAllocTexture(void* /*obj*/, uint32_t /*alignment*/, uint32_t size) {
+    if (g_reentrantPlayerHandle != nullptr) {
+        // Must not deadlock on Player::lock
+        (void)sceAvPlayerCurrentTime(g_reentrantPlayerHandle);
+    }
+    return std::malloc(size);
+}
+
+// Verifies that a re-entrant texture allocator calling player APIs does not deadlock on recursive mutex.
+TEST(AvPlayerStateMachine, ReentrantAllocTextureNoDeadlock) {
+    int dummyMem = 42;
+    InitData init{};
+    init.memObject = &dummyMem;
+    init.allocTexture = reinterpret_cast<void*>(&TestReentrantAllocTexture);
+    init.deallocTexture = reinterpret_cast<void*>(&TestFreeTexture);
+    init.numFramebuffers = 2;
+    init.autoStart = 1;
+
+    void* player = sceAvPlayerInit(&init);
+    ASSERT_NE(player, nullptr);
+    g_reentrantPlayerHandle = player;
+
+    EXPECT_EQ(sceAvPlayerAddSource(player, "reentrant.mp4"), 0);
+
+    FrameInfoExMock frame{};
+    const int gotFrame = sceAvPlayerGetVideoDataEx(player, &frame);
+    EXPECT_EQ(gotFrame, 1);
+    EXPECT_NE(frame.data, nullptr);
+
+    g_reentrantPlayerHandle = nullptr;
+    EXPECT_EQ(sceAvPlayerClose(player), 0);
+}
+
+// Callback that closes the player directly during READY event to verify safe lifetime and no use-after-free.
+static void* g_closingPlayerHandle = nullptr;
+void APS5_VABI TestClosingEventCallback(void* /*obj*/, int32_t eventId, int32_t /*arg1*/, void* /*arg2*/) {
+    if (eventId == 0x02 && g_closingPlayerHandle != nullptr) { // kEventReady
+        sceAvPlayerClose(g_closingPlayerHandle);
+        g_closingPlayerHandle = nullptr;
+    }
+}
+
+// Verifies closing player inside an event callback does not cause use-after-free in subsequent event triggers.
+TEST(AvPlayerStateMachine, SafeCloseInsideEventCallback) {
+    InitData init{};
+    init.eventCallback = reinterpret_cast<void*>(&TestClosingEventCallback);
+    init.autoStart = 1;
+
+    void* player = sceAvPlayerInit(&init);
+    ASSERT_NE(player, nullptr);
+    g_closingPlayerHandle = player;
+
+    // AddSource fires READY, which invokes callback and closes player; autoStart must not crash attempting PLAY.
+    EXPECT_EQ(sceAvPlayerAddSource(player, "autoclose.mp4"), 0);
+
+    // Further calls on closed player must fail gracefully
+    EXPECT_EQ(sceAvPlayerClose(player), static_cast<int>(0x806a0001u));
+}
+
+// Verifies looping mode restarts playback after reaching frame budget without firing STOP or stopping.
+TEST(AvPlayerStateMachine, LoopingRestartsPlayback) {
+    int dummyMem = 42;
+    InitData init{};
+    init.memObject = &dummyMem;
+    init.allocTexture = reinterpret_cast<void*>(&TestAllocTexture);
+    init.deallocTexture = reinterpret_cast<void*>(&TestFreeTexture);
+    init.numFramebuffers = 2;
+    init.autoStart = 1;
+
+    void* player = sceAvPlayerInit(&init);
+    ASSERT_NE(player, nullptr);
+
+    EXPECT_EQ(sceAvPlayerSetLooping(player, 1), 0);
+    EXPECT_EQ(sceAvPlayerAddSource(player, "loop.mp4"), 0);
+
+    // Jump past the frame budget (120 frames * 33ms = 3960ms)
+    EXPECT_EQ(sceAvPlayerJumpToTime(player, 5000), 0);
+
+    // In looping mode, getting video frame should reset to beginning and succeed
+    FrameInfoExMock frame{};
+    const int gotFrame = sceAvPlayerGetVideoDataEx(player, &frame);
+    EXPECT_EQ(gotFrame, 1);
+    EXPECT_TRUE(sceAvPlayerIsActive(player));
 
     EXPECT_EQ(sceAvPlayerClose(player), 0);
 }

@@ -58,7 +58,7 @@ struct VideoDetailsEx {
     std::uint32_t height;
     float aspectRatio;
     std::uint8_t language[4];
-    std::uint8_t reserved0[4];
+    std::uint32_t framerate;
     std::uint32_t cropLeftOffset;
     std::uint32_t cropRightOffset;
     std::uint32_t cropTopOffset;
@@ -74,6 +74,7 @@ struct VideoDetailsEx {
     std::uint8_t reserved2[16];
 };
 static_assert(sizeof(VideoDetailsEx) == 80, "SceAvPlayerVideoEx ABI");
+static_assert(offsetof(VideoDetailsEx, framerate) == 16, "SceAvPlayerVideoEx ABI");
 static_assert(offsetof(VideoDetailsEx, cropLeftOffset) == 20, "SceAvPlayerVideoEx ABI");
 static_assert(offsetof(VideoDetailsEx, pitch) == 36, "SceAvPlayerVideoEx ABI");
 static_assert(offsetof(VideoDetailsEx, frameRate) == 48, "SceAvPlayerVideoEx ABI");
@@ -142,17 +143,26 @@ struct Player {
     std::uint64_t framesDelivered = 0;
     std::string path;
     std::vector<std::uint8_t*> frames;
-    std::mutex lock;
+    std::recursive_mutex lock;
 };
 
-Player* Check(void* handle) {
-    Player* p = static_cast<Player*>(handle);
-    return p != nullptr && p->magic == kMagic ? p : nullptr;
+std::mutex g_playersMutex;
+std::vector<std::shared_ptr<Player>> g_activePlayers;
+
+std::shared_ptr<Player> Check(void* handle) {
+    if (handle == nullptr) return nullptr;
+    std::lock_guard<std::mutex> g(g_playersMutex);
+    for (const auto& p : g_activePlayers) {
+        if (p.get() == handle && p->magic == kMagic) {
+            return p;
+        }
+    }
+    return nullptr;
 }
 
 // The callback runs guest code and may re-enter the player, so it is always invoked without the player lock held.
-void Fire(Player* p, std::int32_t event, void* data = nullptr) {
-    if (p->callback == nullptr) return;
+void Fire(const std::shared_ptr<Player>& p, std::int32_t event, void* data = nullptr) {
+    if (!p || p->callback == nullptr) return;
     // Budgeted per event number rather than per call site: one shared APS5_HIT line would cap the whole
     // census at three events of any kind, so the READY/PLAY pair that opens a movie eats the budget and the
     // STOP that ends it is never reported.
@@ -189,7 +199,11 @@ void HaltClock(Player& p) {
 
 // True once the blank clip has run out -- or was never going to run, because the title gave us no allocator to
 // put its frames in. Both are the same thing to a polling title: no more frames will ever arrive.
-bool StreamExhausted(Player& p) { return p.noStorage || CurrentFrame(p) >= kFrameBudget; }
+bool StreamExhausted(Player& p) {
+    if (p.noStorage) return true;
+    if (p.looping) return false;
+    return CurrentFrame(p) >= kFrameBudget;
+}
 
 // There is no decoder, so this player "plays" a fixed-length blank clip instead of the source. On real hardware
 // the end of the stream is reported by the poll that finds no more frames, and the STOP event fires on that same
@@ -198,7 +212,8 @@ bool StreamExhausted(Player& p) { return p.noStorage || CurrentFrame(p) >= kFram
 // has to come from the poll, and only once the clip has actually run out: a title that is waiting for frames
 // ends its sequence on the end-of-stream that follows them, not on one that arrives before the first.
 // Returns true when this call is the one that ends the stream, so the caller fires the event outside the lock.
-bool EndStream(Player* p) {
+bool EndStream(const std::shared_ptr<Player>& p) {
+    if (!p) return false;
     std::lock_guard g(p->lock);
     if (!p->playing || p->paused || p->stopFired) return false;
     if (!StreamExhausted(*p)) return false;
@@ -256,8 +271,17 @@ bool PrepareFrames(Player& p) {
 // slowed to the host's pace instead. Caller holds the lock.
 bool DeliverFrame(Player& p, void*& data, std::uint64_t& timestamp) {
     if (!p.playing || p.paused || !PrepareFrames(p)) return false;
-    const auto frame = CurrentFrame(p);
-    if (frame >= kFrameBudget) return false;
+    auto frame = CurrentFrame(p);
+    if (frame >= kFrameBudget) {
+        if (p.looping) {
+            p.bankedMs = 0;
+            p.clockAnchor = std::chrono::steady_clock::now();
+            p.framesDelivered = 0;
+            frame = 0;
+        } else {
+            return false;
+        }
+    }
     data = p.frames[frame % p.frames.size()];
     timestamp = frame * kFrameIntervalMs;
     if (frame + 1 > p.framesDelivered) {
@@ -282,6 +306,7 @@ void WriteVideoDetails(VideoDetailsEx& out) {
     out.width = kFramePitch;
     out.height = kFrameHeight;
     out.aspectRatio = static_cast<float>(kFrameWidth) / static_cast<float>(kFrameHeight);
+    out.framerate = static_cast<std::uint32_t>(kFrameRate);
     out.cropRightOffset = kFramePitch - kFrameWidth;
     out.pitch = kFramePitch;
     out.lumaBitDepth = 8;
@@ -292,63 +317,64 @@ void WriteVideoDetails(VideoDetailsEx& out) {
 // Shared body of the two video getters. The frame is written through the guest's out-param in whichever of the
 // two layouts the caller announced, and a poll that finds the clip spent is turned into the end-of-stream report
 // on the way out -- outside the lock, because the STOP callback runs guest code.
-Bool PollVideo(Player* p, void* frame_info, bool extended) {
- if (frame_info == nullptr) return 0;
- void* data = nullptr;
- std::uint64_t timestamp = 0;
- bool delivered = false;
- bool wasPaused = false;
- {
-  std::lock_guard g(p->lock);
-  wasPaused = p->paused;
-  delivered = DeliverFrame(*p, data, timestamp);
-  if (delivered) {
-   if (extended) {
-    FrameInfoEx out = {};
-    out.data = data;
-    out.timestamp = timestamp;
-    WriteVideoDetails(out.video);
-    std::memcpy(frame_info, &out, sizeof(out));
-   } else {
-    FrameInfo out = {};
-    out.data = data;
-    out.timestamp = timestamp;
-    out.width = kFrameWidth;
-    out.height = kFrameHeight;
-    out.aspectRatio = static_cast<float>(kFrameWidth) / static_cast<float>(kFrameHeight);
-    std::memcpy(frame_info, &out, sizeof(out));
-   }
-   return 1;
-  }
- }
- // Unbudgeted (unlike APS5_HIT above): every poll that finds the player paused, so the exact interleaving
- // of the game's own Pause call against its own polling loop is visible instead of guessed at.
- if (wasPaused) {
-  std::fprintf(stderr, "[AVPLIFE] poll found paused, no frame delivered\n");
-  std::fflush(stderr);
- }
- if (EndStream(p)) Fire(p, kEventStop);
- return 0;
+Bool PollVideo(const std::shared_ptr<Player>& p, void* frame_info, bool extended) {
+    if (!p || frame_info == nullptr) return 0;
+    void* data = nullptr;
+    std::uint64_t timestamp = 0;
+    bool delivered = false;
+    bool wasPaused = false;
+    {
+        std::lock_guard g(p->lock);
+        wasPaused = p->paused;
+        delivered = DeliverFrame(*p, data, timestamp);
+        if (delivered) {
+            if (extended) {
+                FrameInfoEx out = {};
+                out.data = data;
+                out.timestamp = timestamp;
+                WriteVideoDetails(out.video);
+                std::memcpy(frame_info, &out, sizeof(out));
+            } else {
+                FrameInfo out = {};
+                out.data = data;
+                out.timestamp = timestamp;
+                out.width = kFrameWidth;
+                out.height = kFrameHeight;
+                out.aspectRatio = static_cast<float>(kFrameWidth) / static_cast<float>(kFrameHeight);
+                std::memcpy(frame_info, &out, sizeof(out));
+            }
+            return 1;
+        }
+    }
+    // Unbudgeted (unlike APS5_HIT above): every poll that finds the player paused, so the exact interleaving
+    // of the game's own Pause call against its own polling loop is visible instead of guessed at.
+    if (wasPaused) {
+        std::fprintf(stderr, "[AVPLIFE] poll found paused, no frame delivered\n");
+        std::fflush(stderr);
+    }
+    if (EndStream(p)) Fire(p, kEventStop);
+    return 0;
 }
 
 // HANDOFF13/14: HANDOFF12's still-open question was "why does the guest pause and never resume". These
 // call-site logs (unbudgeted, unlike APS5_HIT -- we need every call, not just the first three) print the
 // thread that called, the player pointer (multiple concurrent players would explain a stray pause on the
 // wrong handle), and the media clock's state at the moment of the call.
-void LogLifecycleCall(const char* site, Player* p) {
+void LogLifecycleCall(const char* site, const std::shared_ptr<Player>& p) {
+    if (!p) return;
     std::ostringstream tid;
     tid << std::this_thread::get_id();
     std::lock_guard g(p->lock);
     std::fprintf(stderr, "[AVPLIFE] %s p=%p tid=%s playing=%d paused=%d stopFired=%d haveSource=%d framesDelivered=%llu bankedMs=%llu clockRunning=%d\n",
-        site, static_cast<void*>(p), tid.str().c_str(), p->playing ? 1 : 0,
+        site, static_cast<void*>(p.get()), tid.str().c_str(), p->playing ? 1 : 0,
         p->paused ? 1 : 0, p->stopFired ? 1 : 0, p->haveSource ? 1 : 0,
         static_cast<unsigned long long>(p->framesDelivered), static_cast<unsigned long long>(p->bankedMs),
         p->clockAnchor != std::chrono::steady_clock::time_point{} ? 1 : 0);
     std::fflush(stderr);
 }
 
-Player* CreateFrom(const InitPrefix* d) {
-    Player* p = new Player();
+std::shared_ptr<Player> CreateFrom(const InitPrefix* d) {
+    auto p = std::make_shared<Player>();
     if (d != nullptr) {
         p->eventObject = d->eventObject;
         p->callback = reinterpret_cast<EventCallback>(d->eventCallback);
@@ -358,11 +384,13 @@ Player* CreateFrom(const InitPrefix* d) {
         p->deallocTexture = reinterpret_cast<TextureFree>(d->deallocTexture);
         p->numFramebuffers = d->numFramebuffers;
     }
+    std::lock_guard<std::mutex> g(g_playersMutex);
+    g_activePlayers.push_back(p);
     return p;
 }
 
-int AddSourceCommon(Player* p, const char* path) {
-    if (p == nullptr || path == nullptr || *path == '\0') return kErrInvalidParams;
+int AddSourceCommon(const std::shared_ptr<Player>& p, const char* path) {
+    if (!p || path == nullptr || *path == '\0') return kErrInvalidParams;
     LogLifecycleCall("AddSource(before)", p);
     bool play = false;
     {
@@ -390,303 +418,329 @@ extern "C" {
 // Initializes an AvPlayer playback session using base initialization parameters.
 // Returns opaque player handle on success, or nullptr on allocation failure.
 void* APS5_VABI sceAvPlayerInit(const void* init) {
- APS5_HIT("AVP", "sceAvPlayerInit");
- return CreateFrom(static_cast<const InitPrefix*>(init));
+    APS5_HIT("AVP", "sceAvPlayerInit");
+    auto p = CreateFrom(static_cast<const InitPrefix*>(init));
+    return p ? p.get() : nullptr;
 }
 
 // Initializes an AvPlayer playback session using extended initialization parameters.
 // Returns 0 on success or kErrInvalidParams if handle pointer is null.
 int APS5_VABI sceAvPlayerInitEx(const void* init_ex, void** handle) {
- if (handle == nullptr) return kErrInvalidParams;
- // sceAvPlayerInitDataEx begins with a 64-bit size, followed by the same allocator / file / event blocks.
- const std::uint8_t* base = static_cast<const std::uint8_t*>(init_ex);
- *handle = CreateFrom(base != nullptr ? reinterpret_cast<const InitPrefix*>(base + 8) : nullptr);
- return 0;
+    if (handle == nullptr) return kErrInvalidParams;
+    // sceAvPlayerInitDataEx begins with a 64-bit size, followed by the same allocator / file / event blocks.
+    const std::uint8_t* base = static_cast<const std::uint8_t*>(init_ex);
+    auto p = CreateFrom(base != nullptr ? reinterpret_cast<const InitPrefix*>(base + 8) : nullptr);
+    *handle = p ? p.get() : nullptr;
+    return 0;
 }
 
 // Performs secondary post-initialization configuration on the player handle.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerPostInit(void* h, const void* post_init) {
- (void)post_init;
- return Check(h) != nullptr ? 0 : kErrInvalidParams;
+    (void)post_init;
+    return Check(h) != nullptr ? 0 : kErrInvalidParams;
 }
 
 // Registers a logging callback function and user context pointer.
 // Returns 0 on success.
 int APS5_VABI sceAvPlayerSetLogCallback(void* callback, void* user_data) {
- (void)callback;
- (void)user_data;
- return 0;
+    (void)callback;
+    (void)user_data;
+    return 0;
 }
 
 // Adds a media source file path for playback.
 // Returns 0 on success or kErrInvalidParams if path or handle is invalid.
 int APS5_VABI sceAvPlayerAddSource(void* h, const char* filename) {
- return AddSourceCommon(Check(h), filename);
+    return AddSourceCommon(Check(h), filename);
 }
 
 // Adds an extended media source URI or memory buffer for playback.
 // Returns 0 on success or kErrInvalidParams if parameters are invalid.
 int APS5_VABI sceAvPlayerAddSourceEx(void* h, std::uint32_t uri_type, const void* source_details) {
- (void)uri_type;
- // SceAvPlayerSourceDetails begins with { const char* name; uint32_t length; }.
- const char* name = source_details != nullptr ? *static_cast<const char* const*>(source_details) : nullptr;
- return AddSourceCommon(Check(h), name);
+    (void)uri_type;
+    // SceAvPlayerSourceDetails begins with { const char* name; uint32_t length; }.
+    const char* name = source_details != nullptr ? *static_cast<const char* const*>(source_details) : nullptr;
+    return AddSourceCommon(Check(h), name);
 }
 
 // Starts playback of the active media source.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerStart(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- LogLifecycleCall("Start(before)", p);
- bool play = false;
- {
-  std::lock_guard g(p->lock);
-  if (p->haveSource && !p->playing && !p->stopFired) { p->playing = true; p->paused = false; play = true; }
- }
- if (play) Fire(p, kEventPlay);
- return 0;
+    auto p = Check(h);
+    if (!p) return kErrInvalidParams;
+    LogLifecycleCall("Start(before)", p);
+    bool play = false;
+    {
+        std::lock_guard g(p->lock);
+        if (p->haveSource && !p->playing && !p->stopFired) { p->playing = true; p->paused = false; play = true; }
+    }
+    if (play) Fire(p, kEventPlay);
+    return 0;
 }
 
 // Starts playback with extended playback options.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerStartEx(void* h, const void* start_info_ex) {
- (void)start_info_ex;
- return sceAvPlayerStart(h);
+    (void)start_info_ex;
+    return sceAvPlayerStart(h);
 }
 
 // Pauses current media playback.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerPause(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- LogLifecycleCall("Pause(before)", p);
- bool notify = false;
- {
-  std::lock_guard g(p->lock);
-  if (p->playing && !p->paused) { p->paused = true; HaltClock(*p); notify = true; }
- }
- if (notify) Fire(p, kEventPause);
- return 0;
+    auto p = Check(h);
+    if (!p) return kErrInvalidParams;
+    LogLifecycleCall("Pause(before)", p);
+    bool notify = false;
+    {
+        std::lock_guard g(p->lock);
+        if (p->playing && !p->paused) { p->paused = true; HaltClock(*p); notify = true; }
+    }
+    if (notify) Fire(p, kEventPause);
+    return 0;
 }
 
 // Resumes paused media playback.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerResume(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- LogLifecycleCall("Resume(before)", p);
- bool notify = false;
- {
-  std::lock_guard g(p->lock);
-  if (p->playing && p->paused) { p->paused = false; notify = true; }
- }
- if (notify) Fire(p, kEventPlay);
- return 0;
+    auto p = Check(h);
+    if (!p) return kErrInvalidParams;
+    LogLifecycleCall("Resume(before)", p);
+    bool notify = false;
+    {
+        std::lock_guard g(p->lock);
+        if (p->playing && p->paused) { p->paused = false; notify = true; }
+    }
+    if (notify) Fire(p, kEventPlay);
+    return 0;
 }
 
 // Stops media playback and notifies listeners with kEventStop.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerStop(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- LogLifecycleCall("Stop(before)", p);
- bool notify = false;
- {
-  std::lock_guard g(p->lock);
-  if (p->playing && !p->stopFired) { p->playing = false; HaltClock(*p); p->stopFired = true; notify = true; }
-  p->haveSource = false;
- }
- if (notify) Fire(p, kEventStop);
- return 0;
+    auto p = Check(h);
+    if (!p) return kErrInvalidParams;
+    LogLifecycleCall("Stop(before)", p);
+    bool notify = false;
+    {
+        std::lock_guard g(p->lock);
+        if (p->playing && !p->stopFired) { p->playing = false; HaltClock(*p); p->stopFired = true; notify = true; }
+        p->haveSource = false;
+    }
+    if (notify) Fire(p, kEventStop);
+    return 0;
 }
 
 // Closes player instance and releases allocated texture frames.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerClose(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- std::vector<std::uint8_t*> frames;
- {
-  std::lock_guard g(p->lock);
-  p->magic = 0;
-  frames.swap(p->frames);
- }
- // The frame storage came from the title's allocator, so it goes back to it: a title that opens a player per
- // movie would otherwise lose every buffer of the clip on each close.
- if (p->deallocTexture != nullptr)
-  for (auto* frame : frames) p->deallocTexture(p->memObject, frame);
- delete p;
- return 0;
+    std::shared_ptr<Player> p;
+    {
+        std::lock_guard<std::mutex> g(g_playersMutex);
+        for (auto it = g_activePlayers.begin(); it != g_activePlayers.end(); ++it) {
+            if (it->get() == h) {
+                p = *it;
+                g_activePlayers.erase(it);
+                break;
+            }
+        }
+    }
+    if (!p) return kErrInvalidParams;
+    std::vector<std::uint8_t*> frames;
+    void* memObject = nullptr;
+    TextureFree deallocTexture = nullptr;
+    {
+        std::lock_guard g(p->lock);
+        p->magic = 0;
+        frames.swap(p->frames);
+        memObject = p->memObject;
+        deallocTexture = p->deallocTexture;
+    }
+    // The frame storage came from the title's allocator, so it goes back to it: a title that opens a player per
+    // movie would otherwise lose every buffer of the clip on each close.
+    if (deallocTexture != nullptr) {
+        for (auto* frame : frames) deallocTexture(memObject, frame);
+    }
+    return 0;
 }
+
 // bool: true while the player is presenting. See EndStream: the clip is finite, so once it has run out the poll
 // that finds no frame left reports the end (STOP event) and IsActive turns false. Until then it stays true, which
 // is what keeps a title that pumps the getters rather than IsActive from being told the movie ended early.
 Bool APS5_VABI sceAvPlayerIsActive(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return 0;
- if (EndStream(p)) Fire(p, kEventStop);
- std::lock_guard g(p->lock);
- return p->playing ? 1 : 0;
+    auto p = Check(h);
+    if (!p) return 0;
+    if (EndStream(p)) Fire(p, kEventStop);
+    std::lock_guard g(p->lock);
+    return p->playing ? 1 : 0;
 }
+
 // The clip's own media clock: it runs on wall time while the player presents, so it agrees with the timestamps
 // on the frames handed out and with the duration the stream info reports.
 std::uint64_t APS5_VABI sceAvPlayerCurrentTime(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return 0;
- std::lock_guard g(p->lock);
- const auto time_ms = MediaTime(*p);
- return time_ms > kStreamDurationMs ? kStreamDurationMs : time_ms;
+    auto p = Check(h);
+    if (!p) return 0;
+    std::lock_guard g(p->lock);
+    const auto time_ms = MediaTime(*p);
+    return time_ms > kStreamDurationMs ? kStreamDurationMs : time_ms;
 }
+
 // A seek within a clip whose frames are all identical is a clock move, and that is all the title can be
 // waiting for: a pull loop that discards any frame no newer than the seek target would otherwise throw away
 // every frame from here on.
 int APS5_VABI sceAvPlayerJumpToTime(void* h, std::uint64_t time_ms) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- LogLifecycleCall("JumpToTime(before)", p);
- std::fprintf(stderr, "[AVPLIFE] JumpToTime time_ms=%llu\n", static_cast<unsigned long long>(time_ms));
- std::fflush(stderr);
- {
-  std::lock_guard g(p->lock);
-  p->bankedMs = time_ms > kStreamDurationMs ? kStreamDurationMs : time_ms;
-  p->clockAnchor = {};
- }
- std::uint32_t warning = kWarningJumpComplete;
- Fire(p, kEventWarning, &warning);
- return 0;
+    auto p = Check(h);
+    if (!p) return kErrInvalidParams;
+    LogLifecycleCall("JumpToTime(before)", p);
+    std::fprintf(stderr, "[AVPLIFE] JumpToTime time_ms=%llu\n", static_cast<unsigned long long>(time_ms));
+    std::fflush(stderr);
+    {
+        std::lock_guard g(p->lock);
+        p->bankedMs = time_ms > kStreamDurationMs ? kStreamDurationMs : time_ms;
+        p->clockAnchor = {};
+    }
+    std::uint32_t warning = kWarningJumpComplete;
+    Fire(p, kEventWarning, &warning);
+    return 0;
 }
+
 // Configures whether playback should loop after reaching end of stream.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerSetLooping(void* h, Bool loop) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- p->looping = loop != 0;
- return 0;
+    auto p = Check(h);
+    if (!p) return kErrInvalidParams;
+    std::lock_guard g(p->lock);
+    p->looping = loop != 0;
+    return 0;
 }
 
 // Configures audio/video synchronization mode.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerSetAvSyncMode(void* h, std::uint32_t sync_mode) {
- (void)sync_mode;
- return Check(h) != nullptr ? 0 : kErrInvalidParams;
+    (void)sync_mode;
+    return Check(h) != nullptr ? 0 : kErrInvalidParams;
 }
 
 // Configures video trick play playback speed multiplier.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerSetTrickSpeed(void* h, std::int32_t trick_speed) {
- (void)trick_speed;
- return Check(h) != nullptr ? 0 : kErrInvalidParams;
+    (void)trick_speed;
+    return Check(h) != nullptr ? 0 : kErrInvalidParams;
 }
 
 // Configures available bandwidth constraints for streaming playback.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerSetAvailableBandwidth(void* h, std::uint32_t start_bandwidth, std::uint32_t minimum_bandwidth, std::uint32_t maximum_bandwidth) {
- (void)start_bandwidth;
- (void)minimum_bandwidth;
- (void)maximum_bandwidth;
- return Check(h) != nullptr ? 0 : kErrInvalidParams;
+    (void)start_bandwidth;
+    (void)minimum_bandwidth;
+    (void)maximum_bandwidth;
+    return Check(h) != nullptr ? 0 : kErrInvalidParams;
 }
+
 // One (placeholder) video stream once a source is present; the stream table below describes it as an empty 1920x1080 clip.
 int APS5_VABI sceAvPlayerStreamCount(void* h) {
- Player* p = Check(h);
- if (p == nullptr) return kErrInvalidParams;
- std::lock_guard g(p->lock);
- return p->haveSource ? 1 : 0;
+    auto p = Check(h);
+    if (!p) return kErrInvalidParams;
+    std::lock_guard g(p->lock);
+    return p->haveSource ? 1 : 0;
 }
 
 // Enables a media stream by ID.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerEnableStream(void* h, std::uint32_t stream_id) {
- (void)stream_id;
- return Check(h) != nullptr ? 0 : kErrInvalidParams;
+    (void)stream_id;
+    return Check(h) != nullptr ? 0 : kErrInvalidParams;
 }
 
 // Disables a media stream by ID.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerDisableStream(void* h, std::uint32_t stream_id) {
- (void)stream_id;
- return Check(h) != nullptr ? 0 : kErrInvalidParams;
+    (void)stream_id;
+    return Check(h) != nullptr ? 0 : kErrInvalidParams;
 }
 
 // Switches from one stream to another stream ID.
 // Returns 0 on success or kErrInvalidParams if handle is invalid.
 int APS5_VABI sceAvPlayerChangeStream(void* h, std::uint32_t old_stream_id, std::uint32_t new_stream_id) {
- (void)old_stream_id;
- (void)new_stream_id;
- return Check(h) != nullptr ? 0 : kErrInvalidParams;
+    (void)old_stream_id;
+    (void)new_stream_id;
+    return Check(h) != nullptr ? 0 : kErrInvalidParams;
 }
+
 // SceAvPlayerStreamInfo (32 bytes): u32 type (1 video, 2 audio), u8 reserved[4], details[16], u64 duration (ms).
 // Video details: u32 width, u32 height, float aspect, char language[4].
 int APS5_VABI sceAvPlayerGetStreamInfo(void* h, std::uint32_t stream_id, void* info) {
- Player* p = Check(h);
- if (p == nullptr || info == nullptr) return kErrInvalidParams;
- std::lock_guard g(p->lock);
- if (!p->haveSource || stream_id != 0) return kErrOperationFailed;
- std::uint8_t* out = static_cast<std::uint8_t*>(info);
- std::memset(out, 0, 32);
- const std::uint32_t type = 1;
- const std::uint32_t width = kFrameWidth;
- const std::uint32_t height = kFrameHeight;
- const float aspect = static_cast<float>(kFrameWidth) / static_cast<float>(kFrameHeight);
- const std::uint64_t duration = kStreamDurationMs;
- std::memcpy(out + 0, &type, 4);
- std::memcpy(out + 8, &width, 4);
- std::memcpy(out + 12, &height, 4);
- std::memcpy(out + 16, &aspect, 4);
- std::memcpy(out + 24, &duration, 8);
- return 0;
+    auto p = Check(h);
+    if (!p || info == nullptr) return kErrInvalidParams;
+    std::lock_guard g(p->lock);
+    if (!p->haveSource || stream_id != 0) return kErrOperationFailed;
+    std::uint8_t* out = static_cast<std::uint8_t*>(info);
+    std::memset(out, 0, 32);
+    const std::uint32_t type = 1;
+    const std::uint32_t width = kFrameWidth;
+    const std::uint32_t height = kFrameHeight;
+    const float aspect = static_cast<float>(kFrameWidth) / static_cast<float>(kFrameHeight);
+    const std::uint64_t duration = kStreamDurationMs;
+    std::memcpy(out + 0, &type, 4);
+    std::memcpy(out + 8, &width, 4);
+    std::memcpy(out + 12, &height, 4);
+    std::memcpy(out + 16, &aspect, 4);
+    std::memcpy(out + 24, &duration, 8);
+    return 0;
 }
+
 // SceAvPlayerStreamInfoEx (104 bytes): u64 size, u32 type, reserved[4], details[80], u64 duration. The details
 // union holds the same wide video description the frame getters publish, so a title that sizes its movie
 // surfaces from the stream info instead of from a frame gets one answer, not two.
 int APS5_VABI sceAvPlayerGetStreamInfoEx(void* h, std::uint32_t stream_id, void* info) {
- Player* p = Check(h);
- if (p == nullptr || info == nullptr) return kErrInvalidParams;
- std::lock_guard g(p->lock);
- if (!p->haveSource || stream_id != 0) return kErrOperationFailed;
- std::uint8_t* out = static_cast<std::uint8_t*>(info);
- std::uint64_t size = 0;
- std::memcpy(&size, out, 8);
- std::memset(out, 0, 104);
- std::memcpy(out, &size, 8);
- const std::uint32_t type = 1;
- const std::uint64_t duration = kStreamDurationMs;
- std::memcpy(out + 8, &type, 4);
- VideoDetailsEx details;
- WriteVideoDetails(details);
- std::memcpy(out + 16, &details, sizeof(details));
- std::memcpy(out + 96, &duration, 8);
- return 0;
+    auto p = Check(h);
+    if (!p || info == nullptr) return kErrInvalidParams;
+    std::lock_guard g(p->lock);
+    if (!p->haveSource || stream_id != 0) return kErrOperationFailed;
+    std::uint8_t* out = static_cast<std::uint8_t*>(info);
+    std::uint64_t size = 0;
+    std::memcpy(&size, out, 8);
+    std::memset(out, 0, 104);
+    std::memcpy(out, &size, 8);
+    const std::uint32_t type = 1;
+    const std::uint64_t duration = kStreamDurationMs;
+    std::memcpy(out + 8, &type, 4);
+    VideoDetailsEx details;
+    WriteVideoDetails(details);
+    std::memcpy(out + 16, &details, sizeof(details));
+    std::memcpy(out + 96, &duration, 8);
+    return 0;
 }
+
 // The data getters are the frame source as well as the end-of-stream report: they hand out whichever frame of
 // the blank clip the media clock has reached, and the poll that finds the clip spent is the one that reports the
 // stream as finished. Each site logs its own first three calls, so a run shows which of these the title pumps.
 Bool APS5_VABI sceAvPlayerGetVideoData(void* h, void* video_info) {
- Player* p = Check(h);
- if (p == nullptr) return 0;
- APS5_HIT("AVP", "GetVideoData");
- return PollVideo(p, video_info, false);
+    auto p = Check(h);
+    if (!p) return 0;
+    APS5_HIT("AVP", "GetVideoData");
+    return PollVideo(p, video_info, false);
 }
 
 // Retrieves the current decoded video frame details and texture buffer (extended structure).
 // Returns 1 if a frame is available, 0 otherwise.
 Bool APS5_VABI sceAvPlayerGetVideoDataEx(void* h, void* video_info) {
- Player* p = Check(h);
- if (p == nullptr) return 0;
- APS5_HIT("AVP", "GetVideoDataEx");
- return PollVideo(p, video_info, true);
+    auto p = Check(h);
+    if (!p) return 0;
+    APS5_HIT("AVP", "GetVideoDataEx");
+    return PollVideo(p, video_info, true);
 }
 
 // Retrieves audio sample buffer data for active stream.
 // Returns 1 if audio data is available, 0 otherwise.
 Bool APS5_VABI sceAvPlayerGetAudioData(void* h, void* audio_info) {
- (void)audio_info;
- Player* p = Check(h);
- if (p == nullptr) return 0;
- APS5_HIT("AVP", "GetAudioData");
- if (EndStream(p)) Fire(p, kEventStop);
- return 0;
+    (void)audio_info;
+    auto p = Check(h);
+    if (!p) return 0;
+    APS5_HIT("AVP", "GetAudioData");
+    if (EndStream(p)) Fire(p, kEventStop);
+    return 0;
 }
 }
+

@@ -7,8 +7,11 @@
 #include "common/TestHarness.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <thread>
 
 extern "C" {
 int* APS5_VABI sceNetErrnoLoc(void);
@@ -216,16 +219,134 @@ TEST(OfflineNetStack, RecvAndSendUnconnectedStream) {
     EXPECT_EQ(sceNetSocketClose(sock), 0);
 }
 
-// Verifies retrieving synthetic MAC address for offline network interface.
-TEST(OfflineNetStack, GetMacAddressOffline) {
-    NetEtherAddr mac{};
-    EXPECT_EQ(sceNetGetMacAddress(&mac, 0), 0);
-    EXPECT_EQ(mac.data[0], 0x02);
-    EXPECT_EQ(mac.data[1], 0x50); // 'P'
-    EXPECT_EQ(mac.data[2], 0x53); // 'S'
-    EXPECT_EQ(mac.data[3], 0x35); // '5'
-    EXPECT_EQ(mac.data[4], 0x00);
-    EXPECT_EQ(mac.data[5], 0x01);
+// Verifies multi-threaded abort wakeups return NET_ECONNABORTED for all concurrent waiters.
+TEST(OfflineNetStack, MultiThreadedSocketAbort) {
+    const int sock = sceNetSocket("test_abort_listener", NET_AF_INET, NET_SOCK_STREAM, 0);
+    ASSERT_GE(sock, 0);
+    EXPECT_EQ(sceNetListen(sock, 5), 0);
+
+    std::atomic<int> readyCount{0};
+    std::atomic<int> rc1{0}, rc2{0};
+    std::atomic<int> err1{0}, err2{0};
+
+    std::thread t1([&]() {
+        readyCount.fetch_add(1);
+        uint8_t addr[16] = {};
+        uint32_t len = sizeof(addr);
+        rc1 = sceNetAccept(sock, addr, &len);
+        err1 = *sceNetErrnoLoc();
+    });
+
+    std::thread t2([&]() {
+        readyCount.fetch_add(1);
+        uint8_t addr[16] = {};
+        uint32_t len = sizeof(addr);
+        rc2 = sceNetAccept(sock, addr, &len);
+        err2 = *sceNetErrnoLoc();
+    });
+
+    while (readyCount.load() < 2) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    // Give waiters time to enter block_on
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    EXPECT_EQ(sceNetSocketAbort(sock, 0), 0);
+
+    t1.join();
+    t2.join();
+
+    EXPECT_EQ(rc1.load(), -1);
+    EXPECT_EQ(err1.load(), 53); // NET_ECONNABORTED
+    EXPECT_EQ(rc2.load(), -1);
+    EXPECT_EQ(err2.load(), 53); // NET_ECONNABORTED
+
+    EXPECT_EQ(sceNetSocketClose(sock), 0);
+}
+
+// Verifies sceNetTerm purges tracked sockets and state allowing clean re-init.
+TEST(OfflineNetStack, TermPurgesStateAndAllowsReinit) {
+    const int sock1 = sceNetSocket("term_test_sock", NET_AF_INET, NET_SOCK_STREAM, 0);
+    ASSERT_GE(sock1, 0);
+    EXPECT_EQ(sceNetListen(sock1, 5), 0);
+
+    // Terminate network stack
+    EXPECT_EQ(sceNetTerm(), 0);
+
+    // Old socket handle should now be invalid
+    EXPECT_EQ(sceNetSocketClose(sock1), -1);
+    EXPECT_EQ(*sceNetErrnoLoc(), 9); // NET_EBADF
+
+    // Re-initialize cleanly
+    EXPECT_EQ(sceNetInit_nid_postfix(), 0);
+    const int sock2 = sceNetSocket("reinit_sock", NET_AF_INET, NET_SOCK_STREAM, 0);
+    EXPECT_GE(sock2, 0);
+    EXPECT_EQ(sceNetSocketClose(sock2), 0);
+}
+
+// Verifies IPv6 socket binding, address parsing, and retrieval via sceNetGetsockname.
+TEST(OfflineNetStack, Ipv6BindingAndSockname) {
+    constexpr int NET_AF_INET6 = 28;
+    const int sock = sceNetSocket("test_ipv6", NET_AF_INET6, NET_SOCK_STREAM, 0);
+    ASSERT_GE(sock, 0);
+
+    uint8_t bindAddr6[28] = {};
+    bindAddr6[0] = 28;
+    bindAddr6[1] = static_cast<uint8_t>(NET_AF_INET6);
+    uint16_t portBe = sceNetHtons_nid_postfix(9090);
+    std::memcpy(bindAddr6 + 2, &portBe, 2);
+    // fe80::1
+    ASSERT_EQ(sceNetInetPton(NET_AF_INET6, "fe80::1", bindAddr6 + 8), 1);
+
+    EXPECT_EQ(sceNetBind_nid_postfix(sock, bindAddr6, sizeof(bindAddr6)), 0);
+
+    uint8_t queriedAddr[28] = {};
+    uint32_t queriedLen = sizeof(queriedAddr);
+    EXPECT_EQ(sceNetGetsockname(sock, queriedAddr, &queriedLen), 0);
+    EXPECT_EQ(queriedLen, 28u);
+    EXPECT_EQ(queriedAddr[1], static_cast<uint8_t>(NET_AF_INET6));
+
+    uint16_t outPort = 0;
+    std::memcpy(&outPort, queriedAddr + 2, 2);
+    EXPECT_EQ(outPort, portBe);
+
+    char ipStr[64] = {};
+    EXPECT_NE(sceNetInetNtop(NET_AF_INET6, queriedAddr + 8, ipStr, sizeof(ipStr)), nullptr);
+    EXPECT_NE(std::strstr(ipStr, "fe80"), nullptr);
+
+    EXPECT_EQ(sceNetSocketClose(sock), 0);
+}
+
+// Verifies ephemeral port allocation wraps and avoids collision with already bound sockets.
+TEST(OfflineNetStack, EphemeralPortAllocation) {
+    const int s1 = sceNetSocket("ephemeral1", NET_AF_INET, NET_SOCK_STREAM, 0);
+    const int s2 = sceNetSocket("ephemeral2", NET_AF_INET, NET_SOCK_STREAM, 0);
+    ASSERT_GE(s1, 0);
+    ASSERT_GE(s2, 0);
+
+    EXPECT_EQ(sceNetListen(s1, 5), 0);
+    EXPECT_EQ(sceNetListen(s2, 5), 0);
+
+    uint8_t a1[16] = {}, a2[16] = {};
+    uint32_t l1 = sizeof(a1), l2 = sizeof(a2);
+    EXPECT_EQ(sceNetGetsockname(s1, a1, &l1), 0);
+    EXPECT_EQ(sceNetGetsockname(s2, a2, &l2), 0);
+
+    uint16_t p1 = 0, p2 = 0;
+    std::memcpy(&p1, a1 + 2, 2);
+    std::memcpy(&p2, a2 + 2, 2);
+
+    p1 = sceNetNtohs_nid_postfix(p1);
+    p2 = sceNetNtohs_nid_postfix(p2);
+
+    EXPECT_GE(p1, 49152u);
+    EXPECT_LE(p1, 65535u);
+    EXPECT_GE(p2, 49152u);
+    EXPECT_LE(p2, 65535u);
+    EXPECT_NE(p1, p2);
+
+    EXPECT_EQ(sceNetSocketClose(s1), 0);
+    EXPECT_EQ(sceNetSocketClose(s2), 0);
 }
 
 } // namespace

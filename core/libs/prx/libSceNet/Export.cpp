@@ -54,9 +54,10 @@ struct Sock {
     bool nonblock = false;
     bool bound = false;
     bool listening = false;
-    bool aborted = false;
+    std::uint64_t abort_gen = 0;
     std::uint16_t port = 0;  // network byte order
-    std::uint32_t addr = 0;  // network byte order
+    std::uint32_t addr = 0;  // network byte order (IPv4)
+    std::uint8_t addr6[16] = {};  // network byte order (IPv6)
     int rcv_timeout_us = 0;
     int snd_timeout_us = 0;
 };
@@ -100,6 +101,32 @@ std::uint32_t swap32(std::uint32_t v) {
     return (v << 24) | ((v & 0xFF00u) << 8) | ((v >> 8) & 0xFF00u) | (v >> 24);
 }
 
+// Allocates an ephemeral port in the range [49152, 65535] avoiding collisions with bound sockets.
+// Caller holds g_mutex.
+std::uint16_t allocate_ephemeral_port_locked(int sock_type) {
+    constexpr std::uint16_t kPortMin = 49152;
+    constexpr std::uint16_t kPortMax = 65535;
+    constexpr unsigned kTotalPorts = kPortMax - kPortMin + 1;
+    for (unsigned i = 0; i < kTotalPorts; ++i) {
+        std::uint16_t candidate = g_next_port++;
+        if (g_next_port < kPortMin || g_next_port > kPortMax) {
+            g_next_port = kPortMin;
+        }
+        std::uint16_t candidate_be = swap16(candidate);
+        bool in_use = false;
+        for (const auto& kv : g_socks) {
+            if (kv.second.bound && kv.second.port == candidate_be && kv.second.type == sock_type) {
+                in_use = true;
+                break;
+            }
+        }
+        if (!in_use) {
+            return candidate_be;
+        }
+    }
+    return swap16(kPortMin);
+}
+
 // Waits on the socket until the timeout expires or it is closed/aborted.
 // timeout_us <= 0 nominally means "wait forever", but on an inert stack nothing can ever arrive, so such a
 // wait is bounded to INFINITE_WAIT_SLICE_US per iteration and then reports EAGAIN: the caller keeps correct
@@ -109,13 +136,17 @@ int block_on(std::unique_lock<std::mutex>& lk, int fd, int timeout_us) {
     constexpr int INFINITE_WAIT_SLICE_US = 100000;  // 100 ms
     const auto deadline = std::chrono::steady_clock::now()
         + std::chrono::microseconds(timeout_us > 0 ? timeout_us : INFINITE_WAIT_SLICE_US);
+    auto it_init = g_socks.find(fd);
+    if (it_init == g_socks.end()) {
+        return fail(NET_EBADF);
+    }
+    const std::uint64_t start_gen = it_init->second.abort_gen;
     for (;;) {
         auto it = g_socks.find(fd);
         if (it == g_socks.end()) {
             return fail(NET_EBADF);
         }
-        if (it->second.aborted) {
-            it->second.aborted = false;
+        if (it->second.abort_gen != start_gen) {
             return fail(NET_ECONNABORTED);
         }
         if (g_cv.wait_until(lk, deadline) == std::cv_status::timeout) {
@@ -144,7 +175,12 @@ int APS5_VABI sceNetInit_nid_postfix(void) {
 // Returns 0 on success.
 int APS5_VABI sceNetTerm(void) {
     std::lock_guard<std::mutex> lk(g_mutex);
+    g_socks.clear();
+    g_epolls.clear();
+    g_pools.clear();
+    g_resolvers.clear();
     g_net_inited = false;
+    g_cv.notify_all();
     return 0;
 }
 
@@ -209,7 +245,7 @@ int APS5_VABI sceNetSocketAbort(int s, int flags) {
     if (it == g_socks.end()) {
         return fail(NET_EBADF);
     }
-    it->second.aborted = true;
+    ++it->second.abort_gen;
     g_cv.notify_all();
     return 0;
 }
@@ -228,13 +264,29 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
     if (it->second.bound) {
         return fail(NET_EINVAL);
     }
-    // sockaddr_in: len, family, port (BE), addr (BE)
+    const auto* raw = static_cast<const std::uint8_t*>(addr);
+    const int family = raw[1];
     std::uint16_t port = 0;
-    std::uint32_t ip = 0;
-    std::memcpy(&port, static_cast<const std::uint8_t*>(addr) + 2, 2);
-    std::memcpy(&ip, static_cast<const std::uint8_t*>(addr) + 4, 4);
+    std::memcpy(&port, raw + 2, 2);
+
+    if (family == NET_AF_INET6) {
+        if (addrlen < 24) {
+            return fail(NET_EINVAL);
+        }
+        if (it->second.family != NET_AF_INET6) {
+            return fail(NET_EAFNOSUPPORT);
+        }
+        std::memcpy(it->second.addr6, raw + 8, 16);
+    } else if (family == NET_AF_INET || family == 0) {
+        std::uint32_t ip = 0;
+        std::memcpy(&ip, raw + 4, 4);
+        it->second.addr = ip;
+    } else {
+        return fail(NET_EAFNOSUPPORT);
+    }
+
     if (port == 0) {
-        port = swap16(g_next_port++);
+        port = allocate_ephemeral_port_locked(it->second.type);
     } else {
         for (const auto& kv : g_socks) {
             if (kv.first != s && kv.second.bound && kv.second.port == port && kv.second.type == it->second.type) {
@@ -244,7 +296,6 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
     }
     it->second.bound = true;
     it->second.port = port;
-    it->second.addr = ip;
     return 0;
 }
 
@@ -262,7 +313,7 @@ int APS5_VABI sceNetListen(int s, int backlog) {
     }
     if (!it->second.bound) {
         it->second.bound = true;
-        it->second.port = swap16(g_next_port++);
+        it->second.port = allocate_ephemeral_port_locked(it->second.type);
     }
     it->second.listening = true;
     return 0;
@@ -441,6 +492,17 @@ int APS5_VABI sceNetGetsockname(int s, void* addr, uint32_t* addrlen) {
     if (addr == nullptr || addrlen == nullptr) {
         return fail(NET_EINVAL);
     }
+    if (it->second.family == NET_AF_INET6) {
+        std::uint8_t sa6[28] = {};
+        sa6[0] = 28;
+        sa6[1] = static_cast<std::uint8_t>(NET_AF_INET6);
+        std::memcpy(sa6 + 2, &it->second.port, 2);
+        std::memcpy(sa6 + 8, it->second.addr6, 16);
+        const std::uint32_t n = *addrlen < sizeof(sa6) ? *addrlen : static_cast<std::uint32_t>(sizeof(sa6));
+        std::memcpy(addr, sa6, n);
+        *addrlen = sizeof(sa6);
+        return 0;
+    }
     std::uint8_t sa[16] = {};
     sa[0] = 16;
     sa[1] = static_cast<std::uint8_t>(NET_AF_INET);
@@ -545,11 +607,92 @@ uint32_t APS5_VABI sceNetNtohl_nid_postfix(uint32_t net32) { return swap32(net32
 // Converts a 16-bit integer from network to host byte order.
 uint16_t APS5_VABI sceNetNtohs_nid_postfix(uint16_t net16) { return swap16(net16); }
 
+// Helper parsing IPv6 string representation into 16-byte network buffer.
+// Returns 1 on success, 0 on invalid format.
+static int parse_ipv6_addr(const char* src, std::uint8_t* dst) {
+    if (src == nullptr || dst == nullptr) {
+        return 0;
+    }
+    std::uint16_t words[8] = {};
+    int word_count = 0;
+    int dc_index = -1;
+    const char* p = src;
+
+    if (*p == ':' && *(p + 1) == ':') {
+        dc_index = 0;
+        p += 2;
+    }
+
+    while (*p != '\0') {
+        if (word_count >= 8) {
+            return 0;
+        }
+        char* endp = nullptr;
+        unsigned long val = std::strtoul(p, &endp, 16);
+        if (endp == p || val > 0xFFFFu) {
+            return 0;
+        }
+        words[word_count++] = static_cast<std::uint16_t>(val);
+        p = endp;
+        if (*p == ':') {
+            if (*(p + 1) == ':') {
+                if (dc_index != -1) {
+                    return 0;  // Only one :: allowed
+                }
+                dc_index = word_count;
+                p += 2;
+                if (*p == '\0') {
+                    break;
+                }
+            } else {
+                p++;
+            }
+        } else if (*p != '\0') {
+            return 0;
+        }
+    }
+
+    if (dc_index != -1) {
+        const int num_to_insert = 8 - word_count;
+        if (num_to_insert < 0) {
+            return 0;
+        }
+        std::uint16_t expanded[8] = {};
+        for (int i = 0; i < dc_index; ++i) {
+            expanded[i] = words[i];
+        }
+        for (int i = 0; i < word_count - dc_index; ++i) {
+            expanded[dc_index + num_to_insert + i] = words[dc_index + i];
+        }
+        for (int i = 0; i < 8; ++i) {
+            dst[i * 2] = static_cast<std::uint8_t>(expanded[i] >> 8);
+            dst[i * 2 + 1] = static_cast<std::uint8_t>(expanded[i] & 0xFF);
+        }
+    } else {
+        if (word_count != 8) {
+            return 0;
+        }
+        for (int i = 0; i < 8; ++i) {
+            dst[i * 2] = static_cast<std::uint8_t>(words[i] >> 8);
+            dst[i * 2 + 1] = static_cast<std::uint8_t>(words[i] & 0xFF);
+        }
+    }
+    return 1;
+}
+
 // Converts an IP address from string to numeric network format.
 // Returns 1 on success, 0 if input string is invalid format, or -1 on error.
 int APS5_VABI sceNetInetPton(int af, const char* src, void* dst) {
     if (src == nullptr || dst == nullptr) {
         return fail(NET_EINVAL);
+    }
+    if (af == NET_AF_INET6) {
+        std::uint8_t out6[16] = {};
+        if (!parse_ipv6_addr(src, out6)) {
+            return 0;
+        }
+        std::memcpy(dst, out6, 16);
+        return 1;
     }
     if (af != NET_AF_INET) {
         return fail(NET_EAFNOSUPPORT);
@@ -567,8 +710,28 @@ int APS5_VABI sceNetInetPton(int af, const char* src, void* dst) {
 // Converts a numeric network address to string format.
 // Returns destination pointer on success, or nullptr on error with errno set.
 const char* APS5_VABI sceNetInetNtop(int af, const void* src, char* dst, uint32_t size) {
-    if (src == nullptr || dst == nullptr || af != NET_AF_INET) {
-        *errno_slot() = af != NET_AF_INET ? NET_EAFNOSUPPORT : NET_EINVAL;
+    if (src == nullptr || dst == nullptr) {
+        *errno_slot() = NET_EINVAL;
+        return nullptr;
+    }
+    if (af == NET_AF_INET6) {
+        const auto* p = static_cast<const std::uint8_t*>(src);
+        char tmp[48];
+        const int n = std::snprintf(tmp, sizeof(tmp),
+            "%x:%x:%x:%x:%x:%x:%x:%x",
+            (p[0] << 8) | p[1], (p[2] << 8) | p[3],
+            (p[4] << 8) | p[5], (p[6] << 8) | p[7],
+            (p[8] << 8) | p[9], (p[10] << 8) | p[11],
+            (p[12] << 8) | p[13], (p[14] << 8) | p[15]);
+        if (n < 0 || static_cast<uint32_t>(n) >= size) {
+            *errno_slot() = 28;  // ENOSPC
+            return nullptr;
+        }
+        std::memcpy(dst, tmp, static_cast<std::size_t>(n) + 1);
+        return dst;
+    }
+    if (af != NET_AF_INET) {
+        *errno_slot() = NET_EAFNOSUPPORT;
         return nullptr;
     }
     const auto* p = static_cast<const std::uint8_t*>(src);
