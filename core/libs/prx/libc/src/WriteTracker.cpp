@@ -87,6 +87,9 @@ PageStateTable::Shard* PageStateTable::EnsureShard(std::uint64_t index) noexcept
         return shard;
     }
     Shard* fresh = new (std::nothrow) Shard;
+    // Load-bearing null check (see the shard-directory allocation in
+    // WriteWatchTracker::Init): standard nothrow new returns null on
+    // failure, so do not remove it to silence static analysis.
     if (fresh == nullptr) {
         return nullptr;
     }
