@@ -41,7 +41,8 @@ public:
     ~ExtentAllocator();
 
     // Covers [base, base + bytes) as one free extent, dropping prior state.
-    // Returns false (state untouched) when bytes is 0 or the range overflows.
+    // Every failure mode (zero bytes, wrapping range, replacement-node
+    // allocation failure) returns false with the previous arena untouched.
     [[nodiscard]] bool Init(std::uint64_t base, std::uint64_t bytes) noexcept;
 
     // Lowest-address fit for bytes at a pow2 alignment, or 0 on failure.
@@ -50,9 +51,9 @@ public:
     [[nodiscard]] std::uint64_t Allocate(std::uint64_t bytes, std::uint64_t alignment) noexcept;
 
     // Returns [base, base + bytes) to the free set, coalescing neighbours.
-    // Returns false (state untouched) when the range is unknown, overlaps a
-    // free extent (double free), or overflows; freeing a sub-range of one
-    // allocation is allowed and splits nothing (the caller frees wholes).
+    // Every failure mode (unknown range, overlap with a free extent such as
+    // a double free, out-of-arena or wrapping range, replacement-node
+    // allocation failure) returns false with the tree untouched.
     [[nodiscard]] bool Free(std::uint64_t base, std::uint64_t bytes) noexcept;
 
     // True when [address, address + bytes) lies inside the arena bounds.

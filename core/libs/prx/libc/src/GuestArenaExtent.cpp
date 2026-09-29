@@ -196,16 +196,19 @@ bool ExtentAllocator::Init(std::uint64_t base, std::uint64_t bytes) noexcept {
     if (!RangeValid(base, bytes)) {
         return false;
     }
-    Destroy(root_);
-    priorityCounter_ = 0;  // restart the deterministic priority stream
-    Node* extent = new (std::nothrow) Node{base, bytes, bytes, MixPriority(++priorityCounter_), nullptr, nullptr};
+    // Transactional re-Init: the replacement node is allocated BEFORE live
+    // state is touched, so a nothrow failure returns false with the previous
+    // arena fully intact (previously Destroy ran first and stale bounds
+    // survived the failure).
+    Node* extent = new (std::nothrow) Node{base, bytes, bytes, MixPriority(1), nullptr, nullptr};
     if (extent == nullptr) {
-        root_ = nullptr;
         return false;
     }
+    Destroy(root_);
+    priorityCounter_ = 1;  // priority stream restarts deterministically
     // Bounds are published only once the tree is non-empty, so Contains can
-    // tell an uninitialized (or OOM-failed) allocator from an empty arena by
-    // testing arenaEnd_ <= arenaBase_.
+    // tell an uninitialized allocator from an empty arena by testing
+    // arenaEnd_ <= arenaBase_.
     arenaBase_ = base;
     arenaEnd_ = base + bytes;
     root_ = extent;
@@ -219,9 +222,12 @@ bool ExtentAllocator::Contains(std::uint64_t address, std::uint64_t bytes) const
     if (arenaEnd_ <= arenaBase_) {
         return false;  // uninitialized: Init never succeeded
     }
-    // Overflow-safe containment: RangeValid rules out wrap-around, so both
-    // differences below are exact.
-    return address >= arenaBase_ && address - arenaBase_ <= (arenaEnd_ - arenaBase_) - bytes;
+    // Guard bytes against the arena size FIRST: without it the subtraction
+    // below wraps for oversized requests and wrongly reports containment,
+    // letting Free insert extents past arenaEnd_ (e.g. on a drained arena
+    // where no overlap check can stop it).
+    const std::uint64_t arenaSize = arenaEnd_ - arenaBase_;
+    return bytes <= arenaSize && address >= arenaBase_ && address - arenaBase_ <= arenaSize - bytes;
 }
 
 std::uint64_t ExtentAllocator::FreeExtentCount() const noexcept {
@@ -243,6 +249,14 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
     // request size is necessary for any fit inside), else try this extent
     // exactly, else go right. The recursion depth is the treap height
     // (expected logarithmic; arena metadata holds thousands of extents).
+    //
+    // Known worst case: maxSub ignores alignment padding, so a request no
+    // extent can satisfy (e.g. 4 KiB at 8 KiB alignment over 4 KiB extents
+    // each needing 4 KiB of padding) visits every extent — O(n), not O(log
+    // n). Results stay correct; arena bases/sizes are 16 KiB-granular in
+    // practice (spec Layout), which bounds real fragmentation. Alignment-
+    // aware metadata is deferred to the wiring-PR microbench rather than
+    // risking a tighter-but-unsafe prune bound here.
     // Local struct inside a member function: it sees private Node.
     struct Search {
         static bool Run(Node*& slot, std::uint64_t bytes, std::uint64_t alignment, std::uint64_t& prio,
@@ -265,8 +279,11 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                 const std::uint64_t pad = aligned - node->base;
                 if (pad <= node->size && bytes <= node->size - pad) {
                     out = aligned;
-                    // Carve [aligned, aligned + bytes) out, reinserting the
-                    // prefix/suffix remainders as free extents.
+                    // Transactional carve: both remainder nodes are allocated
+                    // BEFORE the original extent is removed, so a nothrow
+                    // failure returns false with the tree untouched
+                    // (previously the extent was deleted first and the
+                    // allocation-sized range leaked from the free tree).
                     const std::uint64_t extentEnd = node->base + node->size;
                     const std::uint64_t allocEnd = aligned + bytes;
                     const std::uint64_t prefixBase = node->base;
@@ -274,30 +291,31 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                     const bool hasSuffix = allocEnd < extentEnd;
                     const std::uint64_t suffixBase = allocEnd;
                     const std::uint64_t suffixSize = extentEnd - allocEnd;
-                    Node* merged = Merge(node->left, node->right);
-                    delete node;
-                    slot = merged;
-                    // Remainder insertion uses fresh nodes; a nothrow failure
-                    // here would drop a free range, so the carve is reported
-                    // only when bookkeeping succeeded.
-                    bool ok = true;
+                    Node* pre = nullptr;
+                    Node* suf = nullptr;
                     if (prefixSize != 0) {
-                        Node* pre = new (std::nothrow) Node{prefixBase, prefixSize, prefixSize, MixPriority(++prio)};
+                        pre = new (std::nothrow) Node{prefixBase, prefixSize, prefixSize, MixPriority(++prio)};
                         if (pre == nullptr) {
-                            ok = false;
-                        } else {
-                            InsertNode(slot, pre);
+                            return false;
                         }
                     }
                     if (hasSuffix) {
-                        Node* suf = new (std::nothrow) Node{suffixBase, suffixSize, suffixSize, MixPriority(++prio)};
+                        suf = new (std::nothrow) Node{suffixBase, suffixSize, suffixSize, MixPriority(++prio)};
                         if (suf == nullptr) {
-                            ok = false;
-                        } else {
-                            InsertNode(slot, suf);
+                            delete pre;
+                            return false;
                         }
                     }
-                    return ok;
+                    Node* merged = Merge(node->left, node->right);
+                    delete node;
+                    slot = merged;
+                    if (pre != nullptr) {
+                        InsertNode(slot, pre);
+                    }
+                    if (suf != nullptr) {
+                        InsertNode(slot, suf);
+                    }
+                    return true;
                 }
             }
             if (node->right != nullptr && node->right->maxSub >= bytes) {
@@ -335,23 +353,32 @@ bool ExtentAllocator::Free(std::uint64_t base, std::uint64_t bytes) noexcept {
     }
     std::uint64_t newBase = base;
     std::uint64_t newSize = bytes;
-    // Coalesce left: swallow the predecessor and continue with its base.
-    if (prev != nullptr && prev->base + prev->size == base) {
+    // Coalescing swallows the touching neighbours. Their keys are recorded
+    // before any mutation so the merged extent is fully computed first.
+    const bool swallowPrev = prev != nullptr && prev->base + prev->size == base;
+    if (swallowPrev) {
         newBase = prev->base;
         newSize += prev->size;
-        Node* removed = EraseKey(root_, prev->base);
-        delete removed;
-        next = LowerBound(root_, newBase);
     }
-    // Coalesce right: swallow the successor.
-    if (next != nullptr && newBase + newSize == next->base) {
+    const bool swallowNext = next != nullptr && newBase + newSize == next->base;
+    if (swallowNext) {
         newSize += next->size;
-        Node* removed = EraseKey(root_, next->base);
-        delete removed;
     }
+    // Transactional insert: the replacement node is allocated BEFORE the
+    // neighbours are removed, so a nothrow failure returns false with the
+    // tree untouched (previously erased extents were lost, contradicting the
+    // documented state-untouched contract).
     Node* node = new (std::nothrow) Node{newBase, newSize, newSize, MixPriority(++priorityCounter_)};
     if (node == nullptr) {
         return false;
+    }
+    if (swallowPrev) {
+        Node* removed = EraseKey(root_, prev->base);
+        delete removed;
+    }
+    if (swallowNext) {
+        Node* removed = EraseKey(root_, next->base);
+        delete removed;
     }
     InsertNode(root_, node);
     return true;

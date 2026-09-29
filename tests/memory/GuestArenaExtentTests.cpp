@@ -210,6 +210,52 @@ TEST(GuestArenaExtent, InvalidArgsRejected) {
     EXPECT_EQ(tree.Allocate(0x1000ULL, 1ULL), 0x10000ULL);
 }
 
+// Verifies failed operations never mutate the free set: oversized requests
+// (including bytes larger than the whole arena, which once wrapped the
+// containment subtraction and wrongly reported containment, letting Free
+// insert past arenaEnd_ on a drained arena), unknown and double frees, and
+// invalid arguments all leave the tree identical, and the arena still serves
+// allocations afterwards.
+TEST(GuestArenaExtent, FailedOpsPreserveFreeSet) {
+    PortPS5::GuestMemory::ExtentAllocator tree;
+    ASSERT_TRUE(tree.Init(0x10000ULL, 0x10000ULL));
+    const std::uint64_t live = tree.Allocate(0x1000ULL, 1ULL);
+    ASSERT_EQ(live, 0x10000ULL);
+    auto snapshot = [&]() {
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> extents;
+        tree.ForEachFree([&](std::uint64_t base, std::uint64_t size) { extents.emplace_back(base, size); });
+        return extents;
+    };
+    const auto before = snapshot();
+    // Oversized containment must be rejected, not wrap around.
+    EXPECT_FALSE(tree.Contains(0x10000ULL, 0x10001ULL));
+    EXPECT_FALSE(tree.Contains(0x10000ULL, UINT64_MAX - 0x10000ULL));
+    // Oversized frees rejected without inserting past arenaEnd_.
+    EXPECT_FALSE(tree.Free(0x10000ULL, 0x10001ULL));
+    // Failing allocs: larger than the arena, zero bytes, bad alignment.
+    EXPECT_EQ(tree.Allocate(0x10001ULL, 1ULL), 0ULL);
+    EXPECT_EQ(tree.Allocate(0ULL, 1ULL), 0ULL);
+    EXPECT_EQ(tree.Allocate(0x100ULL, 3ULL), 0ULL);
+    // Failing frees: outside the arena, inside a free extent (unknown).
+    EXPECT_FALSE(tree.Free(0x50000ULL, 0x1000ULL));
+    EXPECT_FALSE(tree.Free(0x15000ULL, 0x1000ULL));
+    EXPECT_EQ(snapshot(), before);
+    // Drained-arena variant: with no free extents left, an oversized Free
+    // must still be rejected (it previously slipped past the overlap checks
+    // and inserted memory outside the arena, which Allocate could then hand
+    // out).
+    PortPS5::GuestMemory::ExtentAllocator full;
+    ASSERT_TRUE(full.Init(0x10000ULL, 0x10000ULL));
+    ASSERT_EQ(full.Allocate(0x10000ULL, 1ULL), 0x10000ULL);
+    EXPECT_FALSE(full.Free(0x10000ULL, 0x10001ULL));
+    EXPECT_EQ(full.FreeExtentCount(), 0ULL);
+    EXPECT_EQ(full.Allocate(1ULL, 1ULL), 0ULL);
+    // Arena still fully functional afterwards.
+    ASSERT_TRUE(tree.Free(live, 0x1000ULL));
+    EXPECT_FALSE(tree.Free(live, 0x1000ULL));  // double free
+    EXPECT_EQ(tree.Allocate(0x10000ULL, 1ULL), 0x10000ULL);
+}
+
 // Verifies the tree returns bit-identical addresses to the reference linear
 // scan across a mixed alloc/free stream, with periodic free-set comparison.
 TEST(GuestArenaExtent, MatchesLinearScanFuzz) {
