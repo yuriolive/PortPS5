@@ -119,7 +119,7 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 | EXTRQ/INSERTQ register form | Leave the bytes, list them in the report, rely on the runtime trap. |
 | `Unproven` bytes | Count and log them. Never patch them and never fail on them. |
 | Missing prx export at startup | The loader prints `FAIL: unresolved ELF import <nid>` (`WindowsEntryStubBuilder.cpp:99`). Without `--lazy-binding`, it stops. |
-| prx-to-prx host import missing at load | Same `FAIL` shape with `GetLastError` 127, but the importer is a prx and the symbol is a verbatim host name: the provider hashed its export while the importer asks verbatim (observed 2026-09-29: `libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx` on the Dreaming Sarah boot path). After the message the process currently dies with `0xC0000005` instead of exiting; target: clean non-zero exit. |
+| prx-to-prx host import missing at load | Same `FAIL` shape with `GetLastError` 127, but the importer is a prx and the symbol is a verbatim host name: the provider hashed its export while the importer asks verbatim (observed 2026-09-29: `libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx` on the Dreaming Sarah boot path). After the report the stub deliberately raises `0xC0000135` (`WindowsDependencyStubBuilder.cpp:74-82`), which becomes the process exit code. |
 | CodeMap overlap | Fail (`CodeInstructionCollector.cpp:214`). This means data was treated as code, and the seeding is wrong. |
 
 ## Tests
