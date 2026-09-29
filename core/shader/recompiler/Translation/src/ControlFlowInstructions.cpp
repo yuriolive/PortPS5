@@ -175,6 +175,13 @@ void TranslationContext::sInstPrefetch() {
     (void)ir.Emit(IrOpcode::InstPrefetch, IrType::Void, {});
 }
 
+/// Lowers s_getpc_b64 to the shader's absolute address (GetShaderBase + next-PC
+/// offset) and writes the 64-bit result to the destination SGPR pair, low word
+/// first. A raw next-PC offset would name a near-zero address for PC-relative
+/// data behind the shader's own code; the per-request base keeps relocated
+/// copies sharing one compiled variant.
+/// \param inst The decoded SOPP instruction; uses inst.destination and the
+///             current program counter.
 void TranslationContext::sGetpcB64(const RdnaInstruction& inst) {
     // PC-relative data lives behind the shader's own code (e.g. an NGG vertex
     // shader fetching vertices after its code via s_getpc+s_add_u32+s_addc_u32).
