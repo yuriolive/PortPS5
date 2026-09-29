@@ -119,6 +119,7 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 | EXTRQ/INSERTQ register form | Leave the bytes, list them in the report, rely on the runtime trap. |
 | `Unproven` bytes | Count and log them. Never patch them and never fail on them. |
 | Missing prx export at startup | The loader prints `FAIL: unresolved ELF import <nid>` (`WindowsEntryStubBuilder.cpp:99`). Without `--lazy-binding`, it stops. |
+| prx-to-prx host import missing at load | Same `FAIL` shape with `GetLastError` 127, but the importer is a prx and the symbol is a verbatim host name: the provider hashed its export while the importer asks verbatim (observed 2026-09-29: `libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx` on the Dreaming Sarah boot path). After the report the stub deliberately raises `0xC0000135` (`WindowsDependencyStubBuilder.cpp:74-82`), which becomes the process exit code. |
 | CodeMap overlap | Fail (`CodeInstructionCollector.cpp:214`). This means data was treated as code, and the seeding is wrong. |
 
 ## Tests
@@ -150,3 +151,5 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 3. Should a syscall pattern in `Unproven` bytes stay a warning if a gate title's `Unproven` share turns out large?
 4. Which default `unused-filter` level is safe for 1.0? Level 2 rewrites the PLT (`PltCompactor`).
 5. Keep the Linux ELF output path (`LinuxElfPatcher`) building in CI, although other platforms are post-1.0?
+6. Dreaming Sarah (PPSA02929) conversion inventory, recorded 2026-09-29: 815 relocation refs, 484 unique NIDs, 478 resolve to built patched-prx exports; 6 missing, all libc `#T#T` locale/iostream data (`ctype`/`collate`/`num_put` facet ids, `num_put` vtable, `locale::_Id_cnt` — upstream implements them in `libc/src/LocaleSupport.cpp`). Link-level truth supersedes the earlier static 467/18 estimate; the delta was `APS5_EXPORT` literals, plain hashed C names, and `vNe1w4diLCs` = NID(`__tls_get_addr`), which needs no prx export (no relocation ref; the TLS resolver import is special-cased). The 6 plus the `Config::Loader` verbatim-export fix are the ranked gap list; the next boot failure after them is unknown until a run reaches it.
+7. Unknown-NID identification method: recompute candidate-name hashes with `NidCompute` and intersect with the game registry; operation labels may be cross-checked against independent emulator-derived registries kept strictly outside the repo. Never vendor such a registry: its labels are conventional (it lists `tls_get_addr`/`scetls_get_addr`, neither of which hashes to `vNe1w4diLCs`), so it corroborates operations, never spellings.
