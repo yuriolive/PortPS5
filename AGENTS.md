@@ -59,6 +59,7 @@ Reusable procedures live in `.agents/skills/<name>/SKILL.md`. opencode and Antig
 | `implement-prx-function` | Implementing or fixing a PS5 system-library function |
 | `update-spec` | Changing subsystem behaviour, or checking docs acceptance checks |
 | `milestone-seed` | Starting work on a ROADMAP milestone |
+| `start-task` | Starting a new task: upstream AnyPS5 inspection, worktree, structured plan |
 | `compat-result` | Recording a local title test run as results JSON |
 
 ## Layout
