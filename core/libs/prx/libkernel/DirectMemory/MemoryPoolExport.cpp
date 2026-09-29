@@ -8,6 +8,8 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <algorithm>
+#include <map>
 #include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -23,15 +25,32 @@ struct PoolState {
     std::mutex mutex;
     size_t expandedBytes = 0;
     size_t committedBytes = 0;
+    std::map<uintptr_t, size_t> committedRanges;
 };
 
+/**
+ * @brief Returns the global state for memory pool allocations and committed bytes.
+ * @return Reference to the PoolState singleton.
+ */
 PoolState& Pool() {
     static PoolState state;
     return state;
 }
 
+/**
+ * @brief Checks if an address or length is aligned to the PS5 page boundary.
+ * @param v Value to check.
+ * @return true if page-aligned, false otherwise.
+ */
 bool PageAligned(uint64_t v) { return (v & (PS5_PAGE_SIZE - 1)) == 0; }
 
+/**
+ * @brief Commits backing memory pages for a memory pool reservation range.
+ * @param addr Virtual address to commit.
+ * @param len Size in bytes.
+ * @param prot Protection flags.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int PoolCommit(void* addr, uint64_t len, int prot) {
     if (!addr || len == 0 || !PageAligned(reinterpret_cast<uintptr_t>(addr)) || !PageAligned(len)) {
         return SCE_KERNEL_ERROR_EINVAL;
@@ -40,11 +59,42 @@ int PoolCommit(void* addr, uint64_t len, int prot) {
     if (ret == 0) {
         PoolState& pool = Pool();
         std::lock_guard<std::mutex> lock(pool.mutex);
-        pool.committedBytes += static_cast<size_t>(len);
+        const uintptr_t start = reinterpret_cast<uintptr_t>(addr);
+        const uintptr_t end = start + static_cast<size_t>(len);
+
+        // Calculate overlap with existing committed ranges to only increment newly committed bytes.
+        size_t overlap = 0;
+        auto it = pool.committedRanges.upper_bound(start);
+        if (it != pool.committedRanges.begin() && std::prev(it)->first + std::prev(it)->second > start) {
+            --it;
+        }
+        uintptr_t mergedStart = start;
+        uintptr_t mergedEnd = end;
+        while (it != pool.committedRanges.end() && it->first < end) {
+            uintptr_t rStart = it->first;
+            uintptr_t rEnd = rStart + it->second;
+            uintptr_t oStart = std::max(start, rStart);
+            uintptr_t oEnd = std::min(end, rEnd);
+            if (oStart < oEnd) {
+                overlap += (oEnd - oStart);
+            }
+            mergedStart = std::min(mergedStart, rStart);
+            mergedEnd = std::max(mergedEnd, rEnd);
+            it = pool.committedRanges.erase(it);
+        }
+        pool.committedRanges[mergedStart] = mergedEnd - mergedStart;
+        const size_t newBytes = static_cast<size_t>(len) - overlap;
+        pool.committedBytes += newBytes;
     }
     return ret;
 }
 
+/**
+ * @brief Decommits virtual memory pages from a memory pool reservation range.
+ * @param addr Virtual address to decommit.
+ * @param len Size in bytes.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int PoolDecommit(void* addr, uint64_t len) {
     if (!addr || len == 0 || !PageAligned(reinterpret_cast<uintptr_t>(addr)) || !PageAligned(len)) {
         return SCE_KERNEL_ERROR_EINVAL;
@@ -53,7 +103,31 @@ int PoolDecommit(void* addr, uint64_t len) {
     if (ret == 0) {
         PoolState& pool = Pool();
         std::lock_guard<std::mutex> lock(pool.mutex);
-        pool.committedBytes -= (static_cast<size_t>(len) < pool.committedBytes) ? static_cast<size_t>(len) : pool.committedBytes;
+        const uintptr_t start = reinterpret_cast<uintptr_t>(addr);
+        const uintptr_t end = start + static_cast<size_t>(len);
+
+        size_t decommitted = 0;
+        auto it = pool.committedRanges.upper_bound(start);
+        if (it != pool.committedRanges.begin() && std::prev(it)->first + std::prev(it)->second > start) {
+            --it;
+        }
+        while (it != pool.committedRanges.end() && it->first < end) {
+            uintptr_t rStart = it->first;
+            uintptr_t rEnd = rStart + it->second;
+            uintptr_t oStart = std::max(start, rStart);
+            uintptr_t oEnd = std::min(end, rEnd);
+            if (oStart < oEnd) {
+                decommitted += (oEnd - oStart);
+            }
+            it = pool.committedRanges.erase(it);
+            if (rStart < start) {
+                pool.committedRanges[rStart] = start - rStart;
+            }
+            if (rEnd > end) {
+                pool.committedRanges[end] = rEnd - end;
+            }
+        }
+        pool.committedBytes -= (decommitted < pool.committedBytes) ? decommitted : pool.committedBytes;
     }
     return ret;
 }

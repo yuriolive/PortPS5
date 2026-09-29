@@ -22,10 +22,53 @@ static constexpr int SCE_KERNEL_ERROR_EACCES = -2147418108;
 static constexpr int SCE_KERNEL_ERROR_EFAULT = -2147418103;
 
 #include "MemoryPool.hpp"
+
+/**
+ * @brief Maps allocated direct memory into the guest address space with alignment constraints.
+ * @param addr Base address pointer (in/out).
+ * @param len Size in bytes to map.
+ * @param prot Protection flags.
+ * @param flags Mapping flags.
+ * @param physStart Physical start address.
+ * @param alignment Virtual alignment requirement.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment);
+
+/**
+ * @brief Maps anonymous flexible memory into the guest address space.
+ * @param addr Base address pointer (in/out).
+ * @param len Size in bytes to map.
+ * @param prot Protection flags.
+ * @param flags Mapping flags.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMapAnon(void** addr, size_t len, int prot, int flags);
+
+/**
+ * @brief Changes memory protection for a guest address range.
+ * @param addr Start address of the range.
+ * @param len Size in bytes of the range.
+ * @param prot New protection flags.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMprotect(const void* addr, size_t len, int prot);
+
+/**
+ * @brief Unmaps virtual memory pages from the guest address space.
+ * @param addr Base address to unmap.
+ * @param len Size in bytes to unmap.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMunmap(void* addr, size_t len);
+
+/**
+ * @brief Reserves a virtual address range for guest use without memory backing.
+ * @param addr Output pointer receiving the reserved base address.
+ * @param len Size in bytes to reserve.
+ * @param alignment Virtual alignment requirement.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoReserveVirtual(void** addr, size_t len, size_t alignment);
 
 #include "prx/libc/include/general/VabiMacros.hpp"

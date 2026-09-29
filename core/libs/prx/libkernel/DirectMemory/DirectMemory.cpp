@@ -43,6 +43,11 @@ static int mprotect(void* addr, size_t len, int prot) {
 
 namespace {
 
+/**
+ * @brief Validates that a length is non-zero and aligned to the PS5 page size.
+ * @param len Length in bytes to validate.
+ * @return 0 if valid, or SCE_KERNEL_ERROR_EINVAL.
+ */
 int ValidateLength(size_t len) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) {
         return SCE_KERNEL_ERROR_EINVAL;
@@ -50,6 +55,12 @@ int ValidateLength(size_t len) {
     return 0;
 }
 
+/**
+ * @brief Validates and resolves an alignment requirement to at least the PS5 page size.
+ * @param alignment Requested alignment.
+ * @param resolved Output receiving the resolved alignment.
+ * @return 0 if valid, or SCE_KERNEL_ERROR_EINVAL.
+ */
 int ValidateAlignment(size_t alignment, size_t& resolved) {
     if (alignment == 0) {
         resolved = PS5_PAGE_SIZE;
@@ -62,6 +73,13 @@ int ValidateAlignment(size_t alignment, size_t& resolved) {
     return 0;
 }
 
+/**
+ * @brief Validates an address range for pointer nullness, alignment, and integer overflow.
+ * @param addr Base address of the range.
+ * @param len Size in bytes.
+ * @param alignment Required alignment.
+ * @return 0 if valid, or SCE_KERNEL_ERROR_EINVAL.
+ */
 int ValidateRange(const void* addr, size_t len, size_t alignment) {
     int ret = ValidateLength(len);
     if (ret != 0) return ret;
@@ -72,6 +90,12 @@ int ValidateRange(const void* addr, size_t len, size_t alignment) {
     return 0;
 }
 
+/**
+ * @brief Translates SCE protection bitmask flags into host/POSIX protection flags.
+ * @param prot SCE protection flags.
+ * @param linuxProt Output host protection flags.
+ * @return 0 on success, or SCE_KERNEL_ERROR_EINVAL.
+ */
 int LinuxProtFromSce(int prot, int& linuxProt) {
     if ((prot & ~0xF7) != 0) {
         return SCE_KERNEL_ERROR_EINVAL;
@@ -84,10 +108,25 @@ int LinuxProtFromSce(int prot, int& linuxProt) {
     return 0;
 }
 
+/**
+ * @brief Unmaps host memory backing pages.
+ * @param addr Base virtual address.
+ * @param len Size in bytes.
+ */
 void Unmap(void* addr, size_t len) {
     GuestMemoryBacking::GuestMemoryBackingUnmap_nid_postfix(addr, len);
 }
 
+/**
+ * @brief Maps host memory pages with requested alignment and protection.
+ * @param addr Base virtual address hint or fixed address.
+ * @param len Size in bytes.
+ * @param prot Host protection flags.
+ * @param flags Mapping flags.
+ * @param alignment Virtual alignment requirement.
+ * @param mappedOut Output receiving the mapped virtual pointer.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment, void*& mappedOut) {
     int ret = ValidateLength(len);
     if (ret != 0) return ret;
@@ -113,6 +152,11 @@ int MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment, vo
     }
 }
 
+/**
+ * @brief Validates an output pointer parameter for nullness.
+ * @param addr Output pointer to validate.
+ * @return 0 if non-null, or SCE_KERNEL_ERROR_EINVAL.
+ */
 int ValidateOutput(void** addr) {
     if (!addr) {
         return SCE_KERNEL_ERROR_EINVAL;
@@ -122,6 +166,16 @@ int ValidateOutput(void** addr) {
 
 }
 
+/**
+ * @brief Implementation of direct memory mapping into guest virtual space.
+ * @param addr Base address pointer (in/out).
+ * @param len Size in bytes to map.
+ * @param prot Protection flags.
+ * @param flags Mapping flags.
+ * @param physStart Physical start address.
+ * @param alignment Virtual alignment requirement.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
     int ret = ValidateOutput(addr);
     if (ret != 0) return ret;
@@ -153,6 +207,14 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
     }
 }
 
+/**
+ * @brief Implementation of anonymous flexible memory mapping into guest virtual space.
+ * @param addr Base address pointer (in/out).
+ * @param len Size in bytes to map.
+ * @param prot Protection flags.
+ * @param flags Mapping flags.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMapAnon(void** addr, size_t len, int prot, int flags) {
     int ret = ValidateOutput(addr);
     if (ret != 0) return ret;
@@ -181,6 +243,13 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags) {
     }
 }
 
+/**
+ * @brief Implementation of guest memory protection modification.
+ * @param addr Start address of the range.
+ * @param len Size in bytes of the range.
+ * @param prot New protection flags.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMprotect(const void* addr, size_t len, int prot) {
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
     constexpr auto pageMask = static_cast<std::uintptr_t>(PS5_PAGE_SIZE - 1);
@@ -225,6 +294,12 @@ int DoMprotect(const void* addr, size_t len, int prot) {
     }
 }
 
+/**
+ * @brief Implementation of guest virtual memory unmapping.
+ * @param addr Base address to unmap.
+ * @param len Size in bytes to unmap.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoMunmap(void* addr, size_t len) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
     try {
@@ -238,6 +313,13 @@ int DoMunmap(void* addr, size_t len) {
     }
 }
 
+/**
+ * @brief Implementation of virtual address range reservation.
+ * @param addr Output pointer receiving the reserved base address.
+ * @param len Size in bytes to reserve.
+ * @param alignment Virtual alignment requirement.
+ * @return 0 on success, or SCE error code on failure.
+ */
 int DoReserveVirtual(void** addr, size_t len, size_t alignment) {
     int ret = ValidateOutput(addr);
     if (ret != 0) return ret;

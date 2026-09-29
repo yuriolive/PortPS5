@@ -141,4 +141,38 @@ TEST(DirectMemoryPool, FreeSpanningMultipleBlocksClearsRanges) {
     EXPECT_FALSE(DirectMemoryQueryBlock(static_cast<uint64_t>(physAddr2), &block));
 }
 
+// Verifies that repeated commits of the same memory pool range do not inflate committed blocks in stats.
+TEST(DirectMemoryPool, RepeatedCommitsDoNotInflateStats) {
+    void* addr = nullptr;
+    constexpr size_t reserveSize = 2 * 1024 * 1024; // 2 MB = 1 pool block
+
+    ASSERT_EQ(sceKernelMemoryPoolReserve(nullptr, reserveSize, reserveSize, 0, &addr), 0);
+    ASSERT_NE(addr, nullptr);
+
+    // Initial stats
+    KernelMemoryPoolBlockStats statsBefore{};
+    ASSERT_EQ(sceKernelMemoryPoolGetBlockStats(&statsBefore, sizeof(statsBefore)), 0);
+
+    // Commit 64 KB
+    EXPECT_EQ(sceKernelMemoryPoolCommit(addr, 64 * 1024, 0, 3, 0), 0);
+    KernelMemoryPoolBlockStats statsAfterFirst{};
+    ASSERT_EQ(sceKernelMemoryPoolGetBlockStats(&statsAfterFirst, sizeof(statsAfterFirst)), 0);
+    EXPECT_EQ(statsAfterFirst.allocated_flushed_blocks, statsBefore.allocated_flushed_blocks + 1);
+
+    // Commit the exact same 64 KB again - must NOT increase allocated_flushed_blocks
+    EXPECT_EQ(sceKernelMemoryPoolCommit(addr, 64 * 1024, 0, 3, 0), 0);
+    KernelMemoryPoolBlockStats statsAfterSecond{};
+    ASSERT_EQ(sceKernelMemoryPoolGetBlockStats(&statsAfterSecond, sizeof(statsAfterSecond)), 0);
+    EXPECT_EQ(statsAfterSecond.allocated_flushed_blocks, statsAfterFirst.allocated_flushed_blocks);
+
+    // Decommit and cleanup
+    EXPECT_EQ(sceKernelMemoryPoolDecommit(addr, 64 * 1024, 0), 0);
+    EXPECT_EQ(sceKernelMunmap(reinterpret_cast<uint64_t>(addr), reserveSize), 0);
+}
+
+// Verifies that DirectMemoryAlloc rejects null physOut pointers with SCE_KERNEL_ERROR_EINVAL.
+TEST(DirectMemoryPool, RejectNullPhysOut) {
+    EXPECT_EQ(DirectMemoryAlloc(0, 1024 * 1024 * 1024, PS5_PAGE_SIZE, PS5_PAGE_SIZE, 0, nullptr), ::SCE_KERNEL_ERROR_EINVAL);
+}
+
 } // namespace

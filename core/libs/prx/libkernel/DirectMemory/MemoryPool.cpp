@@ -15,12 +15,27 @@ static constexpr size_t NUM_PAGES = DIRECT_MEMORY_SIZE / PS5_PAGE_SIZE;
 
 // Physical memory pool tracking physical direct memory allocations and extents.
 struct PhysicalMemoryPool {
+    /**
+     * @brief Returns the singleton instance of the physical direct memory pool.
+     * @return Reference to the physical memory pool instance.
+     */
     static PhysicalMemoryPool& Instance() {
         static PhysicalMemoryPool inst;
         return inst;
     }
 
+    /**
+     * @brief Allocates contiguous physical direct memory pages within a search range.
+     * @param searchStart Lower search bound.
+     * @param searchEnd Upper search bound.
+     * @param len Allocation length in bytes.
+     * @param alignment Required physical alignment.
+     * @param memoryType PS5 memory type / attribute flags.
+     * @param physOut Output pointer receiving allocated physical address.
+     * @return 0 on success, or SCE error code on failure.
+     */
     int Alloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut) {
+        if (!physOut) return SCE_KERNEL_ERROR_EINVAL;
         std::lock_guard<std::mutex> lock(_mutex);
         size_t align = (alignment == 0) ? PS5_PAGE_SIZE : alignment;
         uint64_t start = static_cast<uint64_t>(searchStart);
@@ -38,6 +53,11 @@ struct PhysicalMemoryPool {
         return SCE_KERNEL_ERROR_EAGAIN;
     }
 
+    /**
+     * @brief Releases physical direct memory pages and updates range tracking.
+     * @param start Physical address to free.
+     * @param len Size in bytes to free.
+     */
     void Free(uint64_t start, size_t len) {
         std::lock_guard<std::mutex> lock(_mutex);
         _mark(start, len, false);
@@ -60,6 +80,12 @@ struct PhysicalMemoryPool {
         }
     }
 
+    /**
+     * @brief Queries metadata for an allocated physical direct memory block containing offset.
+     * @param offset Physical offset to query.
+     * @param block Output pointer receiving the block descriptor.
+     * @return true if the offset is inside an allocated block, false otherwise.
+     */
     bool Query(uint64_t offset, DirectMemoryBlock* block) {
         std::lock_guard<std::mutex> lock(_mutex);
         auto it = _ranges.upper_bound(offset);
@@ -70,6 +96,12 @@ struct PhysicalMemoryPool {
         return true;
     }
 
+    /**
+     * @brief Computes contiguous free bytes starting from offset up to limit.
+     * @param offset Starting physical address.
+     * @param limit Upper boundary physical address.
+     * @return Contiguous free byte count.
+     */
     size_t FreeRun(uint64_t offset, uint64_t limit) {
         std::lock_guard<std::mutex> lock(_mutex);
         uint64_t cur = offset & ~static_cast<uint64_t>(PS5_PAGE_SIZE - 1);
@@ -83,6 +115,12 @@ struct PhysicalMemoryPool {
     }
 
 private:
+    /**
+     * @brief Checks if a contiguous physical range is completely free.
+     * @param offset Starting physical address.
+     * @param len Length in bytes.
+     * @return true if free, false if any page is allocated.
+     */
     bool _isFree(uint64_t offset, size_t len) const {
         size_t first = offset / PS5_PAGE_SIZE;
         size_t count = len / PS5_PAGE_SIZE;
@@ -91,6 +129,12 @@ private:
         return true;
     }
 
+    /**
+     * @brief Marks a physical page range as used or free in the allocation bitmap.
+     * @param offset Starting physical address.
+     * @param len Length in bytes.
+     * @param used True to mark allocated, false to mark free.
+     */
     void _mark(uint64_t offset, size_t len, bool used) {
         size_t first = offset / PS5_PAGE_SIZE;
         size_t count = len / PS5_PAGE_SIZE;
@@ -103,22 +147,58 @@ private:
     std::map<uint64_t, DirectMemoryBlock> _ranges;
 };
 
+/**
+ * @brief Allocates direct memory with explicit memory type.
+ * @param searchStart Search lower bound.
+ * @param searchEnd Search upper bound.
+ * @param len Size in bytes.
+ * @param alignment Physical alignment.
+ * @param memoryType Memory type attributes.
+ * @param physOut Output receiving allocated physical address.
+ * @return 0 on success, or SCE error code.
+ */
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut) {
     return PhysicalMemoryPool::Instance().Alloc(searchStart, searchEnd, len, alignment, memoryType, physOut);
 }
 
+/**
+ * @brief Allocates direct memory with default memory type.
+ * @param searchStart Search lower bound.
+ * @param searchEnd Search upper bound.
+ * @param len Size in bytes.
+ * @param alignment Physical alignment.
+ * @param physOut Output receiving allocated physical address.
+ * @return 0 on success, or SCE error code.
+ */
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int64_t* physOut) {
     return PhysicalMemoryPool::Instance().Alloc(searchStart, searchEnd, len, alignment, -1, physOut);
 }
 
+/**
+ * @brief Releases direct memory back to the pool.
+ * @param start Physical start address.
+ * @param len Size in bytes.
+ */
 void DirectMemoryFree(int64_t start, size_t len) {
     PhysicalMemoryPool::Instance().Free(static_cast<uint64_t>(start), len);
 }
 
+/**
+ * @brief Queries metadata of an allocated direct memory block.
+ * @param offset Physical offset.
+ * @param block Output descriptor.
+ * @return true if found, false otherwise.
+ */
 bool DirectMemoryQueryBlock(uint64_t offset, DirectMemoryBlock* block) {
     return PhysicalMemoryPool::Instance().Query(offset, block);
 }
 
+/**
+ * @brief Computes contiguous free byte count up to limit.
+ * @param offset Starting offset.
+ * @param limit Upper boundary.
+ * @return Contiguous free bytes.
+ */
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit) {
     return PhysicalMemoryPool::Instance().FreeRun(offset, limit);
 }
