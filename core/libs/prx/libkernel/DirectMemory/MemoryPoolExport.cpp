@@ -137,12 +137,11 @@ int PoolDecommit(void* addr, uint64_t len) {
 extern "C" {
 
 /**
- * @brief Performs batched commit, decommit, and protection operations on memory pool mappings.
- * @param entries Array of batch command entries.
- * @param num_entries Count of entries in the array.
- * @param num_entries_out Output counter of successfully executed operations.
- * @param flags Batch flags.
- * @return 0 on success, or SCE error code on failure.
+ * @brief sceKernelMemoryPoolBatch implementation.
+ *
+ * Invoked by guest code using System V ABI calling convention to perform batched
+ * commit, decommit, and memory protection operations on memory pool reservations.
+ * Returns 0 on success, or SCE_KERNEL_ERROR_EINVAL on invalid batch entry.
  */
 int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries, int num_entries, int* num_entries_out, int flags) {
     (void)flags;
@@ -175,13 +174,11 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
 }
 
 /**
- * @brief Commits virtual memory within a memory pool reservation.
- * @param addr Virtual address to commit.
- * @param len Size in bytes to commit.
- * @param type Pool type.
- * @param prot Protection flags.
- * @param flags Commit flags.
- * @return 0 on success, or SCE error code on failure.
+ * @brief sceKernelMemoryPoolCommit implementation.
+ *
+ * Invoked by guest code using System V ABI calling convention to commit physical memory
+ * backing for an address range within a previously reserved memory pool region.
+ * Returns 0 on success, or SCE error code on failure.
  */
 int APS5_VABI sceKernelMemoryPoolCommit(void* addr, size_t len, int type, int prot, int flags) {
     (void)type;
@@ -190,11 +187,11 @@ int APS5_VABI sceKernelMemoryPoolCommit(void* addr, size_t len, int type, int pr
 }
 
 /**
- * @brief Decommits virtual memory within a memory pool reservation.
- * @param addr Virtual address to decommit.
- * @param len Size in bytes to decommit.
- * @param flags Decommit flags.
- * @return 0 on success, or SCE error code on failure.
+ * @brief sceKernelMemoryPoolDecommit implementation.
+ *
+ * Invoked by guest code using System V ABI calling convention to decommit memory pages
+ * from a memory pool range, freeing backing memory and reducing committed count.
+ * Returns 0 on success, or SCE error code on failure.
  */
 int APS5_VABI sceKernelMemoryPoolDecommit(void* addr, size_t len, int flags) {
     (void)flags;
@@ -202,13 +199,11 @@ int APS5_VABI sceKernelMemoryPoolDecommit(void* addr, size_t len, int flags) {
 }
 
 /**
- * @brief Expands the physical memory pool capacity by allocating direct physical blocks.
- * @param search_start Search window start.
- * @param search_end Search window end.
- * @param len Size in bytes to allocate.
- * @param alignment Physical alignment.
- * @param phys_addr_out Output receiving allocated physical address.
- * @return 0 on success, or SCE error code on failure.
+ * @brief sceKernelMemoryPoolExpand implementation.
+ *
+ * Invoked by guest code using System V ABI calling convention to expand physical backing
+ * capacity of the memory pool by allocating direct memory within [search_start, search_end).
+ * Returns 0 on success, or SCE_KERNEL_ERROR_EINVAL / SCE_KERNEL_ERROR_EAGAIN on failure.
  */
 int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end, size_t len, size_t alignment, int64_t* phys_addr_out) {
     if (search_start < 0 || search_end <= search_start || len == 0 || !PageAligned(len) || !phys_addr_out
@@ -225,10 +220,11 @@ int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end
 }
 
 /**
- * @brief Queries current allocated and available block statistics for the memory pool.
- * @param output Output buffer receiving block statistics.
- * @param output_size Size of the output buffer.
- * @return 0 on success, or SCE error code on failure.
+ * @brief sceKernelMemoryPoolGetBlockStats implementation.
+ *
+ * Invoked by guest code using System V ABI calling convention to query current allocated
+ * and available block statistics for the memory pool based on committed and expanded bytes.
+ * Returns 0 on success, or SCE_KERNEL_ERROR_EINVAL if output is null or buffer is undersized.
  */
 int APS5_VABI sceKernelMemoryPoolGetBlockStats(KernelMemoryPoolBlockStats* output, size_t output_size) {
     if (!output || output_size < sizeof(KernelMemoryPoolBlockStats)) return SCE_KERNEL_ERROR_EINVAL;
@@ -244,13 +240,11 @@ int APS5_VABI sceKernelMemoryPoolGetBlockStats(KernelMemoryPoolBlockStats* outpu
 }
 
 /**
- * @brief Reserves a virtual address range for memory pool usage without committed backing.
- * @param addr_in Optional base address hint.
- * @param len Size in bytes to reserve.
- * @param alignment Required alignment.
- * @param flags Reservation flags.
- * @param addr_out Output pointer receiving reserved base address.
- * @return 0 on success, or SCE error code on failure.
+ * @brief sceKernelMemoryPoolReserve implementation.
+ *
+ * Invoked by guest code using System V ABI calling convention to reserve a virtual address
+ * range for memory pool usage without committed backing pages.
+ * Returns 0 on success, or SCE_KERNEL_ERROR_EINVAL on invalid parameters.
  */
 int APS5_VABI sceKernelMemoryPoolReserve(void* addr_in, size_t len, size_t alignment, int flags, void** addr_out) {
     (void)addr_in;

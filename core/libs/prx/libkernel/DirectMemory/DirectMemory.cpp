@@ -168,13 +168,9 @@ int ValidateOutput(void** addr) {
 
 /**
  * @brief Implementation of direct memory mapping into guest virtual space.
- * @param addr Base address pointer (in/out).
- * @param len Size in bytes to map.
- * @param prot Protection flags.
- * @param flags Mapping flags.
- * @param physStart Physical start address.
- * @param alignment Virtual alignment requirement.
- * @return 0 on success, or SCE error code on failure.
+ *
+ * Maps allocated direct physical memory at physStart into the guest virtual address space
+ * with the requested protection flags and alignment constraints.
  */
 int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart, size_t alignment) {
     int ret = ValidateOutput(addr);
@@ -209,11 +205,8 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
 
 /**
  * @brief Implementation of anonymous flexible memory mapping into guest virtual space.
- * @param addr Base address pointer (in/out).
- * @param len Size in bytes to map.
- * @param prot Protection flags.
- * @param flags Mapping flags.
- * @return 0 on success, or SCE error code on failure.
+ *
+ * Allocates and maps flexible anonymous memory pages into the guest virtual address space.
  */
 int DoMapAnon(void** addr, size_t len, int prot, int flags) {
     int ret = ValidateOutput(addr);
@@ -245,10 +238,9 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags) {
 
 /**
  * @brief Implementation of guest memory protection modification.
- * @param addr Start address of the range.
- * @param len Size in bytes of the range.
- * @param prot New protection flags.
- * @return 0 on success, or SCE error code on failure.
+ *
+ * Changes memory protection for guest address range [addr, addr + len) with prot.
+ * Aborts mutation on mprotect failure to keep guest registry consistent.
  */
 int DoMprotect(const void* addr, size_t len, int prot) {
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
@@ -296,9 +288,8 @@ int DoMprotect(const void* addr, size_t len, int prot) {
 
 /**
  * @brief Implementation of guest virtual memory unmapping.
- * @param addr Base address to unmap.
- * @param len Size in bytes to unmap.
- * @return 0 on success, or SCE error code on failure.
+ *
+ * Unmaps allocated virtual memory pages from the guest address space and updates the registry.
  */
 int DoMunmap(void* addr, size_t len) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
@@ -315,10 +306,8 @@ int DoMunmap(void* addr, size_t len) {
 
 /**
  * @brief Implementation of virtual address range reservation.
- * @param addr Output pointer receiving the reserved base address.
- * @param len Size in bytes to reserve.
- * @param alignment Virtual alignment requirement.
- * @return 0 on success, or SCE error code on failure.
+ *
+ * Reserves a guest virtual address range with PROT_NONE without allocating backing memory.
  */
 int DoReserveVirtual(void** addr, size_t len, size_t alignment) {
     int ret = ValidateOutput(addr);

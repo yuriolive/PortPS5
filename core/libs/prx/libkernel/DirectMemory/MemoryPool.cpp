@@ -148,56 +148,45 @@ private:
 };
 
 /**
- * @brief Allocates direct memory with explicit memory type.
- * @param searchStart Search lower bound.
- * @param searchEnd Search upper bound.
- * @param len Size in bytes.
- * @param alignment Physical alignment.
- * @param memoryType Memory type attributes.
- * @param physOut Output receiving allocated physical address.
- * @return 0 on success, or SCE error code.
+ * @brief Implementation of direct memory allocation with explicit memory type.
+ *
+ * Allocates contiguous physical direct memory pages within [searchStart, searchEnd).
  */
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut) {
     return PhysicalMemoryPool::Instance().Alloc(searchStart, searchEnd, len, alignment, memoryType, physOut);
 }
 
 /**
- * @brief Allocates direct memory with default memory type.
- * @param searchStart Search lower bound.
- * @param searchEnd Search upper bound.
- * @param len Size in bytes.
- * @param alignment Physical alignment.
- * @param physOut Output receiving allocated physical address.
- * @return 0 on success, or SCE error code.
+ * @brief Implementation of direct memory allocation with default memory type.
+ *
+ * Allocates contiguous physical direct memory pages using the default unconstrained memory type.
  */
 int DirectMemoryAlloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int64_t* physOut) {
     return PhysicalMemoryPool::Instance().Alloc(searchStart, searchEnd, len, alignment, -1, physOut);
 }
 
 /**
- * @brief Releases direct memory back to the pool.
- * @param start Physical start address.
- * @param len Size in bytes.
+ * @brief Implementation of direct memory release.
+ *
+ * Frees physical direct memory pages across [start, start + len) and trims overlapping block ranges.
  */
 void DirectMemoryFree(int64_t start, size_t len) {
     PhysicalMemoryPool::Instance().Free(static_cast<uint64_t>(start), len);
 }
 
 /**
- * @brief Queries metadata of an allocated direct memory block.
- * @param offset Physical offset.
- * @param block Output descriptor.
- * @return true if found, false otherwise.
+ * @brief Implementation of direct memory block querying.
+ *
+ * Looks up allocated range boundaries and memory type attributes for the given physical offset.
  */
 bool DirectMemoryQueryBlock(uint64_t offset, DirectMemoryBlock* block) {
     return PhysicalMemoryPool::Instance().Query(offset, block);
 }
 
 /**
- * @brief Computes contiguous free byte count up to limit.
- * @param offset Starting offset.
- * @param limit Upper boundary.
- * @return Contiguous free bytes.
+ * @brief Implementation of contiguous free extent calculation.
+ *
+ * Computes contiguous unallocated bytes beginning at offset up to the specified limit.
  */
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit) {
     return PhysicalMemoryPool::Instance().FreeRun(offset, limit);
