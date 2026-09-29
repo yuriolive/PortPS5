@@ -90,7 +90,7 @@
       "description": "Runs all unit tests in CI",
       "configurePreset": "ci",
       "execution": {
-        "jobs": 0
+        "jobs": 4
       },
       "output": {
         "outputOnFailure": true
@@ -107,7 +107,7 @@
       "description": "Runs all unit-labeled tests",
       "configurePreset": "dev",
       "execution": {
-        "jobs": 0
+        "jobs": 4
       },
       "output": {
         "outputOnFailure": true
