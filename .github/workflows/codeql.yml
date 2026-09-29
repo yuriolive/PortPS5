@@ -7,7 +7,8 @@
 # 3-Way Hybrid Architecture:
 # 1. Pull requests (build-mode: none):
 #    - Fast zero-build AST scanning directly from repository source files in ~1.5–2 min.
-#    - Skips git submodule checkout, MinGW GCC download/setup, and CMake compilation.
+#    - Skips MinGW GCC download/setup and CMake compilation (submodules still
+#      sync so the AST extractor can resolve third-party headers).
 #    - Satisfies the required "CodeQL C/C++ Analysis" status check in repo ruleset protect-main.
 # 2. Main branch push (build-mode: manual):
 #    - Deep compiler-interception dataflow analysis building shipping targets (relinker, libs)
@@ -58,58 +59,14 @@ jobs:
         with:
           submodules: false
 
-      # ── Submodules ─────────────────────────────────────────────────────────
-      # Submodules provide external headers (SDL2, Vulkan-Headers, etc.) needed
-      # by the CodeQL AST extractor to resolve includes without compilation errors.
-      - name: Cache git submodules
-        uses: actions/cache@v4
+      # ── Prerequisites (shared composite action) ────────────────────────
+      # Submodules always (AST extractor needs headers to resolve includes).
+      # MinGW toolchain only for main/cron deep builds; PR fast scans use
+      # build-mode 'none' and never invoke the compiler.
+      - name: Setup submodules + MinGW (deep builds only)
+        uses: ./.github/actions/mingw-setup
         with:
-          path: .git/modules
-          key: submodules-${{ runner.os }}-${{ hashFiles('.gitmodules') }}
-          restore-keys: |
-            submodules-${{ runner.os }}-
-
-      - name: Update submodules
-        shell: pwsh
-        run: |
-          git submodule sync --recursive
-          git submodule update --init --recursive
-
-      # ── Toolchain (main / cron deep build only) ───────────────────────────
-      # CodeQL builds the project using the same MinGW toolchain as CI so
-      # that its compilation database and IR match what ships. The toolchain
-      # pin lives in cmake/toolchains/mingw-gcc15.sha256 and is verified by
-      # the same checksum logic as the main CI job. Skipped on PRs.
-      - name: Cache MinGW toolchain
-        if: github.event_name != 'pull_request'
-        id: cache-mingw
-        uses: actions/cache@v4
-        with:
-          path: C:\mingw64
-          key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
-
-      - name: Download and verify MinGW-w64 GCC 15.2
-        if: github.event_name != 'pull_request' && steps.cache-mingw.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $expectedSha = (Get-Content cmake/toolchains/mingw-gcc15.sha256 | Select-String -Pattern '^[0-9a-f]{64}').Matches.Value
-          $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.7z"
-          $archive = "$env:TEMP\winlibs.7z"
-          Write-Host "Downloading MinGW GCC 15.2 from $url..."
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          $actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualSha -ne $expectedSha) {
-              throw "Checksum mismatch — Expected: $expectedSha, got: $actualSha"
-          }
-          Write-Host "Checksum verified. Extracting..."
-          7z x $archive -oC:\ -y
-          Remove-Item $archive
-
-      - name: Add MinGW to PATH
-        if: github.event_name != 'pull_request'
-        shell: pwsh
-        run: |
-          "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          setup-toolchain: ${{ github.event_name != 'pull_request' }}
 
       # ── CodeQL ─────────────────────────────────────────────────────────────
       # Hybrid analysis mode:

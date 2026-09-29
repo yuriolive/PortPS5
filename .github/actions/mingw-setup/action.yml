@@ -1,0 +1,83 @@
+# PortPS5 — shared MinGW + submodule + ccache setup
+#
+# Composite action used by ci.yml (build job) and codeql.yml (deep-build
+# runs). It performs the three expensive prerequisites exactly once per
+# definition so the workflows cannot drift apart:
+#
+#   1. Restore + update pinned git submodules (SDL2, Vulkan-Headers, ...).
+#   2. Restore or download + checksum-verify the pinned MinGW-w64 GCC 15.2
+#      toolchain, then add it to PATH.
+#   3. Export ccache environment variables (dir, basedir, size).
+#
+# ccache restore/save stays in the caller workflow because each job needs
+# its own cache key scope. CodeQL deep builds deliberately skip ccache
+# entirely (compiler interception requires fresh compiles).
+#
+# File purpose: single source of truth for Windows toolchain bootstrap.
+# Threading/lifecycle: runs once per job before cmake configure.
+
+name: mingw-setup
+description: Restore submodules, provision pinned MinGW GCC 15.2, export ccache env
+
+inputs:
+  setup-toolchain:
+    description: Download and add MinGW GCC 15.2 to PATH (set 'false' for CodeQL PR fast scans that need only submodules)
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Cache Git submodules
+      uses: actions/cache@v4
+      with:
+        path: .git/modules
+        key: submodules-${{ runner.os }}-${{ hashFiles('.gitmodules') }}
+        restore-keys: |
+          submodules-${{ runner.os }}-
+
+    - name: Update submodules
+      shell: pwsh
+      run: |
+        git submodule sync --recursive
+        git submodule update --init --recursive
+
+    - name: Cache MinGW toolchain
+      if: inputs.setup-toolchain == 'true'
+      id: cache-mingw
+      uses: actions/cache@v4
+      with:
+        path: C:\mingw64
+        key: mingw-gcc15.2-${{ hashFiles('cmake/toolchains/mingw-gcc15.sha256') }}
+
+    - name: Download and verify MinGW-w64 GCC 15.2
+      if: inputs.setup-toolchain == 'true' && steps.cache-mingw.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $expectedSha = (Get-Content cmake/toolchains/mingw-gcc15.sha256 | Select-String -Pattern '^[0-9a-f]{64}').Matches.Value
+        $url = "https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.7z"
+        $archive = "$env:TEMP\winlibs.7z"
+        Write-Host "Downloading MinGW GCC 15.2 from $url..."
+        Invoke-WebRequest -Uri $url -OutFile $archive
+        $actualSha = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha -ne $expectedSha) {
+            throw "Checksum verification failed! Expected: $expectedSha, got: $actualSha"
+        }
+        Write-Host "Checksum verified. Extracting..."
+        7z x $archive -oC:\ -y
+        Remove-Item $archive
+
+    - name: Add MinGW to PATH
+      if: inputs.setup-toolchain == 'true'
+      shell: pwsh
+      run: |
+        "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        # WinLibs curl has no bundled CA certificates; pinned SHA256 hashes ensure integrity
+        "CMAKE_TLS_VERIFY=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Configure ccache environment
+      shell: pwsh
+      run: |
+        "CCACHE_DIR=$env:RUNNER_TEMP\ccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "CCACHE_BASEDIR=$env:GITHUB_WORKSPACE" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "CCACHE_MAXSIZE=1G" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
