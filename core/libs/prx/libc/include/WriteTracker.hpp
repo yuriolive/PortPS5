@@ -12,6 +12,7 @@
 #include <map>
 #include <mutex>
 #include <span>
+#include <vector>
 
 // CPU write tracking for guest memory (docs/spec/guest-memory.md).
 //
@@ -150,11 +151,11 @@ private:
  * @brief IWriteTracker over MEM_WRITE_WATCH arena memory (spec "WriteWatchTracker").
  *
  * Collect performs one resetting GetWriteWatch pass per call and stamps
- * 64 KiB blocks with 64-bit generations from a per-shard monotonic counter
- * (never wraps in practice; PR #5's 32-bit counter could wrap in ~12 h).
- * Ranges the walk cannot cover (uncommitted pages, non-write-watch memory,
- * non-Windows builds, out-of-window addresses) report 0 ("unknown": the
- * caller compares bytes) and bump UnknownWalks for telemetry.
+ * 64 KiB blocks with 64-bit generations from a single global monotonic
+ * counter (never wraps in practice; PR #5's 32-bit counter could wrap in
+ * ~12 h). Ranges the walk cannot cover (uncommitted pages, non-write-watch
+ * memory, non-Windows builds, out-of-window addresses) report 0 ("unknown":
+ * the caller compares bytes) and bump UnknownWalks for telemetry.
  */
 class WriteWatchTracker final : public IWriteTracker {
 public:
@@ -220,8 +221,8 @@ public:
      * @brief Records GPU-written bytes (M3 block-generation path; see spec).
      * @param address First byte; @param bytes length.
      * @return New generation covering the range; 0 for empty, wrapping, or
-     * out-of-window ranges. Bumps the same per-shard counters as Collect so
-     * CPU/GPU novelty share one ordering.
+     * out-of-window ranges. Bumps the single global counter shared with
+     * Collect so CPU/GPU novelty share one ordering.
      */
     std::uint64_t MarkWritten(std::uint64_t address, std::uint64_t bytes) noexcept override;
 
@@ -242,16 +243,31 @@ public:
 private:
     struct GenShard;
     bool InWindow(std::uint64_t address, std::uint64_t bytes) const noexcept;
+    // Fills @p locks with every shard in [first, last] in ascending index
+    // order; the locks are held until @p locks is destroyed, i.e. across the
+    // caller's whole walk+stamp. Ascending order is global, so two
+    // Collects/MarkWrittens can never deadlock: each blocks only on a higher
+    // shard while holding lower ones, and the holder of the higher shard
+    // never waits on a lower one. False when lock storage cannot be
+    // allocated (caller reports unknown); mutex::lock itself does not throw.
+    bool LockShardsAscending(std::uint64_t first, std::uint64_t last,
+                             std::vector<std::unique_lock<std::mutex>>& locks) noexcept;
+    // Helpers below require the caller to hold ALL touched shards' locks
+    // (see LockShardsAscending): the resetting GetWriteWatch walk and the
+    // stamping of what it returned must be atomic with respect to other
+    // Collects, or a concurrent walk could reset-then-miss a dirty page and
+    // report "unchanged" for a write that already landed (stale re-upload).
     // Newest stored generation in [address, address + bytes); 0 when none.
-    std::uint64_t MaxGenInRange(std::uint64_t address, std::uint64_t bytes) noexcept;
+    std::uint64_t MaxGenLocked(std::uint64_t address, std::uint64_t bytes) noexcept;
     // Stamps every 64 KiB block intersecting the range; returns newest stamp
     // and sets complete=false (returning 0) when the generation map cannot
     // be allocated.
-    std::uint64_t StampRange(std::uint64_t address, std::uint64_t bytes, bool& complete) noexcept;
+    std::uint64_t StampRangeLocked(std::uint64_t address, std::uint64_t bytes, bool& complete) noexcept;
 #ifdef _WIN32
     // One bounded resetting GetWriteWatch pass over [base, base + bytes),
     // stamping every reported dirty page's block into newest. False means
     // unknown (dirty-page buffer OOM, walk failure, generation-map OOM).
+    // Caller holds the touched shards' locks (see above).
     bool CollectChunkWindows(std::uint64_t base, std::uint64_t bytes, std::uint64_t& newest) noexcept;
 #endif
 

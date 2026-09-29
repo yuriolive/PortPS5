@@ -187,15 +187,14 @@ bool WriteWatchTracker::InWindow(std::uint64_t address, std::uint64_t bytes) con
     return genShards_ != nullptr && bytes != 0 && address >= base_ && address <= UINT64_MAX - bytes && address + bytes <= end_;
 }
 
-std::uint64_t WriteWatchTracker::MaxGenInRange(std::uint64_t address, std::uint64_t bytes) noexcept {
-    // Caller guarantees an in-window, non-wrapping range.
+std::uint64_t WriteWatchTracker::MaxGenLocked(std::uint64_t address, std::uint64_t bytes) noexcept {
+    // Caller holds every touched shard's lock and guarantees an in-window,
+    // non-wrapping range.
     std::uint64_t newest = 0;
     const std::uint64_t firstBlock = (address - base_) / kWriteWatchBlockBytes;
     const std::uint64_t lastBlock = (address + bytes - 1 - base_) / kWriteWatchBlockBytes;
     for (std::uint64_t block = firstBlock; block <= lastBlock; ++block) {
-        const std::uint64_t shard = block / kGenBlocksPerShard;
-        GenShard& slot = genShards_[shard];
-        std::lock_guard<std::mutex> lock(slot.mutex);
+        const GenShard& slot = genShards_[block / kGenBlocksPerShard];
         // A null map means "never stamped": contributes 0, which keeps the
         // unknown verdict for untouched ranges (caller compares bytes).
         if (slot.gens != nullptr) {
@@ -206,18 +205,17 @@ std::uint64_t WriteWatchTracker::MaxGenInRange(std::uint64_t address, std::uint6
     return newest;
 }
 
-std::uint64_t WriteWatchTracker::StampRange(std::uint64_t address, std::uint64_t bytes, bool& complete) noexcept {
-    // Caller guarantees an in-window, non-wrapping range. Every intersecting
-    // 64 KiB block (partial blocks included: conservative, never misses a
-    // write) takes the shard's next generation.
+std::uint64_t WriteWatchTracker::StampRangeLocked(std::uint64_t address, std::uint64_t bytes, bool& complete) noexcept {
+    // Caller holds every touched shard's lock and guarantees an in-window,
+    // non-wrapping range. Every intersecting 64 KiB block (partial blocks
+    // included: conservative, never misses a write) takes the next global
+    // generation.
     complete = true;
     std::uint64_t newest = 0;
     const std::uint64_t firstBlock = (address - base_) / kWriteWatchBlockBytes;
     const std::uint64_t lastBlock = (address + bytes - 1 - base_) / kWriteWatchBlockBytes;
     for (std::uint64_t block = firstBlock; block <= lastBlock; ++block) {
-        const std::uint64_t shard = block / kGenBlocksPerShard;
-        GenShard& slot = genShards_[shard];
-        std::lock_guard<std::mutex> lock(slot.mutex);
+        GenShard& slot = genShards_[block / kGenBlocksPerShard];
         if (slot.gens == nullptr) {
             // Zero-init: unstamped blocks read 0 ("unknown") until first use.
             slot.gens = new (std::nothrow) std::uint64_t[kGenBlocksPerShard]();
@@ -229,7 +227,7 @@ std::uint64_t WriteWatchTracker::StampRange(std::uint64_t address, std::uint64_t
         // 64-bit global counter never wraps in practice (spec failure mode:
         // PR #5's 32-bit generation wrapped in ~12 h at 1e5 collects/s). One
         // counter for all shards keeps multi-shard ranges sound: any fresh
-        // stamp exceeds every prior stamp, so MaxGenInRange can never hide a
+        // stamp exceeds every prior stamp, so MaxGenLocked can never hide a
         // write behind a stale generation from another shard.
         const std::uint64_t gen = generation_.fetch_add(1, std::memory_order_relaxed) + 1;
         slot.gens[block % kGenBlocksPerShard] = gen;
@@ -244,7 +242,14 @@ std::uint64_t WriteWatchTracker::StampRange(std::uint64_t address, std::uint64_t
 // (unknown) when the buffer cannot be allocated or the walk fails, which is
 // exactly the uncommitted-page and non-write-watch-memory case from the spec.
 bool WriteWatchTracker::CollectChunkWindows(std::uint64_t base, std::uint64_t bytes, std::uint64_t& newest) noexcept {
-    const std::uint64_t pageCount = (bytes + kPageStatePageBytes - 1) / kPageStatePageBytes;
+    // Caller holds the touched shards' locks and guarantees an in-window,
+    // non-wrapping, nonempty range. Size the buffer from the page-aligned
+    // bounds: ceil(bytes/4096) undercounts by one page when base is
+    // unaligned (e.g. Collect(base+100, 4096) touches 2 pages), and a short
+    // buffer drops dirty pages. Page-number arithmetic cannot overflow.
+    const std::uint64_t firstPage = base / kPageStatePageBytes;
+    const std::uint64_t lastPage = (base + bytes - 1) / kPageStatePageBytes;
+    const std::uint64_t pageCount = lastPage - firstPage + 1;
     // ULONG_PTR is address-sized; the count is bounded by the chunk size, so
     // the cast below cannot truncate.
     ULONG_PTR* dirty = new (std::nothrow) ULONG_PTR[static_cast<std::size_t>(pageCount)];
@@ -253,14 +258,12 @@ bool WriteWatchTracker::CollectChunkWindows(std::uint64_t base, std::uint64_t by
     }
     ULONG_PTR count = static_cast<ULONG_PTR>(pageCount);
     ULONG granularity = 0;
-    // RESET in the same call: a single pass both reports and clears, which is
-    // the spec's "single resetting GetWriteWatch pass" (no second walk can
-    // race it from another thread's Collect on another shard, and same-shard
-    // races serialize on the shard mutex inside StampRange... except the walk
-    // itself is lock-free: two concurrent Collects on one range may each see
-    // a subset. Both subsets still stamp monotonically, so "unchanged since
-    // g" stays sound; only staleness detection may lag one call. Documented
-    // here because it is the one deliberate race in this file.
+    // RESET in the same call: a single pass both reports and clears (the
+    // spec's "single resetting GetWriteWatch pass"). The touched shards'
+    // locks are held across this walk and the stamping below, so a
+    // concurrent Collect can neither reset-then-miss nor miss-then-double:
+    // every dirty page the walk returns gets stamped before any other walk
+    // on these shards runs, and a later walk sees only post-stamp state.
     const DWORD result = GetWriteWatch(WRITE_WATCH_FLAG_RESET, reinterpret_cast<PVOID>(static_cast<std::uintptr_t>(base)),
                                        static_cast<SIZE_T>(bytes), reinterpret_cast<PVOID*>(dirty), &count, &granularity);
     (void)granularity;  // page addresses are absolute; mapping needs no stride
@@ -270,7 +273,7 @@ bool WriteWatchTracker::CollectChunkWindows(std::uint64_t base, std::uint64_t by
             const std::uint64_t page = static_cast<std::uint64_t>(dirty[i]);
             bool complete = true;
             // One 4 KiB page stamps its whole 64 KiB block (spec granularity).
-            const std::uint64_t stamped = StampRange(page, kPageStatePageBytes, complete);
+            const std::uint64_t stamped = StampRangeLocked(page, kPageStatePageBytes, complete);
             if (!complete) {
                 ok = false;
                 break;
@@ -282,6 +285,25 @@ bool WriteWatchTracker::CollectChunkWindows(std::uint64_t base, std::uint64_t by
     return ok;
 }
 #endif
+
+bool WriteWatchTracker::LockShardsAscending(std::uint64_t first, std::uint64_t last,
+                                             std::vector<std::unique_lock<std::mutex>>& locks) noexcept {
+    // Caller guarantees an initialized tracker and first <= last <
+    // genShardCount_. Sequential ascending acquisition is deadlock-free (see
+    // header): no path ever acquires a lower shard while holding a higher
+    // one. Only the lock-storage allocation can fail (mutex::lock does not
+    // throw); failure reports unknown instead of terminating.
+    try {
+        locks.reserve(static_cast<std::size_t>(last - first + 1));
+        for (std::uint64_t shard = first; shard <= last; ++shard) {
+            locks.emplace_back(genShards_[shard].mutex);
+        }
+    } catch (const std::bad_alloc&) {
+        locks.clear();
+        return false;
+    }
+    return true;
+}
 
 std::uint64_t WriteWatchTracker::Collect(std::uint64_t address, std::uint64_t bytes) noexcept {
     FlushHook hook = nullptr;
@@ -301,6 +323,17 @@ std::uint64_t WriteWatchTracker::Collect(std::uint64_t address, std::uint64_t by
         unknownWalks_.fetch_add(1, std::memory_order_relaxed);
         return 0;
     }
+    // Hold every touched shard across the whole walk+stamp+read (see
+    // LockShardsAscending): the resetting walk and the stamping of what it
+    // returned must be atomic against concurrent Collects, or a reset in one
+    // thread could hide a landed write from another thread's walk.
+    const std::uint64_t firstShard = (address - base_) / kTrackerShardBytes;
+    const std::uint64_t lastShard = (address + bytes - 1 - base_) / kTrackerShardBytes;
+    std::vector<std::unique_lock<std::mutex>> shardLocks;
+    if (!LockShardsAscending(firstShard, lastShard, shardLocks)) {
+        unknownWalks_.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
 #ifdef _WIN32
     std::uint64_t newest = 0;
     for (std::uint64_t offset = 0; offset < bytes;) {
@@ -315,7 +348,7 @@ std::uint64_t WriteWatchTracker::Collect(std::uint64_t address, std::uint64_t by
     // Merge walk stamps with pre-existing generations: a clean range still
     // reports its newest stamp, so "unchanged since g" is provable without
     // fresh dirt. All-zero ranges stay 0 (unknown: compare bytes).
-    const std::uint64_t stored = MaxGenInRange(address, bytes);
+    const std::uint64_t stored = MaxGenLocked(address, bytes);
     return stored > newest ? stored : newest;
 #else
     // Non-Windows builds have no write-watch source; the page-state table
@@ -374,15 +407,24 @@ PageState WriteWatchTracker::PageStateAt(std::uint64_t address) const noexcept {
 
 std::uint64_t WriteWatchTracker::MarkWritten(std::uint64_t address, std::uint64_t bytes) noexcept {
     // GPU-write path for M3 block-generation tracking (spec): reports which
-    // bytes the GPU wrote by bumping the same per-shard counters Collect
-    // uses, so CPU/GPU novelty share one ordering. No flush hook here: the
-    // hook lands pending writes before CPU reads, while this *is* the write
-    // being reported.
+    // bytes the GPU wrote by bumping the single global counter shared with
+    // Collect, so CPU/GPU novelty share one ordering. No flush hook here:
+    // the hook lands pending writes before CPU reads, while this *is* the
+    // write being reported.
     if (!InWindow(address, bytes)) {
         return 0;
     }
+    // Same shard discipline as Collect (see LockShardsAscending): stamping
+    // must serialize against concurrent walks so a walk never observes a
+    // half-stamped range.
+    const std::uint64_t firstShard = (address - base_) / kTrackerShardBytes;
+    const std::uint64_t lastShard = (address + bytes - 1 - base_) / kTrackerShardBytes;
+    std::vector<std::unique_lock<std::mutex>> shardLocks;
+    if (!LockShardsAscending(firstShard, lastShard, shardLocks)) {
+        return 0;
+    }
     bool complete = true;
-    const std::uint64_t newest = StampRange(address, bytes, complete);
+    const std::uint64_t newest = StampRangeLocked(address, bytes, complete);
     return complete ? newest : 0;
 }
 

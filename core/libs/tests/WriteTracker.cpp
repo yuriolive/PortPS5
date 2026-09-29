@@ -15,7 +15,10 @@
 
 #include "prx/libc/include/WriteTracker.hpp"
 
+#include <atomic>
+#include <barrier>
 #include <cstdint>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -76,8 +79,10 @@ TEST(WriteTracker, InitRejectsBadWindows) {
 }
 
 // MarkWritten bumps novelty on a synthetic window with no real memory: the
-// first report is nonzero, disjoint ranges advance independently, and
-// re-marking advances again (shared per-shard monotonic counter).
+// first report is nonzero, and re-marking advances again. The second range
+// sits a full shard away, pinning the cross-shard ordering the global
+// counter exists for (per-shard counters would let a quiet shard hide behind
+// a busy one's stale generation).
 TEST(WriteTracker, MarkWrittenAdvancesGenerations) {
     WriteWatchTracker tracker;
     ASSERT_TRUE(tracker.Init(kSyntheticBase, kSyntheticBytes));
@@ -248,6 +253,77 @@ TEST(WriteTracker, CollectUnknownOnPlainMemory) {
     buffer[0] = 1;
     EXPECT_EQ(tracker.Collect(base, static_cast<std::uint64_t>(buffer.size())), 0U);
     EXPECT_EQ(tracker.UnknownWalks(), 1U);
+}
+
+// Unaligned Collect must size its dirty-page buffer from the page-aligned
+// bounds, not ceil(bytes/4096): [boundary-3995, boundary+101) touches two
+// pages in two adjacent 64 KiB blocks but ceil(4096/4096) budgets one, which
+// used to drop a dirty page and leave its block unstamped. After the
+// Collect, the second block alone must report nonzero.
+TEST(WriteTracker, CollectUnalignedRangeStampsAllPages) {
+    constexpr std::size_t kBytes = 262144;
+    void* memory = VirtualAlloc(nullptr, kBytes, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE);
+    ASSERT_NE(memory, nullptr);
+    const std::uint64_t base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory));
+    // VirtualAlloc returns 64 KiB-aligned memory, so base+65536 is a block
+    // boundary: the page below it and the page at it live in different
+    // blocks, and generations are per-block.
+    const std::uint64_t boundary = base + 65536;
+    WriteWatchTracker tracker;
+    ASSERT_TRUE(tracker.Init(base, kBytes));
+    static_cast<volatile char*>(memory)[65536 - 4096] = 1;
+    static_cast<volatile char*>(memory)[65536] = 2;
+    EXPECT_NE(tracker.Collect(boundary - 3995, 4096), 0U);
+    EXPECT_NE(tracker.Collect(boundary, 4096), 0U);
+    EXPECT_TRUE(VirtualFree(memory, 0, MEM_RELEASE));
+}
+
+// Concurrent Collect on one range: the resetting walk and the stamping of
+// what it returned are atomic against other Collects (touched shards stay
+// locked across both), so a reset in one thread can never hide a landed
+// write from another thread's walk. Each round writes one fresh page, drops
+// two collectors on the range through a barrier, and requires both returns
+// to equal the quiescent Collect after them: any missed write would show as
+// a smaller return with no intervening writes. (Pre-fix this fails whenever
+// the loser's walk lands between the winner's reset and stamp.)
+TEST(WriteTracker, ConcurrentCollectKeepsEveryWrite) {
+    constexpr std::size_t kBytes = 1048576;  // 16 blocks, one shard
+    void* memory = VirtualAlloc(nullptr, kBytes, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE);
+    ASSERT_NE(memory, nullptr);
+    const std::uint64_t base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory));
+    auto* bytes = static_cast<volatile char*>(memory);
+    WriteWatchTracker tracker;
+    ASSERT_TRUE(tracker.Init(base, kBytes));
+    constexpr int kRounds = 200;
+    std::barrier startBarrier(3), doneBarrier(3);
+    std::uint64_t seenA = 0;
+    std::uint64_t seenB = 0;
+    auto racer = [&](std::uint64_t& seen) {
+        for (int i = 0; i < kRounds; ++i) {
+            startBarrier.arrive_and_wait();
+            seen = tracker.Collect(base, kBytes);
+            doneBarrier.arrive_and_wait();
+        }
+    };
+    std::thread first([&] { racer(seenA); });
+    std::thread second([&] { racer(seenB); });
+    for (int i = 0; i < kRounds; ++i) {
+        // Fresh dirt after last round's quiescent state (each round touches
+        // a new page; 200 pages fit in the 1 MiB window).
+        bytes[static_cast<std::size_t>(i) * 4096] = static_cast<char>(i + 1);
+        startBarrier.arrive_and_wait();
+        doneBarrier.arrive_and_wait();
+        const std::uint64_t settled = tracker.Collect(base, kBytes);
+        EXPECT_NE(settled, 0U);
+        EXPECT_EQ(seenA, settled);
+        EXPECT_EQ(seenB, settled);
+        // No early break: the racers rendezvous on the barriers every round,
+        // so leaving early would hang the join below.
+    }
+    first.join();
+    second.join();
+    EXPECT_EQ(tracker.UnknownWalks(), 0U);
+    EXPECT_TRUE(VirtualFree(memory, 0, MEM_RELEASE));
 }
 #endif
 
