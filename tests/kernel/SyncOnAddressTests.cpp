@@ -296,14 +296,12 @@ TEST(SyncOnAddress, RacePerturbationUnderYield) {
     for (int iter = 0; iter < ITERATIONS; ++iter) {
         uint32_t word = 1; // Start odd so workers enter wait condition
         std::atomic<bool> stop{false};
-        std::atomic<int> ready{0};
         std::atomic<int> completed{0};
-        std::atomic<int> total_waits{0};
+        std::array<std::atomic<int>, THREADS> worker_waits{};
         std::vector<std::thread> workers;
 
         for (int t = 0; t < THREADS; ++t) {
             workers.emplace_back([&, t] {
-                ready.fetch_add(1, std::memory_order_release);
                 while (!stop.load(std::memory_order_relaxed)) {
                     uint32_t cur = __atomic_load_n(&word, __ATOMIC_ACQUIRE);
                     if (cur % 2 == 1) {
@@ -311,7 +309,7 @@ TEST(SyncOnAddress, RacePerturbationUnderYield) {
                         int res = Wait32(&word, cur, &timeout);
                         // Result must be either OK (woken or value changed) or ETIMEDOUT
                         EXPECT_TRUE(res == OK || res == KERNEL_ERROR_ETIMEDOUT);
-                        total_waits.fetch_add(1, std::memory_order_relaxed);
+                        worker_waits[t].fetch_add(1, std::memory_order_release);
                     } else {
                         std::this_thread::yield();
                     }
@@ -320,9 +318,13 @@ TEST(SyncOnAddress, RacePerturbationUnderYield) {
             });
         }
 
-        // Ensure all workers are spawned and active before perturbation starts
-        while (ready.load(std::memory_order_acquire) != THREADS) {
-            std::this_thread::yield();
+        // Ensure every worker has completed at least one Wait32 call before perturbation begins
+        for (int t = 0; t < THREADS; ++t) {
+            while (worker_waits[t].load(std::memory_order_acquire) == 0) {
+                // Wake the starting odd word if a worker is parked waiting for initial update
+                (void)Wake(&word, INT_MAX);
+                std::this_thread::yield();
+            }
         }
 
         // Perturb the address value and issue wakes concurrently
@@ -344,7 +346,9 @@ TEST(SyncOnAddress, RacePerturbationUnderYield) {
             w.join();
         }
         EXPECT_EQ(completed.load(std::memory_order_acquire), THREADS);
-        EXPECT_GT(total_waits.load(std::memory_order_relaxed), 0);
+        for (int t = 0; t < THREADS; ++t) {
+            EXPECT_GT(worker_waits[t].load(std::memory_order_relaxed), 0);
+        }
     }
 }
 
