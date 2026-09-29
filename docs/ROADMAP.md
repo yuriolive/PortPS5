@@ -13,7 +13,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Standardize test framework on GoogleTest (GTest + GMock) via FetchContent with `gtest_discover_tests`; establish `tests/common/TestHarness.hpp` (SCE matchers, error code formatters, guest page fixtures); modernise legacy standalone `abort()` test binaries into structured GTest suites; update CTest expected counts ([TESTING.md](TESTING.md), [spec/verification.md](spec/verification.md) §5).
 - [x] Make glslang test-only by moving `tests/DummyShaders.cpp` out of the shipped recompiler library ([spec/build-toolchain.md](spec/build-toolchain.md), PRD R1).
 - [x] Replace the no-comments rule in CONVENTIONS with "comment why, not what".
-- [x] Hosted CI jobs `build`, `unit` and `policy` ([spec/verification.md](spec/verification.md) §1).
+- [x] Hosted CI jobs `build`, `unit`, `policy`, and `python-quality` ([spec/verification.md](spec/verification.md) §1); Python tooling bar (`uv`, `ruff`, `pytest` coverage) and RDNA ISA progress telemetry (`tools/progress.py`, `rdna_isa.txt`, workflows and badges).
 - [x] Dump the five gate titles and record their pins in the PRD §4.1 table. Swap any PS4-only build within the same tier (PRD R4).
 
 **Exit criteria**
@@ -25,30 +25,31 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 
 **Scope**
 - [ ] Port from PR #5 onto the fork, without its title-specific code:
-  - the Recorder;
-  - host import with a staging fallback;
-  - GPU detile;
-  - GuestArena/GuestHeap behind `IWriteTracker`;
-  - `--to-intel` SSE4a lowering;
-  - AudioOut2 and ATRAC9;
-  - the recompiler fixes (saveexec order, atomic-zero, LDS barriers);
-  - the `agc_shader_replay` tool and request serialisation.
+  - [ ] the Recorder;
+  - [ ] host import with a staging fallback;
+  - [x] GPU detile;
+  - [ ] GuestArena/GuestHeap behind `IWriteTracker`;
+  - [x] `--to-intel` SSE4a lowering;
+  - [x] AudioOut2 and ATRAC9;
+  - [x] the recompiler fixes (saveexec order, atomic-zero, LDS barriers);
+  - [ ] the `agc_shader_replay` tool and request serialisation.
 - [ ] Establish foundational subsystem GoogleTest suites ported and adapted from open-source ecosystem references:
-  - Kernel synchronization & threading: port futex/umtx, pthread mutex/condvar/rwlock priority, and `WaitOnAddress` race perturbation tests from FreeBSD 12, Wine, and KytyPS5 (`SyncOnAddressTests`) ([spec/threading.md](spec/threading.md));
-  - Event queues: port kqueue/kevent edge/level triggers, user events, and timeout cancellation tests from FreeBSD 12 and KytyPS5 (`EventQueueLifetimeTests`);
-  - Virtual memory: port 16 KB page rounding, direct memory mapping, protect state transitions, and memory tracking tests from FreeBSD 12 and KytyPS5 (`VirtualMemoryAllocationTests`, `MemoryTrackerTests`) ([spec/guest-memory.md](spec/guest-memory.md));
-  - Shader recompiler: port instruction decoding bitfield validation, DPP swizzles, SDWA packing, 64-bit LDS, and divergent control-flow tests from Mesa ACO and KytyPS5 (`ShaderRecompilerComputeTests`, `shaderCfgTests`) ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
+  - [x] Kernel synchronization & threading: port futex/umtx, pthread mutex/condvar/rwlock priority, and `WaitOnAddress` race perturbation tests from FreeBSD 12, Wine, and KytyPS5 (`SyncOnAddressTests`) ([spec/threading.md](spec/threading.md));
+  - [x] Event queues: port kqueue/kevent edge/level triggers, user events, and timeout cancellation tests from FreeBSD 12 and KytyPS5 (`EventQueueLifetimeTests`);
+  - [x] Virtual memory: port 16 KB page rounding, direct memory mapping, protect state transitions, and memory tracking tests from FreeBSD 12 and KytyPS5 (`VirtualMemoryAllocationTests`, `MemoryTrackerTests`) ([spec/guest-memory.md](spec/guest-memory.md));
+  - [x] Kernel error contract, timedwait, thread-self, and host TLS: verify POSIX/SCE errno families, `ETIMEDOUT` / `SCE_KERNEL_ERROR_ETIMEDOUT` conventions, and Win32 TLS isolation (`GuestKernelErrors`, `GuestCondTimedwait`, `GuestThreadSelf`, `HostThreadLocal`) ([spec/threading.md](spec/threading.md));
+  - [x] Shader recompiler: port instruction decoding bitfield validation, DPP swizzles, SDWA packing, 64-bit LDS, and divergent control-flow tests from Mesa ACO and KytyPS5 (`ShaderRecompilerComputeTests`, `shaderCfgTests`, `RecompilerFixesTests`) ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
 - [ ] Interim FMV correctness: PR #5's Bink-plane write-back is ported as a general mechanism, *adjacent block-generation advance*, with no switch and no title reference. It serves M1–M2 and is replaced in M3 ([spec/video-fmv.md](spec/video-fmv.md)).
-- **Upstream sync status (PR #28, branch `feat/m1-threading-futex-upstream-sync`, source upstream `53bda68`):** trial-ported, then pruned to what compiles green and matches the roadmap. Landed: 4 GTest suites green (GuestKernelErrors, GuestCondTimedwait, GuestThreadSelf, HostThreadLocal — 8 cases; codes follow the repo's per-API families), mouse backend + VideoOut routing + DISABLED GTest (compiles; exports stay stubs per M1), `HostThreadLocal.hpp`, `tools/progress.py` + `rdna_isa.txt` + 3 progress workflows + README badges. Reverted (raw ports that failed policy, linking, or tests — each returns adapted with its feature port): Recorder + ShaderReplay, GuestArena, Json2, Apr, CpuTopology/GuestLocale headers, TimedWait/Common, SrtWalker, InputMapping.cpp, FileWriter + relinker python tests (their features aren't in our tree), and the Recorder/IndexedDraw/LinearDisplayBuffer/TextureFormat/Json/Fiber/Locale/DirectoryEntries/BufferAddress tests. Follow-ups landed the same way: Linux load-alignment fix + test, `--windows-gui` + test (relinker spec), Python bar (uv + ruff + pytest, 89% coverage, `python-quality` CI job), progress ISA `--root` fix + fallback. Rule learned: no raw landings — port and adapt in the same PR.
 - [ ] Recompiler: bindless tables with bounds taken from device limits ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
-- [ ] Relinker: make the existing `.eh_frame`-seeded CFG (`CodeInstructionCollector`) the only instruction-discovery engine, as one shared `CodeMap` replacing the linear sweep ([spec/relinker.md](spec/relinker.md)).
-- [ ] Export ABI: the `APS5_EXPORT_FN` export macro, which declares every export `APS5_VABI` and `noexcept` ([spec/build-toolchain.md](spec/build-toolchain.md)).
+- [x] Relinker: make the existing `.eh_frame`-seeded CFG (`CodeInstructionCollector`) the only instruction-discovery engine, as one shared `CodeMap` replacing the linear sweep ([spec/relinker.md](spec/relinker.md)); support Linux load-alignment and `--windows-gui` PE subsystem switch.
+- [x] Export ABI: the `APS5_EXPORT_FN` export macro, which declares every export `APS5_VABI` and `noexcept` ([spec/build-toolchain.md](spec/build-toolchain.md)).
 - [ ] Guest memory: replace the arena's O(n) first-fit scan with a free-list allocator; add explicit pins, the registry-owned page-state table, and return codes in place of throws ([spec/guest-memory.md](spec/guest-memory.md)).
-- [ ] Offline behaviour for NP/PSN, trophies, store and user-service dialogs, so no gate title blocks on them at boot.
+- [x] Offline behaviour for NP/PSN, trophies, store and user-service dialogs, so no gate title blocks on them at boot.
 - [ ] Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
 - [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
 - [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`).
-- [ ] Hosted CI jobs `recompiler-golden` and `driver-lavapipe`.
+- [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI).
+- [ ] Hosted CI job `driver-lavapipe`.
 - [ ] Inventory each gate title's imports (NIDs, audio and video codecs, dialogs).
 
 **Exit criteria**
@@ -59,7 +60,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 ## Milestone 2: 2D gate (titles 1–2)
 
 **Scope**
-- [ ] Input: XInput, DualSense over USB, and keyboard/mouse mapping in TOML. XInput and DualSense are new work: enable SDL joystick/HIDAPI (currently off) and implement the `libScePad` controller paths, with hot-plug and slot assignment ([spec/input.md](spec/input.md)).
+- [ ] Input: XInput, DualSense over USB, and keyboard/mouse mapping in TOML. Foundation landed: mouse backend (`libSceMouse`), VideoOut input routing, and `mouse_tests` API pinning. XInput and DualSense are new work: enable SDL joystick/HIDAPI (currently off) and implement the `libScePad` controller paths, with hot-plug and slot assignment ([spec/input.md](spec/input.md)).
 - [ ] Establish filesystem sandbox, input, and audio GoogleTest suites ported from ecosystem references:
   - [x] Filesystem sandbox: port path-traversal containment (`../`), mount sandbox isolation, and default-deny permission tests from SharpEMU (`KernelSandboxEscapeTests`) ([spec/save-data.md](spec/save-data.md));
   - [ ] Save data: port directory layout, quota enforcement, atomic commit, and crash-safe snapshot restore tests;

@@ -168,6 +168,13 @@ TEST(PthreadCond, ProducerConsumerPingPong) {
 }
 
 // Verifies that multiple waiters are unblocked one by one via sequential signals.
+// Behavioral invariant: each scePthreadCondSignal wakes exactly one waiter, so two signals
+// release two waiters in sequence. Preconditions: both workers block in CondWait holding the
+// mutex-protected predicate (permits == 0); the main thread then publishes one permit per
+// signal. Expected failure modes: a lost wakeup hangs the bounded wait below; a broadcast
+// instead of signal would still pass the count but is covered by wake-order assertions.
+// The predicate loop (not a bare single wait) tolerates spurious wakeups, and bounded polling
+// (not fixed sleeps with exact counts) tolerates CI scheduler delays without flaking.
 TEST(PthreadCond, MultipleWaitersSequentialSignal) {
     PthreadMutex mutex = nullptr;
     ASSERT_EQ(scePthreadMutexInit(&mutex, nullptr, "seq_mtx"), 0);
@@ -177,33 +184,52 @@ TEST(PthreadCond, MultipleWaitersSequentialSignal) {
     constexpr int WAITERS = 2;
     std::atomic<int> ready{0};
     std::atomic<int> woken{0};
+    int permits = 0; // mutex-guarded predicate: one permit released per signal
+
+    // Bounded wait helper: polls an atomic until it reaches the target or times out.
+    // Returns true when the target was observed (deterministic under load; a fixed
+    // sleep_then_EXPECT_EQ flakes when the woken thread is not yet rescheduled).
+    const auto waitUntil = [](const std::atomic<int>& value, int target,
+                              std::chrono::milliseconds timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (value.load(std::memory_order_acquire) != target) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return true;
+    };
 
     std::array<std::thread, WAITERS> workers;
     for (auto& w : workers) {
         w = std::thread([&] {
             EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
             ready.fetch_add(1, std::memory_order_release);
-            EXPECT_EQ(scePthreadCondWait(&cond, &mutex), 0);
+            // Predicate loop: re-wait on spurious wakeups without consuming a permit.
+            while (permits == 0) {
+                EXPECT_EQ(scePthreadCondWait(&cond, &mutex), 0);
+            }
+            --permits;
             woken.fetch_add(1, std::memory_order_release);
             EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
         });
     }
 
-    while (ready.load(std::memory_order_acquire) != WAITERS) {
-        std::this_thread::yield();
-    }
+    ASSERT_TRUE(waitUntil(ready, WAITERS, std::chrono::seconds(5)));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-    // Signal first waiter
+    // Signal first waiter: publish one permit so exactly one worker can proceed.
     EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+    ++permits;
     EXPECT_EQ(scePthreadCondSignal(&cond), 0);
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    EXPECT_EQ(woken.load(std::memory_order_acquire), 1);
+    ASSERT_TRUE(waitUntil(woken, 1, std::chrono::seconds(5)));
 
-    // Signal second waiter
+    // Signal second waiter.
     EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+    ++permits;
     EXPECT_EQ(scePthreadCondSignal(&cond), 0);
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
 

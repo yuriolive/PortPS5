@@ -39,8 +39,18 @@ Other facts:
 
 - **Driver target.** The driver builds its target as Vulkan 1.1 with SPIR-V 1.3, or 1.4 when mesh shaders are used (`libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp:696`).
 - **Serialization.** `RequestSerializer` writes magic `0x41505335`, version 2, as base64 (`ControlFlow/src/RequestSerializer.cpp:659-693`). `Recompile` appends the serialized request to every exception (`Recompiler.cpp:318-327`).
-- **Replay tool.** PR #5 adds `agc_shader_replay` (`libSceAgcDriver/tools/ShaderReplay.cpp`, 125 lines, flags `--dis`, `--asm` and `--mem`). On main, `Deserialize.cpp` is a standalone tool with no build target.
-- **Tests.** There is no recompiler-owned test target. The driver tests that touch the recompiler are:
+- **Replay tool.** `agc_shader_replay` (`core/libs/prx/libSceAgcDriver/tools/AgcShaderReplay.cpp`,
+  `agc_shader_replay` CMake target, dev/ci presets only, never shipped) replays serialized
+  `.req` requests through `Recompile`, prints RDNA disassembly (`--dis`), SPIR-V assembly
+  (`--asm`) and the snapshot summary (`--mem`), and verifies a corpus directory
+  (`--golden <dir>`, with deliberate regeneration via `--update-goldens`). It carries no
+  `APS5_*` environment switches (explicit flags only) and returns codes, never throwing
+  across boundaries. `Deserialize.cpp` remains an unbuilt standalone diagnostic.
+- **Tests.** Recompiler-owned test targets (both in ctest):
+  - `recompiler_fixes_tests` (label `unit`): saveexec order, atomic-zero, `v_movrels`/`v_movreld`, wave-LDS barriers;
+  - `recompiler_golden_tests` (label `golden`, `ctest --preset golden`): the synthetic corpus
+    coverage gate plus wave32/wave64 replay of every case (see Tests below).
+  The driver tests that touch the recompiler are:
   - `agc_shader_memory_tests`, which is in ctest and checks the serializer round-trip and the cache policy;
   - `agc_driver_recompiler_tests`, which is built but not registered.
 - **glslang.** `tests/DummyShaders.cpp` is compiled into the recompiler static library and pulls glslang in as a link dependency (`CMakeLists.txt:136,158-162`). Nothing references it outside the file, so the static archive probably drops it *(inferred)*.
@@ -138,7 +148,7 @@ Other facts:
 | [gpu-driver.md](gpu-driver.md) | `ResolveSource`, `CaptureResources` and `Recompile(request, capture)` (PR #5 API) stay the entry points. `RecompileResult` gains `requiredSubgroupSize` and `idiom` (`KernelIdiom`). A recompile or plan failure aborts via `Unsupported()`, so there is no failure status for the driver to handle. Today the recompiler reads guest memory only through `RequestMemoryView` captures; the target adds the GPU-side paths of §Target design 7 (BDA V#/SRT loads, the user-data buffer, the heap probe). The driver creates pipelines and applies idiom replacement. |
 | [pipeline-cache.md](pipeline-cache.md) | Owns `RecompilerVersion`, `SourceKey` and `VariantKey`. The recompiler builds those keys as specified there and exports `SerializeVariant` and `DeserializeVariant` (SPIR-V, bindings, stage metadata). The cache is authoritative across runs, and in-memory eviction relies on it. |
 | [verification.md](verification.md) | The `recompiler-golden` job: `agc_shader_replay --golden <dir>` diffs **pre-optimizer** SPIR-V disassembly and runs `spirv-val` on both pre- and post-optimizer modules. Local regression step 4 replays the local corpus. The `policy` job bans `getenv` in `core/shader`. |
-| [build-toolchain.md](build-toolchain.md) | `ANYPS5_ENABLE_SPIRV_TOOLS` is ON in the `dev` and `ci` presets. The release default is currently off, pending PRD R1. `DummyShaders.cpp` moves into a test target, so glslang is test-only. There is one `recompiler_tests` ctest target. The synthetic corpus is built from `.s` sources with `llvm-mc` (gfx10.3, a build-time tool that is never linked) and is checked in as `.req` plus `.spvasm`. |
+| [build-toolchain.md](build-toolchain.md) | `ANYPS5_ENABLE_SPIRV_TOOLS` is ON in the `dev` and `ci` presets. The release default is currently off, pending PRD R1. `DummyShaders.cpp` moves into a test target, so glslang is test-only. The `golden` ctest label and `ctest --preset golden` entry point. The synthetic corpus is hand-assembled dwords (field layouts cited to the decoder sources in `tests/golden/SyntheticCorpus.hpp`), checked in as `.req` plus `.spvasm` under `tests/golden/corpus/`; no `.s` sources and no `llvm-mc` pin (the hand-assembled form removes the build-time tool entirely). `.req` files are generated with `agc_shader_replay --dump-corpus`, goldens with `--golden <dir> --update-goldens`. |
 | [configuration.md](configuration.md) / telemetry | `debug.recompiler.dump_ir`, `debug.recompiler.single_lane`, `debug.recompiler.profile`, `debug.recompiler.capture` (diagnostic only). Counters: `spirv_compilations` (also the results JSON field), `shader.compile_ms`, `shader.structurizer_tier2`, `shader.variant_evictions`, `shader.variant_cap_hits`. `spirv_compilations` feeds F7's "0 compilations with a warm cache". |
 
 ## Failure modes
@@ -157,24 +167,40 @@ Other facts:
 ## Tests
 
 - **GoogleTest Unit Suites** (`recompiler_tests`, hosted `unit` job):
-  - Decoder round-trip per opcode encoding with parameterized tests (`TEST_P`).
-  - `ValidateProgram` negative cases.
-  - SSA with synthetic flags.
-  - Tier 1 and tier 2 structurizer on hand-built CFGs (diamond, multi-latch, shared merge, the two irreducible entries, a goto into a loop).
-  - Variant index: bound, eviction, concurrent single compile.
-  - Key stability: the same request gives the same `SourceKey` and `VariantKey` ([pipeline-cache.md](pipeline-cache.md#target-design)) across processes.
-  - Idiom analysis, positive and negative.
-  - Emission of BDA V#/SRT loads, user-data-buffer SGPR reads and the heap probe (§Target design 7).
-  - Regression tests for saveexec `(vcc, vcc)`, atomic-zero, `v_movrels` and wave-LDS scope.
-  - Death tests (`EXPECT_DEATH`): verify that unresolvable opcodes trigger an immediate logging abort via `Unsupported()` without memory corruption.
+  - [ ] Decoder round-trip per opcode encoding with parameterized tests (`TEST_P`).
+  - [ ] `ValidateProgram` negative cases.
+  - [ ] SSA with synthetic flags.
+  - [ ] Tier 1 and tier 2 structurizer on hand-built CFGs (diamond, multi-latch, shared merge, the two irreducible entries, a goto into a loop).
+  - [ ] Variant index: bound, eviction, concurrent single compile.
+  - [ ] Key stability: the same request gives the same `SourceKey` and `VariantKey` ([pipeline-cache.md](pipeline-cache.md#target-design)) across processes.
+  - [ ] Idiom analysis, positive and negative.
+  - [ ] Emission of BDA V#/SRT loads, user-data-buffer SGPR reads and the heap probe (§Target design 7).
+  - [x] Regression tests for saveexec `(vcc, vcc)`, atomic-zero, `v_movrels` and wave-LDS scope (`RecompilerFixesTests`),
+    including divergent-write barriers at reconvergence merge blocks, divergent-read barriers at
+    outermost uniform headers (`DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader`,
+    `DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers`), and the cyclic-header skip
+    (`DivergentReadWithCyclicHeaderSkipsPreReadBarrier`).
+  - [x] Stage gate: `SharedMemoryBarrierInserter` inserts barriers only for compute, mesh, and
+    tessellation-control stages (Workgroup execution scope is invalid elsewhere), covered by
+    `Wave64VertexStageSkipsBarrierInsertion` and `TessellationControlStageInsertsBarrier`.
+  - [ ] Death tests (`EXPECT_DEATH`): verify that unresolvable opcodes trigger an immediate logging abort via `Unsupported()` without memory corruption.
 - **Ported Ecosystem Test Suites:**
-  - **KytyPS5 `ShaderRecompilerComputeTests`:** comprehensive RDNA2 instruction lowering, resource descriptor bindings, texture sampling modes, and atomic memory operations.
-  - **KytyPS5 `shaderCfgTests`:** advanced control-flow graphs, loop structuring, loop termination conditions, and complex nested branching topologies.
-  - **Mesa ACO GFX10.3 Test Suite (`src/amd/compiler/tests`):** bitfield-exact RDNA2 instruction decoding, DPP swizzles, SDWA packing, 64-bit LDS instructions, and divergent control-flow reconvergence.
-  - **SharpEMU Packed ALU Suites:** packed 16-bit math (`VopcF16`), 3-input XOR (`ThreeInputXor`), and 24-bit signed multiplication (`SignedMultiply24`).
-- **Synthetic golden corpus** (hosted): project-written `.s` sources only, never game bytecode.
+  - [ ] **KytyPS5 `ShaderRecompilerComputeTests`:** comprehensive RDNA2 instruction lowering, resource descriptor bindings, texture sampling modes, and atomic memory operations.
+  - [ ] **KytyPS5 `shaderCfgTests`:** advanced control-flow graphs, loop structuring, loop termination conditions, and complex nested branching topologies.
+  - [ ] **Mesa ACO GFX10.3 Test Suite (`src/amd/compiler/tests`):** bitfield-exact RDNA2 instruction decoding, DPP swizzles, SDWA packing, 64-bit LDS instructions, and divergent control-flow reconvergence.
+  - [ ] **SharpEMU Packed ALU Suites:** packed 16-bit math (`VopcF16`), 3-input XOR (`ThreeInputXor`), and 24-bit signed multiplication (`SignedMultiply24`).
+- [x] **Synthetic golden corpus** (hosted): project-written dwords only, never game bytecode
+  (`core/shader/recompiler/tests/golden/`, corpus in `corpus/`, replayed two ways: the
+  `recompiler_golden_tests` GTest suite and `agc_shader_replay --golden <dir>`).
   - Coverage gate: every `RdnaOpcode` the decoder accepts appears in at least one request, and CI fails when a decoded class (SOP1/SOP2/SOPK/SOPC/SOPP/SMEM/VOP1/VOP2/VOP3/VOPC/VOP3P/DS/MUBUF/MTBUF/MIMG/FLAT/EXP) has no request.
-  - Each variant is replayed with a wave32 and a wave64 target, and with and without subgroup size control.
+  - Each variant is replayed with a wave32 and a wave64 target. The with/without subgroup
+    size control axis arrives with the M4 subgroup-size-control path (Target design §2);
+    until then the corpus pins `subgroupSize` to the wave size.
+  - Golden diffs compare the disassembly of the final validated module (the `Recompile`
+    contract returns post-optimizer SPIR-V when SPIRV-Tools are on). Goldens therefore pin
+    the SPIRV-Tools version; regenerate deliberately with `--update-goldens` after review.
+    Comparisons normalize CRLF (Windows checkouts) against the LF-only disassembler output,
+    and replaying zero requests fails, so CI can never pass on a wiped corpus.
 - **Fuzz** (hosted, fixed seeds, plus a nightly local run): a random CFG generator emits `s_branch` / `s_cbranch_*` programs, including irreducible ones, and mutates corpus CFGs. Oracle: 0 structurizer throws, `spirv-val` passes, and an interpreter over IR matches an interpreter over the RDNA CFG on the branch trace for random SGPR inputs.
 - **Local game-derived corpus:** `.req` files captured under `debug.recompiler.capture = true`. They stay on the maintainer machine (verification.md §2), and the pass condition is 0 validation failures and no `Unsupported()` abort.
 
@@ -183,7 +209,7 @@ Other facts:
 | Milestone | Recompiler deliverables | Exit evidence |
 |---|---|---|
 | M0 | - [x] C++23 flag. `recompiler_tests` and `agc_shader_memory_tests` in ctest. glslang made test-only. | ctest green |
-| M1 | - [ ] Port `87911b3` and the flat-slot and hashed-key parts of `29b4601`. Bindless tables with bounds taken from device limits. `agc_shader_replay` and serializer. Remove every `APS5_*` read. The `recompiler-golden` job. The synthetic corpus. | M1 exit: every decoded class covered and green in CI, local corpus with 0 failures, DeS fill/copy kernels running as compiled shaders |
+| M1 | - [ ] Port `87911b3` and the flat-slot and hashed-key parts of `29b4601`. Bindless tables with bounds taken from device limits. Remove every `APS5_*` read.<br>- [x] `agc_shader_replay` and serializer (adapted port: no env switches, return codes).<br>- [x] The `recompiler-golden` job.<br>- [x] The synthetic corpus. | M1 exit: every decoded class covered and green in CI, local corpus with 0 failures, DeS fill/copy kernels running as compiled shaders |
 | M2 | - [ ] `SourceKey`/`VariantKey` as defined in [pipeline-cache.md](pipeline-cache.md#target-design), and variant (de)serialisation for the disk cache. Depth and sample-mask export verified. | 0 `spirv_compilations` with a warm cache (F7) |
 | M3 | - [ ] Tier 2 structurizer. Bounded hash-indexed variants that compile outside the lock. V#/SRT loads on the GPU through BDA. SGPRs read from the user-data buffer. | Fuzz corpus with 0 structurizer throws |
 | M4 | - [ ] Subgroup size control. `AnalyzeKernelIdiom` (`KernelIdiom`). Bindless on the GPU heap through the descriptor-heap hash probe, replacing the CPU material scan. | Bugsnax full run |
@@ -206,3 +232,14 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
 3. Does the M1 intro-cinematic stage require bindless tables? PR #5's `29b4601` message says so *(unverified)*.
 4. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
 5. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
+6. Intra-divergent-region cross-lane LDS ordering: `SharedMemoryBarrierInserter` orders divergent writes
+   at reconvergence merges and divergent reads at outermost uniform headers (skipped when the header
+   lies on a control-flow cycle, where per-iteration execution under divergent loop control would break
+   barrier uniformity). A divergent write followed by a divergent read in the SAME region with no
+   intervening uniform point cannot be ordered by any workgroup barrier, by uniformity: every point
+   after the write and before the read is skipped by lanes not taking the branch, so a barrier there is
+   dynamically non-uniform (deadlock/UB) instead of ordering. Same-lane write-then-read needs no barrier
+   (program order) and is unaffected. The M3 fix is a structurizer transform, not barrier placement:
+   split the region with an intermediate reconvergence (barrier at the intermediate merge, which all lanes
+   execute) and re-diverge on the same condition for the read. Loop-carried LDS ordering across iterations
+   of a divergently-controlled loop is likewise deferred to M3 (it needs loop-latch uniformity analysis).

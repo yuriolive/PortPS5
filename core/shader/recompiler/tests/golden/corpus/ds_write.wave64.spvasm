@@ -1,0 +1,29 @@
+OpCapability Shader
+OpCapability SignedZeroInfNanPreserve
+OpExtension "SPV_KHR_float_controls"
+OpMemoryModel Logical GLSL450
+OpEntryPoint GLCompute %main "main"
+OpExecutionMode %main SignedZeroInfNanPreserve 32
+OpExecutionMode %main LocalSize 64 1 1
+OpName %main "main"
+OpName %lds_dwords "lds_dwords"
+%void = OpTypeVoid
+%6 = OpTypeFunction %void
+%bool = OpTypeBool
+%true = OpConstantTrue %bool
+%uint = OpTypeInt 32 0
+%uint_1024 = OpConstant %uint 1024
+%_arr_uint_uint_1024 = OpTypeArray %uint %uint_1024
+%_ptr_Workgroup__arr_uint_uint_1024 = OpTypePointer Workgroup %_arr_uint_uint_1024
+%lds_dwords = OpVariable %_ptr_Workgroup__arr_uint_uint_1024 Workgroup
+%uint_0 = OpConstant %uint 0
+%uint_2 = OpConstant %uint 2
+%_ptr_Workgroup_uint = OpTypePointer Workgroup %uint
+%uint_264 = OpConstant %uint 264
+%main = OpFunction %void None %6
+%2 = OpLabel
+%22 = OpAccessChain %_ptr_Workgroup_uint %lds_dwords %uint_0
+OpStore %22 %uint_0
+OpControlBarrier %uint_2 %uint_2 %uint_264
+OpReturn
+OpFunctionEnd
