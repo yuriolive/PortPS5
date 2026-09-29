@@ -233,12 +233,6 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
 
 1. Can a despecialised generic variant stand in once a source hits the variant cap?
 2. Does any wave32 program run on a host whose subgroup is fixed wider than 32?
-3. `EmitGetShaderBase` (`SpirvBackend/src/SpirvModuleEmitter.cpp:1052`) still emits
-   constant zero, so SPIR-V consumers of an `s_getpc_b64` value see offset-only while
-   the SRT/resource-tracker path (via `MakeRuntime` with `request.shader.codeAddress`)
-   names the real base — same limitation as upstream. The fix is dispatch-time delivery
-   of the code address (per-dispatch shader data or push constants), never baked into
-   the shared variant. Tracked follow-up, not this PR.
 3. Does the M1 intro-cinematic stage require bindless tables? PR #5's `29b4601` message says so *(unverified)*.
 4. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
 5. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
