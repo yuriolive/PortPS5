@@ -42,6 +42,10 @@ const char* APS5_VABI sceNetInetNtop(int af, const void* src, char* dst, uint32_
 int APS5_VABI sceNetResolverCreate(const char* name, int memid, int flags);
 int APS5_VABI sceNetResolverDestroy(int rid);
 int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags);
+struct NetEtherAddr {
+    uint8_t data[6];
+};
+int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags);
 }
 
 namespace {
@@ -149,4 +153,80 @@ TEST(OfflineNetStack, ResolverOfflineFailure) {
     EXPECT_EQ(sceNetResolverDestroy(rid), 0);
 }
 
+// Verifies getsockname retrieves bound address and port.
+TEST(OfflineNetStack, SockNameAndBinding) {
+    const int sock = sceNetSocket("test_bind", NET_AF_INET, NET_SOCK_STREAM, 0);
+    ASSERT_GE(sock, 0);
+
+    uint8_t bindAddr[16] = {};
+    bindAddr[0] = 16;
+    bindAddr[1] = static_cast<uint8_t>(NET_AF_INET);
+    uint16_t portBe = sceNetHtons_nid_postfix(8080);
+    std::memcpy(bindAddr + 2, &portBe, 2);
+    // 127.0.0.1
+    bindAddr[4] = 127; bindAddr[5] = 0; bindAddr[6] = 0; bindAddr[7] = 1;
+
+    EXPECT_EQ(sceNetBind_nid_postfix(sock, bindAddr, sizeof(bindAddr)), 0);
+
+    uint8_t queriedAddr[16] = {};
+    uint32_t queriedLen = sizeof(queriedAddr);
+    EXPECT_EQ(sceNetGetsockname(sock, queriedAddr, &queriedLen), 0);
+    EXPECT_EQ(queriedLen, 16u);
+
+    uint16_t outPort = 0;
+    std::memcpy(&outPort, queriedAddr + 2, 2);
+    EXPECT_EQ(outPort, portBe);
+
+    EXPECT_EQ(sceNetSocketClose(sock), 0);
+}
+
+// Verifies non-blocking listen and accept return EAGAIN when no incoming connection arrives.
+TEST(OfflineNetStack, NonBlockingListenAndAccept) {
+    const int sock = sceNetSocket("test_listener", NET_AF_INET, NET_SOCK_STREAM, 0);
+    ASSERT_GE(sock, 0);
+
+    int nbio = 1;
+    EXPECT_EQ(sceNetSetsockopt(sock, NET_SOL_SOCKET, NET_SO_NBIO, &nbio, sizeof(nbio)), 0);
+    EXPECT_EQ(sceNetListen(sock, 5), 0);
+
+    uint8_t clientAddr[16] = {};
+    uint32_t clientLen = sizeof(clientAddr);
+    const int accepted = sceNetAccept(sock, clientAddr, &clientLen);
+    EXPECT_EQ(accepted, -1);
+    EXPECT_EQ(*sceNetErrnoLoc(), 35); // NET_EAGAIN
+
+    EXPECT_EQ(sceNetSocketClose(sock), 0);
+}
+
+// Verifies recv and send on stream socket return ENOTCONN when unconnected.
+TEST(OfflineNetStack, RecvAndSendUnconnectedStream) {
+    const int sock = sceNetSocket("test_stream_unconnected", NET_AF_INET, NET_SOCK_STREAM, 0);
+    ASSERT_GE(sock, 0);
+
+    char buf[64] = "sample payload";
+    const int64_t sent = sceNetSend(sock, buf, sizeof(buf), 0);
+    EXPECT_EQ(sent, -1);
+    EXPECT_EQ(*sceNetErrnoLoc(), 57); // NET_ENOTCONN
+
+    char recvBuf[64] = {};
+    const int64_t recvd = sceNetRecv(sock, recvBuf, sizeof(recvBuf), 0);
+    EXPECT_EQ(recvd, -1);
+    EXPECT_EQ(*sceNetErrnoLoc(), 57); // NET_ENOTCONN
+
+    EXPECT_EQ(sceNetSocketClose(sock), 0);
+}
+
+// Verifies retrieving synthetic MAC address for offline network interface.
+TEST(OfflineNetStack, GetMacAddressOffline) {
+    NetEtherAddr mac{};
+    EXPECT_EQ(sceNetGetMacAddress(&mac, 0), 0);
+    EXPECT_EQ(mac.data[0], 0x02);
+    EXPECT_EQ(mac.data[1], 0x50); // 'P'
+    EXPECT_EQ(mac.data[2], 0x53); // 'S'
+    EXPECT_EQ(mac.data[3], 0x35); // '5'
+    EXPECT_EQ(mac.data[4], 0x00);
+    EXPECT_EQ(mac.data[5], 0x01);
+}
+
 } // namespace
+

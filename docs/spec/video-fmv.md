@@ -100,6 +100,7 @@ Reaching the post-FMV state without the end reference fails the check, so a skip
 
 - **Hosted CI:**
   - Unit tests of the offset calculator on synthetic timestamps.
+  - AvPlayer state machine GoogleTest suite (`AvPlayerStateMachineTests`): verifies player initialization/close, source attachment, automatic transition to Play, Pause/Resume lifecycle, StreamInfo resolution metadata, seeking timestamp offsets (`JumpToTime`), looping and trick-speed controls, stream enable/disable toggling, and video frame delivery with guest texture allocator callbacks (`sceAvPlayerGetVideoDataEx`).
   - AvPlayer state machine against a project-made H.264 clip in MP4, generated in CI with a permissively licensed encoder. It contains no game data. It asserts PTS ordering, `IsActive` at end of stream, and `pts_minus_clock_ms` within ±40 ms. Runs on the Windows runner, because MF is available there.
 - **Hosted `driver-lavapipe`:** two surfaces packed back to back that share a 64 KiB block. A GPU write to one must not stale the other. This test replaces the Bink-specific evidence.
 - **Local regression:** the first-frame and end-frame references for every FMV of each gate title, frame count ≥ 90%, and `av_offset_ms_max` ≤ 80.

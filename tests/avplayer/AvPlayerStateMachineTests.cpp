@@ -25,7 +25,10 @@ int APS5_VABI sceAvPlayerIsActive(void* h);
 uint64_t APS5_VABI sceAvPlayerCurrentTime(void* h);
 int APS5_VABI sceAvPlayerJumpToTime(void* h, uint64_t time_ms);
 int APS5_VABI sceAvPlayerSetLooping(void* h, int loop);
+int APS5_VABI sceAvPlayerSetTrickSpeed(void* h, int32_t trick_speed);
 int APS5_VABI sceAvPlayerStreamCount(void* h);
+int APS5_VABI sceAvPlayerEnableStream(void* h, uint32_t stream_id);
+int APS5_VABI sceAvPlayerDisableStream(void* h, uint32_t stream_id);
 int APS5_VABI sceAvPlayerGetStreamInfo(void* h, uint32_t stream_id, void* info);
 int APS5_VABI sceAvPlayerGetVideoData(void* h, void* video_info);
 int APS5_VABI sceAvPlayerGetVideoDataEx(void* h, void* video_info);
@@ -164,4 +167,82 @@ TEST(AvPlayerStateMachine, JumpToTime) {
     EXPECT_EQ(sceAvPlayerClose(player), 0);
 }
 
+// Verifies setting looping mode and trick play playback speed.
+TEST(AvPlayerStateMachine, LoopingAndTrickSpeed) {
+    void* player = sceAvPlayerInit(nullptr);
+    ASSERT_NE(player, nullptr);
+
+    EXPECT_EQ(sceAvPlayerSetLooping(player, 1), 0);
+    EXPECT_EQ(sceAvPlayerSetTrickSpeed(player, 200), 0);
+
+    EXPECT_EQ(sceAvPlayerClose(player), 0);
+}
+
+// Verifies stream enable and disable controls.
+TEST(AvPlayerStateMachine, StreamControl) {
+    void* player = sceAvPlayerInit(nullptr);
+    ASSERT_NE(player, nullptr);
+
+    EXPECT_EQ(sceAvPlayerEnableStream(player, 0), 0);
+    EXPECT_EQ(sceAvPlayerDisableStream(player, 0), 0);
+
+    EXPECT_EQ(sceAvPlayerClose(player), 0);
+}
+
+// Layout matching FrameInfoEx in Export.cpp
+struct VideoDetailsExMock {
+    uint32_t width;
+    uint32_t height;
+    float aspectRatio;
+    uint8_t language[4];
+    uint8_t reserved0[4];
+    uint32_t cropLeftOffset;
+    uint32_t cropRightOffset;
+    uint32_t cropTopOffset;
+    uint32_t cropBottomOffset;
+    uint32_t pitch;
+    uint8_t lumaBitDepth;
+    uint8_t chromaBitDepth;
+    uint8_t fullRange;
+    uint8_t reserved1[5];
+    double frameRate;
+    uint32_t colourPrimaries;
+    uint32_t transferCharacteristics;
+    uint8_t reserved2[16];
+};
+
+struct FrameInfoExMock {
+    void* data;
+    uint8_t reserved[8]; // padding to offset 16 for timestamp on 64-bit
+    uint64_t timestamp;
+    VideoDetailsExMock video;
+};
+static_assert(sizeof(FrameInfoExMock) == 104, "FrameInfoExMock size ABI");
+static_assert(offsetof(FrameInfoExMock, video) == 24, "FrameInfoExMock video offset ABI");
+
+// Verifies delivering video frames via sceAvPlayerGetVideoDataEx with custom allocator.
+TEST(AvPlayerStateMachine, VideoDataDelivery) {
+    int dummyMem = 42;
+    InitData init{};
+    init.memObject = &dummyMem;
+    init.allocTexture = reinterpret_cast<void*>(&TestAllocTexture);
+    init.deallocTexture = reinterpret_cast<void*>(&TestFreeTexture);
+    init.numFramebuffers = 2;
+    init.autoStart = 1;
+
+    void* player = sceAvPlayerInit(&init);
+    ASSERT_NE(player, nullptr);
+
+    EXPECT_EQ(sceAvPlayerAddSource(player, "playback.mp4"), 0);
+
+    FrameInfoExMock frame{};
+    const int gotFrame = sceAvPlayerGetVideoDataEx(player, &frame);
+    EXPECT_EQ(gotFrame, 1);
+    EXPECT_NE(frame.data, nullptr);
+    EXPECT_EQ(frame.video.height, 1080u);
+
+    EXPECT_EQ(sceAvPlayerClose(player), 0);
+}
+
 } // namespace
+
