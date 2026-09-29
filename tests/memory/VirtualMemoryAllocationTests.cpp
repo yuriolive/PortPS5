@@ -6,6 +6,13 @@
 
 #include "common/TestHarness.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 #include <cstdint>
 #include <cstring>
@@ -137,8 +144,8 @@ TEST(VirtualMemoryAllocation, MemoryProtectionTransition) {
     EXPECT_EQ(sceKernelMunmap(reinterpret_cast<uint64_t>(addr), mapSize), 0);
 }
 
-// Verifies that when mprotect fails (e.g. invalid protection bitmask),
-// registry state is preserved and not swapped with bogus protection state.
+// Verifies that when mprotect fails (e.g. host VirtualProtect/mprotect failure or invalid flags),
+// registry state is preserved and not swapped with bogus protection state, returning SCE_KERNEL_ERROR_EFAULT.
 TEST(VirtualMemoryAllocation, MprotectFailurePreservesRegistryState) {
     constexpr size_t mapSize = 16 * 1024; // 1 page
     void* addr = nullptr;
@@ -152,18 +159,57 @@ TEST(VirtualMemoryAllocation, MprotectFailurePreservesRegistryState) {
     *ptr = 0x12345678;
     EXPECT_EQ(*ptr, 0x12345678);
 
-    // Call sceKernelMprotect with invalid protection flag that LinuxProtFromSce rejects
-    // or unmapped/invalid address that causes VirtualProtect / mprotect to fail with EFAULT.
-    // An unregistered address or invalid range:
+    // Initial registry check: range is readable and writable
+    {
+        GuestAllocations::Mutation mutation;
+        auto range = mutation.Find(addr);
+        EXPECT_TRUE(range.readable);
+        EXPECT_TRUE(range.writable);
+    }
+
+    // Call sceKernelMprotect with invalid protection flags that LinuxProtFromSce rejects
+    EXPECT_EQ(sceKernelMprotect(addr, mapSize, 0x7F00), ::SCE_KERNEL_ERROR_EINVAL);
+
+    // Unregistered address returns EINVAL
     void* invalidAddr = reinterpret_cast<void*>(0xDEAD0000ULL);
     EXPECT_NE(sceKernelMprotect(invalidAddr, mapSize, 1), 0);
 
-    // Verify original mapped memory is completely intact and readable/writable
-    EXPECT_EQ(*ptr, 0x12345678);
-    *ptr = 0x87654321;
-    EXPECT_EQ(*ptr, 0x87654321);
+    // Verify registry is unchanged after rejected attempts
+    {
+        GuestAllocations::Mutation mutation;
+        auto range = mutation.Find(addr);
+        EXPECT_TRUE(range.readable);
+        EXPECT_TRUE(range.writable);
+    }
 
-    EXPECT_EQ(sceKernelMunmap(reinterpret_cast<uint64_t>(addr), mapSize), 0);
+#ifdef _WIN32
+    // Unmap the view of file at host OS level behind the registry's back
+    // so host VirtualProtect fails on the registered range.
+    ASSERT_TRUE(UnmapViewOfFile(addr));
+
+    // sceKernelMprotect now hits mprotect/VirtualProtect failure,
+    // which throws std::system_error and must be translated to ProtectFailed / SCE_KERNEL_ERROR_EFAULT.
+    EXPECT_EQ(sceKernelMprotect(addr, mapSize, 1), ::SCE_KERNEL_ERROR_EFAULT);
+
+    // Verify registry state is still preserved as readable and writable (not swapped with read-only)
+    {
+        GuestAllocations::Mutation mutation;
+        auto range = mutation.Find(addr);
+        EXPECT_TRUE(range.readable);
+        EXPECT_TRUE(range.writable);
+        mutation.Remove(addr);
+    }
+#else
+    ASSERT_EQ(munmap(addr, mapSize), 0);
+    EXPECT_EQ(sceKernelMprotect(addr, mapSize, 1), ::SCE_KERNEL_ERROR_EFAULT);
+    {
+        GuestAllocations::Mutation mutation;
+        auto range = mutation.Find(addr);
+        EXPECT_TRUE(range.readable);
+        EXPECT_TRUE(range.writable);
+        mutation.Remove(addr);
+    }
+#endif
 }
 
 // Verifies querying available direct memory size within an address range.

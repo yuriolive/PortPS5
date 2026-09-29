@@ -48,6 +48,7 @@ Short version:
    - **Out of Scope:** Explicit boundaries and deferred items.
    - **Summary of Changes:** Specific files, implementations, tests, or docs modified.
 11. Mandatory GoogleTest (GTest + GMock) for all C++ tests via `portps5_add_gtest`. Never write ad-hoc C++ test runners using bare `abort()`, custom `Require()`, or manual `main()` functions. Always use standard GoogleTest assertions (`EXPECT_*` / `ASSERT_*`) and GTest discovery.
+12. Parallel test execution: Always run test suites in parallel with `ctest --preset ci` (preset specifies bounded parallelism of 4 jobs across supported CTest versions, matching CI; or `ctest -j4`). Tests are hermetic and process-isolated via `portps5_add_gtest` / `gtest_discover_tests`; never execute CTest sequentially when verifying builds.
 
 ## Skills
 

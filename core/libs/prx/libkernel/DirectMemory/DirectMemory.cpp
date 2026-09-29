@@ -273,7 +273,11 @@ int DoMprotect(const void* addr, size_t len, int prot) {
         struct ProtectFailed {};
         try {
             mutation.Protect(pointer, bytes, (prot & 3) != 0, (prot & 2) != 0, [&] {
-                if (mprotect(const_cast<void*>(pointer), bytes, nativeProtection) != 0) {
+                try {
+                    if (mprotect(const_cast<void*>(pointer), bytes, nativeProtection) != 0) {
+                        throw ProtectFailed{};
+                    }
+                } catch (const std::system_error&) {
                     throw ProtectFailed{};
                 }
             });
