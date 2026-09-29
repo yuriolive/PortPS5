@@ -126,7 +126,7 @@ static void Drain(AudioOut2Context& context, Clock::time_point now) {
 // Grains queued and not yet played, as the title sees them. The caller holds the context lock.
 static std::uint32_t QueueLevel(AudioOut2Context& context, Clock::time_point now) {
     Drain(context, now);
-    if (!AudioMixer::Get().HasDevice() || context.device == 0) {
+    if (!AudioMixer::Get().HasDevice() || !context.source) {
         return context.queued;
     }
     const auto queuedFrames = context.source ? context.source->GetQueuedFrames() : 0;

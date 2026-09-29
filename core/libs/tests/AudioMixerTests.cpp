@@ -23,6 +23,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <future>
+#include <thread>
+
+#include "AudioMixerTestAccess.hpp"
 
 #include "SDL.h"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -357,4 +361,106 @@ TEST(AudioMixerTests, OverrunDropCeiling) {
     EXPECT_GE(mixer.GetOverrunDrops(), 1u);
 
     mixer.UnregisterSource(source);
+}
+
+// Holds callback admission across Reset/Init to prove old frames cannot be
+// cleared or overwritten until the selected consumer acknowledges its read.
+TEST(AudioMixerTests, LifecycleWaitsForSelectedConsumer) {
+    AudioSource source;
+    for (bool reinitialize : {false, true}) {
+        source.Init(48000, 2);
+        const AudioFrame oldFrame{0.25f, -0.5f};
+        ASSERT_TRUE(source.PushStereo48k(&oldFrame, 1));
+        ASSERT_TRUE(AudioMixerTestAccess::Acquire(source));
+        auto reset = std::async(std::launch::async, [&] {
+            if (reinitialize) source.Init(44100, 2);
+            else source.Reset();
+        });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (source.IsActive() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        EXPECT_FALSE(source.IsActive());
+        EXPECT_EQ(reset.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+        EXPECT_FALSE(AudioMixerTestAccess::Acquire(source));
+        AudioFrame read;
+        EXPECT_EQ(AudioMixerTestAccess::Pop(source, &read, 1), 1u);
+        EXPECT_FLOAT_EQ(read.left, oldFrame.left);
+        EXPECT_FLOAT_EQ(read.right, oldFrame.right);
+        AudioMixerTestAccess::Release(source);
+        reset.get();
+        EXPECT_EQ(source.GetQueuedFrames(), 0u);
+        EXPECT_EQ(source.IsActive(), reinitialize);
+        if (reinitialize) EXPECT_EQ(source.GetSampleRate(), 44100u);
+    }
+}
+
+// A multi-chunk request must sum each source, apply the limiter, pad exhausted
+// inputs with silence, and count only one underrun for the entire callback.
+TEST(AudioMixerTests, OversizedCallbackMixesChunksAndSilentTail) {
+    auto& mixer = AudioMixer::Get();
+    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+    ASSERT_TRUE(mixer.Initialize());
+    mixer.ForceWallClockForTesting();
+    auto* first = mixer.RegisterSource(48000, 2);
+    auto* second = mixer.RegisterSource(48000, 2);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    std::vector<AudioFrame> a(1300, AudioFrame{0.6f, -0.2f});
+    std::vector<AudioFrame> b(700, AudioFrame{0.5f, 0.4f});
+    ASSERT_TRUE(first->PushStereo48k(a.data(), a.size()));
+    ASSERT_TRUE(second->PushStereo48k(b.data(), b.size()));
+    mixer.ResetTelemetryForTesting();
+    std::vector<float> output(1700 * 2, 99.0f);
+    AudioMixerTestAccess::Process(mixer, output.data(), 1700);
+    for (std::size_t i = 0; i < 1700; ++i) {
+        EXPECT_FLOAT_EQ(output[2 * i], i < 700 ? SoftLimit(1.1f) : i < 1300 ? 0.6f : 0.0f);
+        EXPECT_FLOAT_EQ(output[2 * i + 1], i < 700 ? 0.2f : i < 1300 ? -0.2f : 0.0f);
+    }
+    EXPECT_EQ(first->GetQueuedFrames(), 0u);
+    EXPECT_EQ(second->GetQueuedFrames(), 0u);
+    EXPECT_EQ(mixer.GetUnderruns(), 1u);
+    mixer.UnregisterSource(first);
+    mixer.UnregisterSource(second);
+    // Empty callbacks must overwrite prior output, including a partial chunk.
+    AudioMixerTestAccess::Process(mixer, output.data(), 1700);
+    for (float sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
+    mixer.Shutdown();
+}
+
+// Failure must not latch initialization: changing to an available driver allows
+// a later call to open successfully, and no-device sources still retire on shutdown.
+TEST(AudioMixerTests, InitializeRetriesAfterDeviceFailure) {
+    auto& mixer = AudioMixer::Get();
+    mixer.Shutdown();
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    SDL_setenv("SDL_AUDIODRIVER", "portps5-nonexistent-driver", 1);
+    EXPECT_FALSE(mixer.Initialize());
+    EXPECT_FALSE(mixer.HasDevice());
+    auto* source = mixer.RegisterSource(48000, 2);
+    ASSERT_NE(source, nullptr);
+    mixer.Shutdown();
+    EXPECT_FALSE(source->IsActive());
+    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+    EXPECT_TRUE(mixer.Initialize());
+    EXPECT_TRUE(mixer.HasDevice());
+    EXPECT_TRUE(mixer.Initialize());
+    mixer.Shutdown();
+}
+
+// ForceWallClockForTesting must take the same mutex as fallback/simulation
+// before replacing the clock epoch, even after the device is already closed.
+TEST(AudioMixerTests, ForceWallClockWaitsForClockMutex) {
+    auto& mixer = AudioMixer::Get();
+    mixer.Shutdown();
+    auto lock = AudioMixerTestAccess::LockClock(mixer);
+    std::promise<void> started;
+    auto reset = std::async(std::launch::async, [&] {
+        started.set_value();
+        mixer.ForceWallClockForTesting();
+    });
+    started.get_future().wait();
+    EXPECT_EQ(reset.wait_for(std::chrono::milliseconds(30)), std::future_status::timeout);
+    lock.unlock();
+    reset.get();
 }

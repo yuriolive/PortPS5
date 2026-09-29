@@ -178,10 +178,20 @@ public:
     AudioSource();
     ~AudioSource();
 
+    /**
+     * @brief Initializes a source after retiring any selected consumer.
+     * @param sampleRate Input rate in Hz (zero selects 48 kHz).
+     * @param channels Input channel count (zero selects stereo).
+     * Lifecycle calls and producers must be externally serialized.
+     */
     void Init(std::uint32_t sampleRate, std::uint32_t channels);
+    /**
+     * @brief Closes consumer admission and waits before clearing queued frames.
+     * Callers must first quiesce producers and serialize lifecycle calls.
+     */
     void Reset();
 
-    bool IsActive() const noexcept { return m_inUse.load(std::memory_order_acquire); }
+    bool IsActive() const noexcept { return (m_state.load(std::memory_order_acquire) & kActive) != 0; }
     bool IsPaused() const noexcept { return m_paused.load(std::memory_order_relaxed); }
     void SetPaused(bool paused) noexcept { m_paused.store(paused, std::memory_order_release); }
 
@@ -192,9 +202,6 @@ public:
     bool PushStereo48k(const AudioFrame* frames, std::uint32_t count);
     bool PushAndResample(const AudioFrame* frames, std::uint32_t inCount);
 
-    std::uint32_t Pop(AudioFrame* out, std::uint32_t count) noexcept { return m_ring.Pop(out, count); }
-    void Clear() noexcept { m_ring.Clear(); }
-
     void WaitUntilQueuedAtMost(std::uint32_t targetFrames, std::uint32_t timeoutMs) noexcept {
         m_ring.WaitUntilQueuedAtMost(targetFrames, timeoutMs);
     }
@@ -203,7 +210,17 @@ public:
     }
 
 private:
-    std::atomic<bool> m_inUse{false};
+    friend class AudioMixer;
+    friend struct AudioMixerTestAccess;
+
+    // Selection and retirement share one atomic word: Reset closes admission
+    // before waiting for the selected consumer to acknowledge its final Pop.
+    static constexpr std::uint32_t kActive = 1;
+    static constexpr std::uint32_t kConsuming = 2;
+    bool TryAcquireConsumer() noexcept;
+    void ReleaseConsumer() noexcept;
+    std::uint32_t Pop(AudioFrame* out, std::uint32_t count) noexcept { return m_ring.Pop(out, count); }
+    std::atomic<std::uint32_t> m_state{0};
     std::atomic<bool> m_paused{false};
     std::uint32_t m_sampleRate = AUDIO_MIXER_SAMPLE_RATE;
     std::uint32_t m_channels = AUDIO_MIXER_CHANNELS;
@@ -239,10 +256,14 @@ public:
 
     /**
      * @brief Direct callback processing for simulated tests and headless verification.
+     * @param framesNeeded Frames to consume; zero advances the wall-clock fallback.
+     * Stop the host device with ForceWallClockForTesting before simulation.
      */
     void SimulateCallback(std::uint32_t framesNeeded);
 
 private:
+    friend struct AudioMixerTestAccess;
+
     AudioMixer();
     ~AudioMixer();
 
@@ -255,12 +276,18 @@ private:
 
     std::mutex m_initMutex;
     bool m_initialized = false;
-    SDL_AudioDeviceID m_device = 0;
+    std::atomic<SDL_AudioDeviceID> m_device{0};
     SDL_AudioSpec m_obtainedSpec{};
 
     static constexpr std::size_t kMaxSources = 48;
     std::array<AudioSource, kMaxSources> m_sources;
     std::mutex m_sourcesMutex;
+
+    // Only the single SDL callback uses these buffers. Simulated callbacks run
+    // with the device stopped and are serialized with fallback retirement.
+    static constexpr std::uint32_t kCallbackChunkFrames = 512;
+    std::array<AudioFrame, kCallbackChunkFrames> m_mixBuffer{};
+    std::array<AudioFrame, kCallbackChunkFrames> m_sourceBuffer{};
 
     std::atomic<std::uint64_t> m_framesConsumed{0};
     std::atomic<std::uint64_t> m_underruns{0};

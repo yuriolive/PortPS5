@@ -104,7 +104,6 @@ void AudioSource::Init(std::uint32_t sampleRate, std::uint32_t channels) {
     Reset();
     m_sampleRate = sampleRate ? sampleRate : AUDIO_MIXER_SAMPLE_RATE;
     m_channels = channels ? channels : AUDIO_MIXER_CHANNELS;
-    m_ring.Clear();
     m_paused.store(false, std::memory_order_relaxed);
 
     if (m_sampleRate != AUDIO_MIXER_SAMPLE_RATE) {
@@ -113,11 +112,16 @@ void AudioSource::Init(std::uint32_t sampleRate, std::uint32_t channels) {
             AUDIO_F32SYS, static_cast<Uint8>(AUDIO_MIXER_CHANNELS), static_cast<int>(m_sampleRate),
             AUDIO_F32SYS, static_cast<Uint8>(AUDIO_MIXER_CHANNELS), static_cast<int>(AUDIO_MIXER_SAMPLE_RATE));
     }
-    m_inUse.store(true, std::memory_order_release);
+    m_state.store(kActive, std::memory_order_release);
 }
 
 void AudioSource::Reset() {
-    m_inUse.store(false, std::memory_order_release);
+    m_state.fetch_and(~kActive, std::memory_order_acq_rel);
+    // Only lifecycle callers wait. A callback either owns the consuming bit
+    // already or fails admission; it never waits for Reset/Init.
+    while ((m_state.load(std::memory_order_acquire) & kConsuming) != 0) {
+        std::this_thread::yield();
+    }
     m_paused.store(true, std::memory_order_relaxed);
     m_ring.Clear();
     std::lock_guard lock(m_resamplerLock);
@@ -125,6 +129,18 @@ void AudioSource::Reset() {
         SDL_FreeAudioStream(m_resampler);
         m_resampler = nullptr;
     }
+}
+
+/** Atomically pins a live ring before callback selection, excluding other consumers. */
+bool AudioSource::TryAcquireConsumer() noexcept {
+    std::uint32_t expected = kActive;
+    return m_state.compare_exchange_strong(expected, kActive | kConsuming,
+                                           std::memory_order_acquire, std::memory_order_relaxed);
+}
+
+/** Publishes completion of all ring reads before lifecycle code may clear or reuse it. */
+void AudioSource::ReleaseConsumer() noexcept {
+    m_state.fetch_and(~kConsuming, std::memory_order_release);
 }
 
 bool AudioSource::PushStereo48k(const AudioFrame* frames, std::uint32_t count) {
@@ -178,14 +194,16 @@ bool AudioMixer::Initialize() {
     if (m_initialized) {
         return true;
     }
+    if (!OpenDevice()) {
+        std::fprintf(stderr, "[audio] failed to open host device: %s\n", SDL_GetError());
+        return false;
+    }
     m_initialized = true;
-    OpenDevice();
     return true;
 }
 
 void AudioMixer::Shutdown() {
     std::lock_guard lock(m_initMutex);
-    if (!m_initialized) return;
     CloseDevice();
     for (auto& source : m_sources) {
         source.Reset();
@@ -212,8 +230,11 @@ bool AudioMixer::OpenDevice() {
 
     m_device = SDL_OpenAudioDevice(nullptr, 0, &desired, &m_obtainedSpec, 0);
     if (m_device == 0) {
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return false;
     }
+    // Finish any no-device retirement before the SDL consumer starts.
+    std::lock_guard clockLock(m_wallClockMutex);
     SDL_PauseAudioDevice(m_device, 0);
     return true;
 }
@@ -221,6 +242,7 @@ bool AudioMixer::OpenDevice() {
 void AudioMixer::CloseDevice() {
     if (m_device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) {
         SDL_CloseAudioDevice(m_device);
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
     }
     m_device = 0;
     m_obtainedSpec = {};
@@ -290,6 +312,7 @@ void AudioMixer::ResetTelemetryForTesting() noexcept {
 void AudioMixer::ForceWallClockForTesting() noexcept {
     std::lock_guard lock(m_initMutex);
     CloseDevice();
+    std::lock_guard clockLock(m_wallClockMutex);
     m_lastWallClockTime = std::chrono::steady_clock::now();
 }
 
@@ -298,15 +321,14 @@ void AudioMixer::SimulateCallback(std::uint32_t framesNeeded) {
         UpdateWallClockFallback();
         return;
     }
-    std::vector<float> dummy(framesNeeded * AUDIO_MIXER_CHANNELS, 0.0f);
-    ProcessCallback(dummy.data(), framesNeeded);
     std::lock_guard lock(m_wallClockMutex);
+    ProcessCallback(nullptr, framesNeeded);
     m_lastWallClockTime = std::chrono::steady_clock::now();
 }
 
 void AudioMixer::UpdateWallClockFallback() {
-    if (m_device != 0) return;
     std::lock_guard lock(m_wallClockMutex);
+    if (m_device != 0) return;
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed = now - m_lastWallClockTime;
     const double elapsedSec = std::chrono::duration<double>(elapsed).count();
@@ -315,8 +337,9 @@ void AudioMixer::UpdateWallClockFallback() {
     if (framesToRetire > 0) {
         std::vector<AudioFrame> discard(framesToRetire);
         for (auto& source : m_sources) {
-            if (source.IsActive()) {
+            if (source.TryAcquireConsumer()) {
                 source.Pop(discard.data(), framesToRetire);
+                source.ReleaseConsumer();
             }
         }
         m_framesConsumed.fetch_add(framesToRetire, std::memory_order_relaxed);
@@ -336,8 +359,12 @@ void AudioMixer::ProcessCallback(float* stream, std::uint32_t framesNeeded) {
     std::size_t activeCount = 0;
 
     for (auto& source : m_sources) {
-        if (source.IsActive() && !source.IsPaused()) {
-            activeSources[activeCount++] = &source;
+        if (source.TryAcquireConsumer()) {
+            if (source.IsPaused()) {
+                source.ReleaseConsumer();
+            } else {
+                activeSources[activeCount++] = &source;
+            }
         }
     }
 
@@ -366,22 +393,26 @@ void AudioMixer::ProcessCallback(float* stream, std::uint32_t framesNeeded) {
         }
     }
 
-    std::vector<AudioFrame> mixBuf(framesNeeded, AudioFrame{0.0f, 0.0f});
-    std::vector<AudioFrame> tempBuf(framesNeeded);
-
-    for (std::size_t i = 0; i < activeCount; i++) {
-        const std::uint32_t popped = activeSources[i]->Pop(tempBuf.data(), framesNeeded);
-        for (std::uint32_t j = 0; j < popped; j++) {
-            mixBuf[j].left += tempBuf[j].left;
-            mixBuf[j].right += tempBuf[j].right;
+    for (std::uint32_t offset = 0; offset < framesNeeded;) {
+        const auto chunk = std::min(kCallbackChunkFrames, framesNeeded - offset);
+        std::fill_n(m_mixBuffer.begin(), chunk, AudioFrame{});
+        for (std::size_t i = 0; i < activeCount; i++) {
+            const auto popped = activeSources[i]->Pop(m_sourceBuffer.data(), chunk);
+            for (std::uint32_t j = 0; j < popped; j++) {
+                m_mixBuffer[j].left += m_sourceBuffer[j].left;
+                m_mixBuffer[j].right += m_sourceBuffer[j].right;
+            }
         }
+        if (stream) {
+            for (std::uint32_t j = 0; j < chunk; j++) {
+                stream[(offset + j) * 2 + 0] = SoftLimit(m_mixBuffer[j].left);
+                stream[(offset + j) * 2 + 1] = SoftLimit(m_mixBuffer[j].right);
+            }
+        }
+        offset += chunk;
     }
-
-    if (stream) {
-        for (std::uint32_t j = 0; j < framesNeeded; j++) {
-            stream[j * 2 + 0] = SoftLimit(mixBuf[j].left);
-            stream[j * 2 + 1] = SoftLimit(mixBuf[j].right);
-        }
+    for (std::size_t i = 0; i < activeCount; i++) {
+        activeSources[i]->ReleaseConsumer();
     }
 
     m_framesConsumed.fetch_add(framesNeeded, std::memory_order_relaxed);

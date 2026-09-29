@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -87,6 +88,22 @@ static int channelsForFormat(Format f) {
 
 static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
 
+/**
+ * Retains one mixer registration until every output snapshot releases it. The
+ * producer mutex spans both pacing and push, keeping the ring single-producer.
+ */
+struct PortSource {
+    AudioSource* source;
+    std::mutex producerMutex;
+
+    /** Registers the source only after shared ownership storage is allocated. */
+    PortSource(std::uint32_t rate, std::uint32_t channels)
+        : source(AudioMixer::Get().RegisterSource(rate, channels)) {}
+
+    /** Releases the mixer slot after the last in-flight output completes. */
+    ~PortSource() { AudioMixer::Get().UnregisterSource(source); }
+};
+
 struct Port {
     bool used = false;
     int type = 0;
@@ -96,11 +113,16 @@ struct Port {
     int channels = 0;
     int volume[8] = {};
     std::uint64_t lastOutputTime = 0;
-    AudioSource* source = nullptr;
+    std::shared_ptr<PortSource> source;
 };
 
 static std::mutex g_mutex;
-static Port g_ports[PORTS_MAX];
+/** Constructs the owning port table after the mixer so it is destroyed first. */
+static std::array<Port, PORTS_MAX>& ports() {
+    AudioMixer::Get();
+    static std::array<Port, PORTS_MAX> table;
+    return table;
+}
 
 static void convertAndDownmix(const Port& port, const void* data, std::vector<AudioFrame>& out) {
     const auto frames = port.samplesNum;
@@ -167,11 +189,13 @@ static void convertAndDownmix(const Port& port, const void* data, std::vector<Au
     }
 }
 
-static void queueAudio(Port& port, const void* data) {
-    if (!port.source) return;
+static void queueAudio(const Port& port, const void* data) {
+    if (!port.source || !port.source->source) return;
+    std::lock_guard producerLock(port.source->producerMutex);
+    auto* source = port.source->source;
     if (data == nullptr) {
         // Documented PS5 behavior: null buffer waits for queued audio to drain
-        port.source->Drain(200);
+        source->Drain(200);
         return;
     }
 
@@ -179,10 +203,10 @@ static void queueAudio(Port& port, const void* data) {
     convertAndDownmix(port, data, stereoFrames);
 
     // Pace against the 40 ms target cushion to prevent runaway queuing
-    port.source->WaitUntilQueuedAtMost(AUDIO_MIXER_TARGET_CUSHION_FRAMES, 200);
+    source->WaitUntilQueuedAtMost(AUDIO_MIXER_TARGET_CUSHION_FRAMES, 200);
 
     // Push into the source ring (automatically resamples if freq != 48000)
-    port.source->PushAndResample(stereoFrames.data(), port.samplesNum);
+    source->PushAndResample(stereoFrames.data(), port.samplesNum);
 }
 
 static bool portTypeValid(int type) {
@@ -194,10 +218,10 @@ static bool portTypeValid(int type) {
 
 static Port* getPort(int handle) {
     const int idx = handle - 1;
-    if (idx < 0 || idx >= PORTS_MAX || !g_ports[idx].used) {
+    if (idx < 0 || idx >= PORTS_MAX || !ports()[idx].used) {
         return nullptr;
     }
-    return &g_ports[idx];
+    return &ports()[idx];
 }
 
 extern "C" {
@@ -247,8 +271,8 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
 
     std::lock_guard<std::mutex> lock(g_mutex);
     for (int i = 0; i < PORTS_MAX; i++) {
-        if (!g_ports[i].used) {
-            Port& port = g_ports[i];
+        if (!ports()[i].used) {
+            Port& port = ports()[i];
             port.used = true;
             port.type = type;
             port.samplesNum = len;
@@ -260,7 +284,12 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
                 port.volume[c] = DEFAULT_VOLUME;
             }
             if (type != PORT_TYPE_VIBRATION) {
-                port.source = AudioMixer::Get().RegisterSource(freq, port.channels);
+                try {
+                    port.source = std::make_shared<PortSource>(freq, port.channels);
+                } catch (const std::bad_alloc&) {
+                    port = Port{};
+                    return SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY;
+                }
             }
             return i + 1;
         }
@@ -274,16 +303,17 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
  * @return 0 on success, or SCE_AUDIO_OUT_ERROR_INVALID_HANDLE.
  */
 int APS5_VABI sceAudioOutClose(int handle) noexcept {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    Port* port = getPort(handle);
-    if (port == nullptr) {
-        return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
+    std::shared_ptr<PortSource> retired;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        Port* port = getPort(handle);
+        if (port == nullptr) {
+            return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
+        }
+        retired = std::move(port->source);
+        *port = Port{};
     }
-    if (port->source) {
-        AudioMixer::Get().UnregisterSource(port->source);
-        port->source = nullptr;
-    }
-    *port = Port{};
+    // Destruction may wait for a callback, so release outside the port table lock.
     return 0;
 }
 
@@ -294,19 +324,27 @@ int APS5_VABI sceAudioOutClose(int handle) noexcept {
  * @return Number of samples processed on success, or negative error code.
  */
 int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) noexcept {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    Port* port = getPort(handle);
-    if (port == nullptr) {
-        return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
+    Port snapshot;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const Port* port = getPort(handle);
+        if (port == nullptr) {
+            return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
+        }
+        snapshot = *port;
     }
-
     try {
-        queueAudio(*port, ptr);
+        queueAudio(snapshot, ptr);
     } catch (const std::bad_alloc&) {
         return SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY;
     }
-    port->lastOutputTime = sceKernelGetProcessTime();
-    return static_cast<int>(port->samplesNum);
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (auto* port = getPort(handle); port && port->source == snapshot.source) {
+            port->lastOutputTime = sceKernelGetProcessTime();
+        }
+    }
+    return static_cast<int>(snapshot.samplesNum);
 }
 
 /**
@@ -320,34 +358,39 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
         return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
     }
 
-    std::lock_guard<std::mutex> lock(g_mutex);
-
-    for (std::uint32_t i = 0; i < num; i++) {
-        if (getPort(param[i].handle) == nullptr) {
-            return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
-        }
-    }
-
-    Port& first = *getPort(param[0].handle);
-
+    // Capture all registrations before dropping the table lock, including ports
+    // later in the batch that may close while an earlier entry is pacing.
+    std::vector<Port> snapshots;
     try {
-        for (std::uint32_t i = 0; i < num; i++) {
-            if (auto* port = getPort(param[i].handle)) {
-                queueAudio(*port, param[i].ptr);
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            for (std::uint32_t i = 0; i < num; i++) {
+                if (getPort(param[i].handle) == nullptr) {
+                    return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
+                }
             }
+            snapshots.reserve(num);
+            for (std::uint32_t i = 0; i < num; i++) {
+                snapshots.push_back(*getPort(param[i].handle));
+            }
+        }
+        for (std::uint32_t i = 0; i < num; i++) {
+            queueAudio(snapshots[i], param[i].ptr);
         }
     } catch (const std::bad_alloc&) {
         return SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY;
     }
 
     const std::uint64_t done = sceKernelGetProcessTime();
-    for (std::uint32_t i = 0; i < num; i++) {
-        if (auto* port = getPort(param[i].handle)) {
-            port->lastOutputTime = done;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        for (std::uint32_t i = 0; i < num; i++) {
+            if (auto* port = getPort(param[i].handle); port && port->source == snapshots[i].source) {
+                port->lastOutputTime = done;
+            }
         }
     }
-
-    return static_cast<int>(first.samplesNum);
+    return static_cast<int>(snapshots.front().samplesNum);
 }
 
 /**

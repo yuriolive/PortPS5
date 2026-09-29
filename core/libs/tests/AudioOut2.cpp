@@ -21,6 +21,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <future>
+#include <thread>
+
+#include "AudioMixerTestAccess.hpp"
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -357,4 +361,132 @@ TEST(AudioOut2Tests, AudioOutV1) {
     multi.ptr = block.data();
     EXPECT_EQ(sceAudioOutOutputs(&multi, 1), 256);
     EXPECT_EQ(sceAudioOutClose(handle), 0);
+}
+
+// The consolidated host device owns queue timing even though the obsolete
+// per-context device field remains zero. Missing sources still use the model.
+TEST(AudioOut2Tests, QueueLevelUsesMixerSourceWithHostDevice) {
+    auto& mixer = AudioMixer::Get();
+    mixer.Shutdown();
+    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+    ASSERT_TRUE(mixer.Initialize());
+    AudioOut2ContextParam params{};
+    params.num_grains = 256;
+    params.queue_depth = 8;
+    AudioOut2ContextHandle ctx{};
+    ASSERT_EQ(sceAudioOut2ContextCreate(&params, nullptr, 0, &ctx), 0);
+    auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
+    ASSERT_NE(context->source, nullptr);
+    context->source->SetPaused(true);
+    // Wait out selection that preceded the pause before placing the test grain.
+    while (!AudioMixerTestAccess::Acquire(*context->source)) std::this_thread::yield();
+    std::vector<AudioFrame> frames(AUDIO_MIXER_TARGET_CUSHION_FRAMES + 512);
+    const bool pushed = context->source->PushStereo48k(frames.data(), frames.size());
+    AudioMixerTestAccess::Release(*context->source);
+    ASSERT_TRUE(pushed);
+    EXPECT_EQ(context->device, 0u);
+    std::uint32_t level{}, available{};
+    EXPECT_EQ(sceAudioOut2ContextGetQueueLevel(ctx, &level, &available), 0);
+    EXPECT_EQ(level, 2u);
+    EXPECT_EQ(available, 6u);
+
+    auto* source = context->source;
+    context->source = nullptr;
+    context->device = 1; // Must not substitute for the missing mixer source.
+    context->queued = 3;
+    context->playHead = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    EXPECT_EQ(sceAudioOut2ContextGetQueueLevel(ctx, &level, &available), 0);
+    EXPECT_EQ(level, 3u);
+    EXPECT_EQ(available, 5u);
+    context->device = 0;
+    context->source = source;
+    EXPECT_EQ(sceAudioOut2ContextDestroy(ctx), 0);
+    mixer.Shutdown();
+}
+
+// A blocked single or batch output must allow table operations on other ports.
+// Closing/reopening the handle must retain the old source until output returns.
+TEST(AudioOut2Tests, V1PacingReleasesTableAndPinsSourceAcrossClose) {
+    auto& mixer = AudioMixer::Get();
+    for (bool batch : {false, true}) {
+        mixer.Shutdown();
+        SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+        ASSERT_TRUE(mixer.Initialize());
+        mixer.ForceWallClockForTesting();
+        const int handle = sceAudioOutOpen(0, 0, 0, 4096, 48000, 4);
+        ASSERT_GT(handle, 0);
+        auto& oldSource = AudioMixerTestAccess::FirstSource(mixer);
+        std::vector<float> pcm(4096 * 2, 0.25f);
+        ASSERT_EQ(sceAudioOutOutput(handle, pcm.data()), 4096);
+        std::promise<void> started;
+        auto output = std::async(std::launch::async, [&] {
+            AudioOutOutputParam param{};
+            param.handle = handle;
+            param.ptr = pcm.data();
+            started.set_value();
+            return batch ? sceAudioOutOutputs(&param, 1) : sceAudioOutOutput(handle, pcm.data());
+        });
+        started.get_future().wait();
+        EXPECT_EQ(output.wait_for(std::chrono::milliseconds(30)), std::future_status::timeout);
+        auto reopen = std::async(std::launch::async, [&] {
+            EXPECT_EQ(sceAudioOutClose(handle), 0);
+            return sceAudioOutOpen(0, 0, 0, 64, 48000, 4);
+        });
+        EXPECT_EQ(reopen.wait_for(std::chrono::milliseconds(60)), std::future_status::ready);
+        const int replacement = reopen.get();
+        EXPECT_EQ(replacement, handle);
+        EXPECT_TRUE(oldSource.IsActive());
+        std::vector<float> newPcm(64 * 2, 0.5f);
+        EXPECT_EQ(sceAudioOutOutput(replacement, newPcm.data()), 64);
+        // Retire just the old source; the replacement's queued samples must survive.
+        EXPECT_TRUE(AudioMixerTestAccess::Acquire(oldSource));
+        std::vector<AudioFrame> discard(4096);
+        AudioMixerTestAccess::Pop(oldSource, discard.data(), discard.size());
+        AudioMixerTestAccess::Release(oldSource);
+        EXPECT_EQ(output.get(), 4096);
+        EXPECT_FALSE(oldSource.IsActive());
+        std::vector<float> mixed(64 * 2);
+        AudioMixerTestAccess::Process(mixer, mixed.data(), 64);
+        for (float sample : mixed) EXPECT_FLOAT_EQ(sample, 0.5f);
+        EXPECT_EQ(sceAudioOutClose(replacement), 0);
+        mixer.Shutdown();
+    }
+}
+
+// Two producer APIs on one source must serialize the wait and push together.
+// Once one full grain is queued, the second must remain paced until consumption.
+TEST(AudioOut2Tests, V1SingleAndBatchProducersSharePacingLock) {
+    auto& mixer = AudioMixer::Get();
+    mixer.Shutdown();
+    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+    ASSERT_TRUE(mixer.Initialize());
+    mixer.ForceWallClockForTesting();
+    const int handle = sceAudioOutOpen(0, 0, 0, 4096, 48000, 4);
+    ASSERT_GT(handle, 0);
+    std::vector<float> pcm(4096 * 2, 0.25f);
+    ASSERT_EQ(sceAudioOutOutput(handle, pcm.data()), 4096);
+    auto single = std::async(std::launch::async, [&] { return sceAudioOutOutput(handle, pcm.data()); });
+    AudioOutOutputParam param{};
+    param.handle = handle;
+    param.ptr = pcm.data();
+    auto batch = std::async(std::launch::async, [&] { return sceAudioOutOutputs(&param, 1); });
+    EXPECT_EQ(single.wait_for(std::chrono::milliseconds(20)), std::future_status::timeout);
+    EXPECT_EQ(batch.wait_for(std::chrono::milliseconds(20)), std::future_status::timeout);
+    mixer.SimulateCallback(4096);
+    auto& source = AudioMixerTestAccess::FirstSource(mixer);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(80);
+    while (source.GetQueuedFrames() == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    EXPECT_EQ(source.GetQueuedFrames(), 4096u);
+    // One producer has completed; the other cannot finish without a second drain.
+    const auto singleReady = single.wait_for(std::chrono::milliseconds(20)) == std::future_status::ready;
+    const auto batchReady = batch.wait_for(std::chrono::milliseconds(20)) == std::future_status::ready;
+    EXPECT_NE(singleReady, batchReady);
+    mixer.SimulateCallback(4096);
+    EXPECT_EQ(single.get(), 4096);
+    EXPECT_EQ(batch.get(), 4096);
+    EXPECT_EQ(source.GetQueuedFrames(), 4096u);
+    EXPECT_EQ(sceAudioOutClose(handle), 0);
+    mixer.Shutdown();
 }

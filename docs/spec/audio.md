@@ -23,7 +23,9 @@ File references are relative to `core/libs/prx/`.
 
 Verified gaps closed in M2:
 - Single host mixer (`AudioMixer`) consolidates v1 ports and AudioOut2 contexts onto one SDL device clock (F32 48 kHz WASAPI shared mode).
-- Callback-driven architecture pulling from SPSC lock-free ring buffers, tracking monotonic `frames_consumed` output clock.
+- Callback-driven architecture pulling from SPSC lock-free ring buffers, tracking monotonic `frames_consumed` output clock. Source retirement closes callback admission and waits for the selected consumer before clearing or reusing a ring. Fixed callback buffers process oversized requests in chunks.
+- AudioOut v1 snapshots port settings and retains source ownership across each output; per-source producer serialization spans the queued-frame wait and push, with the port table mutex released during pacing. Closing a handle defers source reuse until its in-flight outputs finish.
+- Host-device initialization failures are logged and remain retryable. AudioOut2 queue levels use the source ring when the mixer has a device; otherwise they use modelled grains.
 - Real-time underrun accounting in callback when active unpaused sources experience a shortfall; overrun drop ceiling enforced at 100 ms ring fill.
 - Dynamic resampler via `SDL_AudioStream` for non-48 kHz ports.
 - 8-channel bed downmix folds LFE into front pair at -10 dB (gain ~0.316228) and C/RL/RR/SL/SR at -3 dB (gain ~0.707107).
@@ -79,6 +81,8 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
   - Downmix matrix, LFE fold, and soft-limiter headroom on synthetic multi-channel buffers.
   - `data_format` channel decoding and interleaving.
   - Resampler length, phase interpolation, and drift compensation.
+  - Source retirement versus callback selection, chunked mixing with silent tails, device-open retry, and wall-clock reset synchronization.
+  - AudioOut v1 pacing versus concurrent close/reopen and multiple producers; AudioOut2 source-ring queue reporting with a host device.
   - AJM job parsing with synthetic command batches (no game assets).
   - ATRAC9 header and frame decoding of project-generated bitstreams.
   - Death tests (`EXPECT_DEATH`): verify that malformed AJM batches trigger an immediate abort via `Unsupported()` rather than corrupting audio ring buffers.
@@ -92,7 +96,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 | Milestone | Audio work |
 |---|---|
 | M1 | - [x] Port AudioOut2 and ATRAC9 from PR #5. Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
-| M2 | - [x] Single host mixer with the resampler and the soft limiter. TMNT proves the mixing path. Underrun bar enforced in the full run. |
+| M2 | - [ ] Single host mixer with the resampler and the soft limiter. TMNT proves the mixing path. Underrun bar enforced in the full run with published results; unit tests do not complete this combined implementation and validation criterion. |
 | M3 | - [ ] Tomb Raider FMV audio within the A/V bar, jointly with [video-fmv.md](video-fmv.md). |
 | M4 | - [ ] Any codec or NGS2 surface that the inventory flags for Bugsnax. |
 | M5 | - [ ] Object-port panning, validated on Demon's Souls. |
