@@ -19,7 +19,41 @@ Native Windows execution of decrypted PS5 game dumps.
 
 PortPS5 converts **user-supplied, already-decrypted PS5 game dumps** into native Windows executables plus replacement system libraries. It executes the game's x86-64 code directly on the host CPU without emulation, relinks guest ELFs into PE images, implements PS5 system libraries (`.prx`), and translates the GPU workload to Vulkan.
 
-PortPS5 is a GPL-2.0-only hard fork of [AnyPS5](https://github.com/boykopovar/AnyPS5) by boykopovar.
+PortPS5 is a GPL-2.0-only hard fork of [AnyPS5](https://github.com/boykopovar/AnyPS5) by boykopovar. Hard fork means an independent product direction, not isolation: improvements flow from upstream continuously, but each one is adopted selectively and adapted to fork policy — never taken as-is, and never depended on. Full upstream tracking is revisited only after Milestone 3 (see [PRD §5](docs/PRD.md)).
+
+## Why a hard fork
+
+Upstream optimizes for title-by-title progress, including game-specific mechanisms and environment switches for tuning and tracing. PortPS5 optimizes for a shippable, Windows-first product boundary instead: generic mechanisms only, enforced by CI; typed config instead of switches; return codes instead of throws; and a measured 1.0 bar (sections below). Upstream currently shows more public real-game evidence; the fork's arrives as results JSON from M2 onward.
+
+## Product decisions
+
+- **No title-specific code in `core/`.** Every title runs the same code. Per-title behaviour lives only in `config/games/<titleId>.toml` under `[workarounds]`, where the key names the mechanism (never the game) and is registered in [docs/workarounds.md](docs/workarounds.md). The hosted `policy` CI job enforces both directions.
+- **No behaviour-changing environment variables.** The `APS5_*` switches are removed. Tracing, dumps and profiling survive only as a typed `[debug]` config section.
+- **General mechanisms over game-specific fixes.** A fix that happens to help one title first (e.g. a uniform-fill or linear-copy IR pattern, GPU-side resource resolution, general block-generation write tracking) is adopted; a branch on a title ID, executable hash or shader hash is not. If a title cannot progress without a hack, work stops and the root cause goes into the subsystem spec's Open questions.
+- **Honest errors.** Real POSIX/SCE conditions return codes. Only genuinely unsupported states abort, through the logging abort path. Nothing throws across the `APS5_VABI` boundary; every host function reachable from guest code is `APS5_VABI` (System V ABI).
+- **Concurrency without global locks.** Guest synchronization uses in-place futex words on `WaitOnAddress`, not heap `std::` mutexes and no process-global lock on hot paths.
+- **GPU work resolved on the GPU.** Indirect draws, buffer resolves at submit time, and write tracking run on GPU-side paths — never by reading records back on the CPU or satisfying a wait from an unexecuted label a capture depends on.
+- **Verification splits by machine.** Hosted CI (build, unit, policy, python-quality, recompiler-golden — full job list in [spec/verification.md](docs/spec/verification.md); the `driver-lavapipe` job is planned M1 work, not running yet) has no GPU and never needs game data. GPU runs are local-only on a maintainer machine with their own dumps, and their only published output is metrics/hashes/pass-fail results JSON.
+
+## Objectives — what 1.0 means
+
+1.0 ships when all five pinned **gate titles** are completable start-to-credits and meet the performance bar on the generic reference tier. Full definitions, pins and exit criteria live in [PRD §4](docs/PRD.md) and [ROADMAP](docs/ROADMAP.md).
+
+| # | Title | Tier | What it proves |
+|---|---|---|---|
+| 1 | Dreaming Sarah | 2D, custom | PM4 basics, blits, presentation, file streaming |
+| 2 | TMNT: Shredder's Revenge | 2D action | Sprite throughput, pad input, audio mixing, 60 Hz pacing |
+| 3 | Tomb Raider I-III Remastered | Simple 3D | Depth buffer, 3D transforms, texture sampling, save/load |
+| 4 | Bugsnax | Unreal Engine 4 | UE4 job system, dynamic buffers, shadow passes |
+| 5 | Demon's Souls | AAA custom engine | Async compute, resource aliasing, streaming, Bink FMV, indirect draws |
+
+Functional bar (F1–F9): local CLI conversion with clear errors; save/load round-trip; audio including ATRAC9 with FMV A/V offset within ±80 ms and at most 1 underrun per 10 minutes; FMV must play (skipping is not a pass); XInput + DualSense-over-USB + keyboard/mouse; per-game TOML; warm disk pipeline cache (0 shader compilations, 0 pipeline creations during a regression pass); offline PSN/trophy behaviour that never blocks; runtime telemetry (frame-time log, watchdog, structured logs) feeding results JSON.
+
+Performance bar (warm cache, 1920×1080 or higher, full run of at least 30 minutes of presented frames): average **≥30 fps**, **1% low ≥20 fps**, **0 crashes and 0 softlocks**. Stalls (>1 s between presents) are excluded from fps stats and counted separately; a softlock is no present or no guest-thread progress for >30 s, with no loading-screen exemption.
+
+Reference tier (generic, benchmark-anchored): 12-core desktop CPU, mid-to-high-end Vulkan 1.3 GPU with 12 GB VRAM, 32 GB RAM, Windows 11 — qualified by Cinebench R23 multi-core ≥ 18,000 and 3DMark Time Spy graphics ≥ 18,000. No specific personal machine is part of the spec.
+
+Post-1.0 non-goals: relink-time shader compilation, an AOB patch engine, upscaling/FPS targets (FSR, DLSS, 4K, 60/120 fps), Linux/macOS/GUI builds, DualSense haptics, titles beyond the gate set, and upstream tracking.
 
 [![progress map](https://yuriolive.github.io/PortPS5/progress.svg)](https://yuriolive.github.io/PortPS5/)
 
