@@ -63,6 +63,19 @@ portps5_add_gtest(memory_virtual_allocation_tests
         unit
 )
 
+# Arena extent-tree allocator differential verification (first-fit order contract)
+portps5_add_gtest(guest_arena_extent_tests
+    SOURCES
+        memory/GuestArenaExtentTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Filesystem sandbox containment & path traversal prevention (ported from SharpEMU)
 portps5_add_gtest(filesystem_sandbox_path_tests
     SOURCES
