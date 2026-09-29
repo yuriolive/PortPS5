@@ -288,4 +288,53 @@ TEST(SyncOnAddress, WakeZeroIsNoOp) {
     }
 }
 
+// Verifies WaitOnAddress race perturbation under concurrent updates, spurious wakeups, and yields.
+TEST(SyncOnAddress, RacePerturbationUnderYield) {
+    constexpr int ITERATIONS = 20;
+    constexpr int THREADS = 4;
+
+    for (int iter = 0; iter < ITERATIONS; ++iter) {
+        uint32_t word = 0;
+        std::atomic<bool> stop{false};
+        std::atomic<int> completed{0};
+        std::vector<std::thread> workers;
+
+        for (int t = 0; t < THREADS; ++t) {
+            workers.emplace_back([&, t] {
+                while (!stop.load(std::memory_order_relaxed)) {
+                    uint32_t cur = __atomic_load_n(&word, __ATOMIC_ACQUIRE);
+                    if (cur % 2 == 1) {
+                        uint32_t timeout = 5000; // 5ms
+                        (void)Wait32(&word, cur, &timeout);
+                    } else {
+                        std::this_thread::yield();
+                    }
+                }
+                completed.fetch_add(1, std::memory_order_release);
+            });
+        }
+
+        // Perturb the address value and issue wakes concurrently
+        for (int step = 0; step < 100; ++step) {
+            Store(&word, static_cast<uint32_t>(step));
+            if (step % 3 == 0) {
+                (void)Wake(&word, 1);
+            } else if (step % 5 == 0) {
+                (void)Wake(&word, INT_MAX);
+            }
+            std::this_thread::yield();
+        }
+
+        stop.store(true, std::memory_order_release);
+        Store(&word, 999999u);
+        EXPECT_EQ(Wake(&word, INT_MAX), OK);
+
+        for (auto& w : workers) {
+            w.join();
+        }
+        EXPECT_EQ(completed.load(std::memory_order_acquire), THREADS);
+    }
+}
+
 } // namespace
+
