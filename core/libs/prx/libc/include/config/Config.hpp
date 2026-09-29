@@ -1,13 +1,13 @@
-// Config.hpp
-// PortPS5 - Runtime Configuration System
+// Runtime configuration for PortPS5 (docs/spec/configuration.md).
 //
-// Subsystem Ownership:
-//   Owned by core/libs/prx/libc. Coordinates configuration loading, parsing,
-//   and query interfaces across all PortPS5 subsystems.
+// A single Config module parses <install>/config/global.toml, then
+// <install>/config/games/<titleId>.toml, then the PORTPS5_DEBUG variable,
+// key by key. Later layers override earlier ones. Unknown keys, wrong types,
+// out-of-range values and [workarounds] in the global file are start-up
+// errors reported as "file:line: key: reason" before any guest code runs.
 //
-// Threading & Invariants:
-//   - Config is initialized once before guest thread execution begins.
-//   - All accessors are read-only and thread-safe without locks.
+// Subsystem: configuration (libc). Host-only: no guest-called exports, no
+// APS5_VABI. Initialize runs once at start-up; getters are read-only after.
 
 #ifndef CORE_LIBS_PRX_LIBC_CONFIG_HPP
 #define CORE_LIBS_PRX_LIBC_CONFIG_HPP
@@ -20,17 +20,6 @@
 #include <variant>
 #include <vector>
 
-// Runtime configuration for PortPS5 (docs/spec/configuration.md).
-//
-// A single Config module parses <install>/config/global.toml, then
-// <install>/config/games/<titleId>.toml, then the PORTPS5_DEBUG variable,
-// key by key. Later layers override earlier ones. Unknown keys, wrong types,
-// out-of-range values and [workarounds] in the global file are start-up
-// errors reported as "file:line: key: reason" before any guest code runs.
-//
-// This module lives in libc so every prx shares one parsed instance through
-// the libc DLL. It has no guest-visible exports and takes no guest locks:
-// Initialize runs once at start-up, and the getters are read-only after that.
 namespace PortPS5 {
 namespace Config {
 

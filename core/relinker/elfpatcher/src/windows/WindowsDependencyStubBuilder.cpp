@@ -1,3 +1,7 @@
+// Windows dependency diagnostic machine-code stub builder for converted PEs.
+// Emits diagnostic walker to pinpoint missing imports and dependency failure chains.
+// Subsystem: relinker. Emitted code runs under native Windows host execution.
+
 #include <elfpatcher/windows/WindowsDependencyStubBuilder.hpp>
 #include <codegen/x86/X64Assembler.hpp>
 #include <io/BufferUtils.hpp>
@@ -74,11 +78,14 @@ WindowsDependencyStub WindowsDependencyStubBuilder::Build(WindowsStubEmitter& co
     a.Begin("fatal");
     a.Call("write");
     a.Mark("terminate");
+    // Why ExitProcess, not RaiseException: after a FAIL diagnostic the process
+    // must exit with the status, not depend on exception dispatch. Raising
+    // through the hand-emitted stub faulted with 0xC0000005 on this path
+    // instead of exiting, hiding the real status (docs/spec/relinker.md
+    // Failure modes). The status value is unchanged, so existing diagnostics
+    // keep their exit codes.
     a.Value(Cx, 0xc0000135u);
-    a.Value(Dx, 1);
-    a.Value(R8, 0);
-    a.Value(R9, 0);
-    a.Api("RaiseException");
+    a.Api("ExitProcess");
     code.Emit({0x0f, 0x0b});
     a.Mark("invalid");
     a.Text("invalid");

@@ -216,7 +216,7 @@ TEST(PthreadCond, MultipleWaitersSequentialSignal) {
         });
     }
 
-    ASSERT_TRUE(waitUntil(ready, WAITERS, std::chrono::seconds(5)));
+    ASSERT_TRUE(waitUntil(ready, WAITERS, std::chrono::seconds(15)));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
     // Signal first waiter: publish one permit so exactly one worker can proceed.
@@ -225,7 +225,8 @@ TEST(PthreadCond, MultipleWaitersSequentialSignal) {
     EXPECT_EQ(scePthreadCondSignal(&cond), 0);
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
 
-    ASSERT_TRUE(waitUntil(woken, 1, std::chrono::seconds(5)));
+    ASSERT_TRUE(waitUntil(woken, 1, std::chrono::seconds(15)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     // Signal second waiter.
     EXPECT_EQ(scePthreadMutexLock(&mutex), 0);

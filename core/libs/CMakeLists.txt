@@ -383,6 +383,19 @@ if(BUILD_TESTING)
     target_link_libraries(config_tests PRIVATE libc)
     configure_windows_unwind(config_tests)
     portps5_add_test(config config_tests)
+    # LocaleNids pins the six libc locale/iostream NID data exports (hash,
+    # linkage, size, zero-init) plus the verbatim Loader wrappers, including
+    # the uninitialized-Get abort as a death test (config_tests cannot abort
+    # in-process). Uses real Nid::ComputeNid, so the NID sources compile in.
+    portps5_add_gtest(locale_nid_tests
+        SOURCES  tests/LocaleNids.cpp
+                 nid/src/NidCompute.cpp
+                 nid/src/Sha1.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/nid/include
+        LIBRARIES libc
+        LABELS   unit
+    )
     # WriteTracker suites are GoogleTest (portps5_add_gtest): the IWriteTracker
     # contract plus WriteWatchTracker/page-state behavior (TEST invariant
     # comments per tools/check_comments.py rule 3).
