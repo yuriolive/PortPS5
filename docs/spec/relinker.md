@@ -118,8 +118,8 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 | Branch into a patched TLS or AMD-only site | Fail with offset (unchanged). |
 | EXTRQ/INSERTQ register form | Leave the bytes, list them in the report, rely on the runtime trap. |
 | `Unproven` bytes | Count and log them. Never patch them and never fail on them. |
-| Missing prx export at startup | The loader prints `FAIL: unresolved ELF import <nid>` (`WindowsEntryStubBuilder.cpp:99`). Without `--lazy-binding`, it stops. |
-| prx-to-prx host import missing at load | Same `FAIL` shape with `GetLastError` 127, but the importer is a prx and the symbol is a verbatim host name: the provider hashed its export while the importer asks verbatim (observed 2026-09-29: `libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx` on the Dreaming Sarah boot path). After the report the stub deliberately raises `0xC0000135` (`WindowsDependencyStubBuilder.cpp:74-82`), which becomes the process exit code. |
+| Missing prx export at startup | The loader prints `FAIL: unresolved ELF import <nid>` (`WindowsEntryStubBuilder.cpp:99`). Without `--lazy-binding`, it stops. Every FAIL path exits via `ExitProcess` with the printed status (e.g. `0xC0000135`, `0xC0000139`), never via exception dispatch, so the process exit code is the status. |
+| prx-to-prx host import missing at load | Same `FAIL` shape with `GetLastError` 127, but the importer is a prx and the symbol is a verbatim host name: the provider hashed its export while the importer asks verbatim (observed 2026-09-29: `libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx` on the Dreaming Sarah boot path; resolved by exporting verbatim `_nid_no_patch` wrappers). After the message the process exits cleanly non-zero via `ExitProcess(0xC0000135)` with no exception dispatch. |
 | CodeMap overlap | Fail (`CodeInstructionCollector.cpp:214`). This means data was treated as code, and the seeding is wrong. |
 
 ## Tests
