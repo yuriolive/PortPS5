@@ -16,5 +16,6 @@ The protocol is in `docs/spec/verification.md`.
 - **Tests are wired into `ctest`.**
   - Always use `portps5_add_gtest` (defined in `cmake/PortPS5GTest.cmake`) for C++ test targets. It links `GTest::gtest_main`, handles Windows SEH/DWARF unwinding, marks targets with label `unit`, and wires `gtest_discover_tests`.
   - Only use `portps5_add_test` for non-C++ test scripts (e.g. Python scripts). Don't add targets that only build under `EXCLUDE_FROM_ALL`.
+  - **Run tests in parallel:** Always run test suites in parallel using `ctest --preset ci -j` (or `ctest --preset ci --parallel`). All GoogleTest targets are process-isolated by `gtest_discover_tests`; individual tests must remain hermetic and never depend on execution order or global state between processes.
 - **Never** weaken or delete an assertion to make a test pass without explaining why in the PR.
 - **Performance claims** (fps, ms per frame) need a before/after measurement taken with the same build flags and the same run protocol.

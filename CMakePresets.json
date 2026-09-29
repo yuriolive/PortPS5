@@ -89,6 +89,9 @@
       "displayName": "CI Unit Tests",
       "description": "Runs all unit tests in CI",
       "configurePreset": "ci",
+      "execution": {
+        "jobs": 0
+      },
       "output": {
         "outputOnFailure": true
       },
@@ -103,6 +106,9 @@
       "displayName": "Unit Tests",
       "description": "Runs all unit-labeled tests",
       "configurePreset": "dev",
+      "execution": {
+        "jobs": 0
+      },
       "output": {
         "outputOnFailure": true
       },

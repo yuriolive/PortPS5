@@ -16,7 +16,7 @@ The toolchain facts are in `docs/spec/build-toolchain.md`. Read it first if anyt
    - Otherwise run `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON`.
    - Add `-DANYPS5_ENABLE_SPIRV_TOOLS=ON` only for dev and validation builds. It is a licence risk in release binaries (PRD R1).
 4. **Build:** `cmake --build build`.
-5. **Test:** `ctest --test-dir build --output-on-failure`. To run one test, add `-R <name>`.
+5. **Test:** Run tests in parallel across all CPU cores with `ctest --preset ci -j` (or `ctest --preset ci --parallel`, or `ctest --test-dir build --output-on-failure -j`). All tests are process-isolated by `portps5_add_gtest` / `gtest_discover_tests`. Running in parallel prevents long-running fuzz tests (such as `GuestArenaExtent.MatchesLinearScanFuzz`) from bottlenecking the suite sequentially. To run a single test, add `-R <name>`.
 6. **Report** the exact failing command and the first error, not a summary.
 
 ## Rules
