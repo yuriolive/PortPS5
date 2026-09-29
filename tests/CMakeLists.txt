@@ -146,6 +146,24 @@ portps5_add_gtest(avplayer_exports_tests
         unit
 )
 
+# Save data subsystem fidelity tests (mount modes, snapshots, atomic swaps, quotas, patterns, dialogs)
+portps5_add_gtest(savedata_fidelity_tests
+    SOURCES
+        savedata/SaveDataFidelityTests.cpp
+    LIBRARIES
+        libSceSaveData.native
+        libSceSaveDataDialog.native
+        libSceCommonDialog
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+
 # Python unit tests for tools/check_comments.py — verifies the comment
 # policy linter logic (Rules 1-3) in isolation with no game data required.
 portps5_add_test(check_comments_unit_tests

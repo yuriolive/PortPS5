@@ -1,0 +1,505 @@
+// tests/savedata/SaveDataFidelityTests.cpp
+// GoogleTest verification suite for PortPS5 M2 Save Data Fidelity slice.
+// Verifies per-title layout, crash safety (RDWR snapshots, startup recovery, atomic swaps),
+// mount modes, error codes, memory blobs + quota, pattern matching (% and _), param/icon round-trip,
+// scripted dialog transitions, common dialog active tracking, and death tests for corrupt mount modes.
+
+#include "common/TestHarness.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libSceSaveData.native/SaveData.hpp"
+#include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "SceTypes.hpp"
+
+#include <chrono>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+extern "C" {
+int APS5_VABI sceSaveDataInitialize3(const void* init) noexcept;
+int APS5_VABI sceSaveDataTerminate(void) noexcept;
+int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) noexcept;
+int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_point) noexcept;
+int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mount_point, SaveDataMountInfo* info) noexcept;
+int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) noexcept;
+int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) noexcept;
+int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const SaveDataIcon* icon) noexcept;
+int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDataIcon* icon) noexcept;
+int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) noexcept;
+int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) noexcept;
+int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDataMemorySetupResult* result) noexcept;
+int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param) noexcept;
+int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) noexcept;
+int APS5_VABI sceSaveDataTransferringMount(const SaveDataTransferringMount* mount, SaveDataMountResult* mount_result) noexcept;
+
+int APS5_VABI sceSaveDataDialogInitialize(void) noexcept;
+int APS5_VABI sceSaveDataDialogTerminate(void) noexcept;
+int APS5_VABI sceSaveDataDialogOpen(const void* param) noexcept;
+int APS5_VABI sceSaveDataDialogClose(const void* close_param) noexcept;
+int APS5_VABI sceSaveDataDialogGetStatus(void) noexcept;
+int APS5_VABI sceSaveDataDialogUpdateStatus(void) noexcept;
+int APS5_VABI sceSaveDataDialogGetResult(void* result) noexcept;
+int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) noexcept;
+
+int APS5_VABI sceCommonDialogInitialize(void) noexcept;
+bool APS5_VABI sceCommonDialogIsUsed(void) noexcept;
+
+void ResetSaveDataStateForTesting();
+void ResetSaveDataDialogStateForTesting();
+}
+
+namespace {
+
+using namespace PortPS5::Testing;
+
+class SaveDataFidelityTest : public TempDirectoryFixture {
+protected:
+    void SetUp() override {
+        TempDirectoryFixture::SetUp();
+        SetSaveDataBaseDirOverride(TempDir());
+        ResetSaveDataStateForTesting();
+        ResetSaveDataDialogStateForTesting();
+    }
+
+    void TearDown() override {
+        ResetSaveDataStateForTesting();
+        ResetSaveDataDialogStateForTesting();
+        SetSaveDataBaseDirOverride(std::filesystem::path{});
+        TempDirectoryFixture::TearDown();
+    }
+
+    static SceSaveDataDirName MakeDirName(const char* name) {
+        SceSaveDataDirName d{};
+        std::strncpy(d.data, name, sizeof(d.data) - 1);
+        return d;
+    }
+};
+
+TEST_F(SaveDataFidelityTest, MountModesAndErrorCodes) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+    // Double initialization rejected
+    EXPECT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_ERROR_ALREADY_INITIALIZED);
+
+    SceSaveDataDirName dirName = MakeDirName("SAVEDIR01");
+    SaveDataMount3 mount{};
+    mount.dir_name = &dirName;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE;
+    mount.blocks = 100;
+
+    SaveDataMountResult result{};
+    // First CREATE mount succeeds
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+    EXPECT_STREQ(result.mount_point.data, "/_sm/0");
+
+    // Attempting to mount an already mounted directory fails with BUSY
+    SaveDataMountResult resultBusy{};
+    EXPECT_EQ(sceSaveDataMount3(&mount, &resultBusy), SAVE_DATA_ERROR_BUSY);
+
+    // RDONLY mount on nonexistent save returns NOT_FOUND
+    SceSaveDataDirName nonExistentDir = MakeDirName("NONEXISTENT");
+    SaveDataMount3 mountNonExistent{};
+    mountNonExistent.dir_name = &nonExistentDir;
+    mountNonExistent.mount_mode = SAVE_DATA_MOUNT_MODE_RDONLY;
+    EXPECT_EQ(sceSaveDataMount3(&mountNonExistent, &resultBusy), SAVE_DATA_ERROR_NOT_FOUND);
+
+    // RDWR mount on nonexistent save returns NOT_FOUND
+    mountNonExistent.mount_mode = SAVE_DATA_MOUNT_MODE_RDWR;
+    EXPECT_EQ(sceSaveDataMount3(&mountNonExistent, &resultBusy), SAVE_DATA_ERROR_NOT_FOUND);
+
+    // Unmount existing slot
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+
+    // Now that slot is unmounted, CREATE on already existing save directory fails with EXISTS
+    SaveDataMountResult resultExists{};
+    EXPECT_EQ(sceSaveDataMount3(&mount, &resultExists), SAVE_DATA_ERROR_EXISTS);
+
+    // Unmounting non-mounted mount point returns NOT_MOUNTED
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_ERROR_NOT_MOUNTED);
+
+    // CREATE2 succeeds on existing directory
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE2;
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+
+    // RDONLY succeeds on existing directory
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_RDONLY;
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+
+    EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
+}
+
+TEST_F(SaveDataFidelityTest, WriteUnmountRemountReadConsistency) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    SceSaveDataDirName dirName = MakeDirName("CONSISTENCY_DIR");
+    SaveDataMount3 mount{};
+    mount.dir_name = &dirName;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE2;
+    mount.blocks = 100;
+
+    SaveDataMountResult result{};
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+
+    // Write file into the mounted directory
+    std::filesystem::path savePath = TempDir() / "CONSISTENCY_DIR";
+    std::filesystem::path testFile = savePath / "game_state.bin";
+    std::string testData = "PortPS5 Save Consistency Test Payload 1234567890";
+    {
+        std::ofstream out(testFile, std::ios::binary);
+        ASSERT_TRUE(out.is_open());
+        out.write(testData.data(), testData.size());
+    }
+
+    // Clean unmount
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+
+    // Remount RDONLY
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_RDONLY;
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+
+    // Read back and verify
+    std::string readBack;
+    {
+        std::ifstream in(testFile, std::ios::binary);
+        ASSERT_TRUE(in.is_open());
+        readBack.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    EXPECT_EQ(readBack, testData);
+
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+    EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
+}
+
+TEST_F(SaveDataFidelityTest, CrashSafetySnapshotRestoreOnCrash) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    // 1. Establish pristine save state
+    SceSaveDataDirName dirName = MakeDirName("CRASH_TEST_DIR");
+    SaveDataMount3 mount{};
+    mount.dir_name = &dirName;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE2;
+    mount.blocks = 100;
+
+    SaveDataMountResult result{};
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+
+    std::filesystem::path savePath = TempDir() / "CRASH_TEST_DIR";
+    std::filesystem::path pristineFile = savePath / "save.dat";
+    std::string pristineContent = "PRISTINE_DATA_V1";
+    {
+        std::ofstream out(pristineFile, std::ios::binary);
+        out.write(pristineContent.data(), pristineContent.size());
+    }
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+
+    // 2. Open RDWR mount to simulate mid-write crash
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_RDWR;
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+
+    // A snapshot directory .portps5-prev should now exist
+    std::filesystem::path snapshotPath = TempDir() / "CRASH_TEST_DIR.portps5-prev";
+    EXPECT_TRUE(std::filesystem::exists(snapshotPath));
+
+    // Game corrupts the active save file and adds a partial temp file
+    {
+        std::ofstream out(pristineFile, std::ios::binary);
+        std::string corruptedContent = "CORRUPTED_INCOMPLETE_WRITE";
+        out.write(corruptedContent.data(), corruptedContent.size());
+    }
+    std::filesystem::path partialFile = savePath / "partial.tmp";
+    {
+        std::ofstream out(partialFile, std::ios::binary);
+        out << "garbage";
+    }
+
+    // 3. Simulate sudden crash/kill: no clean Umount2, state reset
+    ResetSaveDataStateForTesting();
+
+    // 4. Relaunch/initialize: startup scan detects leftover snapshot and restores pristine state
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    // Verify snapshot directory is consumed/removed
+    EXPECT_FALSE(std::filesystem::exists(snapshotPath));
+
+    // Verify pristine file is restored and partial corrupted files are gone
+    std::string restoredContent;
+    {
+        std::ifstream in(pristineFile, std::ios::binary);
+        ASSERT_TRUE(in.is_open());
+        restoredContent.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    EXPECT_EQ(restoredContent, pristineContent);
+    EXPECT_FALSE(std::filesystem::exists(partialFile));
+
+    EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
+}
+
+TEST_F(SaveDataFidelityTest, CrashSafetyCleanUnmountRemovesSnapshot) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    // Establish existing save directory first so that RDWR mount creates a snapshot
+    std::filesystem::path savePath = TempDir() / "CLEAN_UNMOUNT_DIR";
+    std::error_code ec;
+    std::filesystem::create_directories(savePath, ec);
+    {
+        std::ofstream out(savePath / "state.dat");
+        out << "sample data";
+    }
+
+    SceSaveDataDirName dirName = MakeDirName("CLEAN_UNMOUNT_DIR");
+    SaveDataMount3 mount{};
+    mount.dir_name = &dirName;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_RDWR;
+    mount.blocks = 100;
+
+    SaveDataMountResult result{};
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+
+    std::filesystem::path snapshotPath = TempDir() / "CLEAN_UNMOUNT_DIR.portps5-prev";
+    EXPECT_TRUE(std::filesystem::exists(snapshotPath));
+
+    // Clean unmount must delete snapshot
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+    EXPECT_FALSE(std::filesystem::exists(snapshotPath));
+
+    EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
+}
+
+TEST_F(SaveDataFidelityTest, MemoryBlobAtomicSwapAndQuota) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    // Quota test: setup exceeding maximum blocks rejected with NO_SPACE
+    SaveDataMemorySetup2 hugeSetup{};
+    hugeSetup.slot_id = 1;
+    hugeSetup.memory_size = (SAVE_DATA_BLOCKS_MAX + 1) * SAVE_DATA_BLOCK_SIZE;
+    SaveDataMemorySetupResult setupResult{};
+    EXPECT_EQ(sceSaveDataSetupSaveDataMemory2(&hugeSetup, &setupResult), SAVE_DATA_ERROR_NO_SPACE);
+
+    // Valid setup
+    SaveDataMemorySetup2 validSetup{};
+    validSetup.slot_id = 1;
+    validSetup.memory_size = 1024;
+    EXPECT_EQ(sceSaveDataSetupSaveDataMemory2(&validSetup, &setupResult), SAVE_DATA_OK);
+
+    // Set memory payload
+    std::string blobData = "PORTPS5_MEMORY_BLOB_TEST_DATA_987654321";
+    SaveDataMemoryData memData{};
+    memData.buf = blobData.data();
+    memData.buf_size = blobData.size();
+    memData.offset = 0;
+
+    SaveDataMemorySet2 setParam{};
+    setParam.slot_id = 1;
+    setParam.data_num = 1;
+    setParam.data = &memData;
+    EXPECT_EQ(sceSaveDataSetSaveDataMemory2(&setParam), SAVE_DATA_OK);
+
+    // Read back memory payload
+    std::vector<char> readBuf(blobData.size(), 0);
+    SaveDataMemoryData getMemData{};
+    getMemData.buf = readBuf.data();
+    getMemData.buf_size = readBuf.size();
+    getMemData.offset = 0;
+
+    SaveDataMemoryGet2 getParam{};
+    getParam.slot_id = 1;
+    getParam.data = &getMemData;
+    EXPECT_EQ(sceSaveDataGetSaveDataMemory2(&getParam), SAVE_DATA_OK);
+
+    EXPECT_EQ(std::string(readBuf.data(), readBuf.size()), blobData);
+
+    EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
+}
+
+TEST_F(SaveDataFidelityTest, DirNameSearchPatternMatching) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    // Populate several save directories
+    std::error_code ec;
+    std::filesystem::create_directories(TempDir() / "SAVE0001", ec);
+    std::filesystem::create_directories(TempDir() / "SAVE0002", ec);
+    std::filesystem::create_directories(TempDir() / "AUTOSAVE", ec);
+    std::filesystem::create_directories(TempDir() / "CONFIG", ec);
+
+    // Search with "SAVE%" pattern
+    SceSaveDataDirName pattern = MakeDirName("SAVE%");
+    SaveDataDirNameSearchCond cond{};
+    cond.dir_name = &pattern;
+
+    SceSaveDataDirName matchedDirs[10]{};
+    SaveDataDirNameSearchResult searchResult{};
+    searchResult.dir_names = matchedDirs;
+    searchResult.dir_names_num = 10;
+
+    ASSERT_EQ(sceSaveDataDirNameSearch(&cond, &searchResult), SAVE_DATA_OK);
+    EXPECT_EQ(searchResult.hit_num, 2u);
+
+    // Search with single character wildcards "SAVE____"
+    pattern = MakeDirName("SAVE____");
+    ASSERT_EQ(sceSaveDataDirNameSearch(&cond, &searchResult), SAVE_DATA_OK);
+    EXPECT_EQ(searchResult.hit_num, 2u);
+
+    // Search with wildcard "%" matches all 4 directories
+    pattern = MakeDirName("%");
+    ASSERT_EQ(sceSaveDataDirNameSearch(&cond, &searchResult), SAVE_DATA_OK);
+    EXPECT_EQ(searchResult.hit_num, 4u);
+
+    // Exact match
+    pattern = MakeDirName("AUTOSAVE");
+    ASSERT_EQ(sceSaveDataDirNameSearch(&cond, &searchResult), SAVE_DATA_OK);
+    EXPECT_EQ(searchResult.hit_num, 1u);
+    EXPECT_STREQ(matchedDirs[0].data, "AUTOSAVE");
+
+    // Non-matching pattern
+    pattern = MakeDirName("NONEXISTENT%");
+    ASSERT_EQ(sceSaveDataDirNameSearch(&cond, &searchResult), SAVE_DATA_OK);
+    EXPECT_EQ(searchResult.hit_num, 0u);
+
+    EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
+}
+
+TEST_F(SaveDataFidelityTest, ParamAndIconRoundTrip) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    SceSaveDataDirName dirName = MakeDirName("PARAM_ICON_TEST");
+    SaveDataMount3 mount{};
+    mount.dir_name = &dirName;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE2;
+    mount.blocks = 100;
+
+    SaveDataMountResult result{};
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+
+    // Set parameters
+    const char title[] = "Dreaming Sarah Chapter 1";
+    const char subTitle[] = "Sub-title text";
+    const char detail[] = "Detailed save description at checkpoint";
+    uint32_t userParam = 0x12345678;
+
+    EXPECT_EQ(sceSaveDataSetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_TITLE, title, sizeof(title)), SAVE_DATA_OK);
+    EXPECT_EQ(sceSaveDataSetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_SUB_TITLE, subTitle, sizeof(subTitle)), SAVE_DATA_OK);
+    EXPECT_EQ(sceSaveDataSetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_DETAIL, detail, sizeof(detail)), SAVE_DATA_OK);
+    EXPECT_EQ(sceSaveDataSetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_USER_PARAM, &userParam, sizeof(userParam)), SAVE_DATA_OK);
+
+    // Get parameters back and verify
+    char outTitle[128]{};
+    size_t gotSize = 0;
+    EXPECT_EQ(sceSaveDataGetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_TITLE, outTitle, sizeof(outTitle), &gotSize), SAVE_DATA_OK);
+    EXPECT_STREQ(outTitle, title);
+
+    char outSubTitle[128]{};
+    EXPECT_EQ(sceSaveDataGetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_SUB_TITLE, outSubTitle, sizeof(outSubTitle), &gotSize), SAVE_DATA_OK);
+    EXPECT_STREQ(outSubTitle, subTitle);
+
+    char outDetail[1024]{};
+    EXPECT_EQ(sceSaveDataGetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_DETAIL, outDetail, sizeof(outDetail), &gotSize), SAVE_DATA_OK);
+    EXPECT_STREQ(outDetail, detail);
+
+    uint32_t outUserParam = 0;
+    EXPECT_EQ(sceSaveDataGetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_USER_PARAM, &outUserParam, sizeof(outUserParam), &gotSize), SAVE_DATA_OK);
+    EXPECT_EQ(outUserParam, userParam);
+
+    // Save and load icon
+    const uint8_t fakeIcon[] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02, 0x03 };
+    SaveDataIcon icon{};
+    icon.buf = const_cast<uint8_t*>(fakeIcon);
+    icon.data_size = sizeof(fakeIcon);
+    icon.buf_size = sizeof(fakeIcon);
+    EXPECT_EQ(sceSaveDataSaveIcon(&result.mount_point, &icon), SAVE_DATA_OK);
+
+    uint8_t loadedIconBuf[32]{};
+    SaveDataIcon loadIcon{};
+    loadIcon.buf = loadedIconBuf;
+    loadIcon.buf_size = sizeof(loadedIconBuf);
+    EXPECT_EQ(sceSaveDataLoadIcon(&result.mount_point, &loadIcon), SAVE_DATA_OK);
+    EXPECT_EQ(loadIcon.data_size, sizeof(fakeIcon));
+    EXPECT_EQ(std::memcmp(loadedIconBuf, fakeIcon, sizeof(fakeIcon)), 0);
+
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+    EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
+}
+
+TEST_F(SaveDataFidelityTest, DialogStateTransitionsAndCommonDialogUsed) {
+    EXPECT_FALSE(sceCommonDialogIsUsed());
+
+    ASSERT_EQ(sceSaveDataDialogInitialize(), SAVE_DATA_DIALOG_OK);
+    EXPECT_EQ(sceSaveDataDialogGetStatus(), SAVE_DATA_DIALOG_STATUS_INITIALIZED);
+
+    // 1. Unknown dialog mode rejects with Cancel
+    SaveDataDialogParam badParam{};
+    badParam.mode = 999;
+    ASSERT_EQ(sceSaveDataDialogOpen(&badParam), SAVE_DATA_DIALOG_OK);
+    EXPECT_TRUE(sceCommonDialogIsUsed());
+    EXPECT_EQ(sceSaveDataDialogGetStatus(), SAVE_DATA_DIALOG_STATUS_RUNNING);
+
+    // UpdateStatus finishes to FINISHED
+    EXPECT_EQ(sceSaveDataDialogUpdateStatus(), SAVE_DATA_DIALOG_STATUS_FINISHED);
+    SaveDataDialogResult result{};
+    EXPECT_EQ(sceSaveDataDialogGetResult(&result), SAVE_DATA_DIALOG_OK);
+    EXPECT_NE(result.result, SAVE_DATA_DIALOG_RESULT_OK); // Must not be silent OK
+
+    EXPECT_EQ(sceSaveDataDialogClose(nullptr), SAVE_DATA_DIALOG_OK);
+    EXPECT_FALSE(sceCommonDialogIsUsed());
+
+    // 2. List-load with no saves returns Cancel
+    SaveDataDialogParam loadParam{};
+    loadParam.mode = 5; // Load dialog
+    ASSERT_EQ(sceSaveDataDialogOpen(&loadParam), SAVE_DATA_DIALOG_OK);
+    EXPECT_TRUE(sceCommonDialogIsUsed());
+    EXPECT_EQ(sceSaveDataDialogUpdateStatus(), SAVE_DATA_DIALOG_STATUS_FINISHED);
+    EXPECT_EQ(sceSaveDataDialogGetResult(&result), SAVE_DATA_DIALOG_OK);
+    EXPECT_NE(result.result, SAVE_DATA_DIALOG_RESULT_OK); // Cancelled because no saves exist
+    EXPECT_EQ(sceSaveDataDialogClose(nullptr), SAVE_DATA_DIALOG_OK);
+
+    // 3. Create a save directory and verify list-load selects newest
+    std::error_code ec;
+    std::filesystem::create_directories(TempDir() / "SAVE_OLD", ec);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::filesystem::create_directories(TempDir() / "SAVE_NEWEST", ec);
+
+    SaveDataDirName outDirName{};
+    result = SaveDataDialogResult{};
+    result.dir_name = &outDirName;
+
+    ASSERT_EQ(sceSaveDataDialogOpen(&loadParam), SAVE_DATA_DIALOG_OK);
+    EXPECT_EQ(sceSaveDataDialogUpdateStatus(), SAVE_DATA_DIALOG_STATUS_FINISHED);
+    EXPECT_EQ(sceSaveDataDialogGetResult(&result), SAVE_DATA_DIALOG_OK);
+    EXPECT_EQ(result.result, SAVE_DATA_DIALOG_RESULT_OK);
+    EXPECT_STREQ(outDirName.data, "SAVE_NEWEST");
+
+    EXPECT_EQ(sceSaveDataDialogClose(nullptr), SAVE_DATA_DIALOG_OK);
+    EXPECT_FALSE(sceCommonDialogIsUsed());
+
+    EXPECT_EQ(sceSaveDataDialogTerminate(), SAVE_DATA_DIALOG_OK);
+}
+
+TEST_F(SaveDataFidelityTest, DeathTestCorruptMountModeAborts) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    SceSaveDataDirName dirName = MakeDirName("DEATH_TEST");
+    SaveDataMount3 mount{};
+    mount.dir_name = &dirName;
+    mount.mount_mode = 0xFFFF; // Corrupt mount mode
+
+    SaveDataMountResult result{};
+    EXPECT_DEATH(sceSaveDataMount3(&mount, &result), ".*");
+}
+
+TEST_F(SaveDataFidelityTest, DeathTestTransferringMountAborts) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+
+    SceSaveDataDirName dirName = MakeDirName("TRANSFER_TEST");
+    SaveDataTransferringMount mount{};
+    mount.dir_name = &dirName;
+
+    SaveDataMountResult result{};
+    EXPECT_DEATH(sceSaveDataTransferringMount(&mount, &result), ".*");
+}
+
+} // namespace
