@@ -243,16 +243,22 @@ TEST(WriteTracker, CollectTracksRealWrites) {
     EXPECT_TRUE(VirtualFree(memory, 0, MEM_RELEASE));
 }
 
-// Plain (non-write-watch) heap memory cannot be walked: Collect reports
-// unknown instead of fabricating generations from unreadable state.
+// Plain committed memory without MEM_WRITE_WATCH cannot be walked:
+// GetWriteWatch requires write-watch pages, so Collect reports unknown
+// instead of fabricating generations from unreadable state. VirtualAlloc
+// (page-aligned by construction) is used instead of heap storage so the
+// range under test has exact page geometry.
 TEST(WriteTracker, CollectUnknownOnPlainMemory) {
-    std::vector<char> buffer(65536, 0);
-    const std::uint64_t base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(buffer.data()));
+    constexpr std::size_t kBytes = 65536;
+    void* memory = VirtualAlloc(nullptr, kBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    ASSERT_NE(memory, nullptr);
+    const std::uint64_t base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory));
     WriteWatchTracker tracker;
-    ASSERT_TRUE(tracker.Init(base, static_cast<std::uint64_t>(buffer.size())));
-    buffer[0] = 1;
-    EXPECT_EQ(tracker.Collect(base, static_cast<std::uint64_t>(buffer.size())), 0U);
+    ASSERT_TRUE(tracker.Init(base, kBytes));
+    static_cast<volatile char*>(memory)[0] = 1;
+    EXPECT_EQ(tracker.Collect(base, kBytes), 0U);
     EXPECT_EQ(tracker.UnknownWalks(), 1U);
+    EXPECT_TRUE(VirtualFree(memory, 0, MEM_RELEASE));
 }
 
 // Unaligned Collect must size its dirty-page buffer from the page-aligned
