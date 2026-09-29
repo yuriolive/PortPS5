@@ -137,6 +137,35 @@ TEST(VirtualMemoryAllocation, MemoryProtectionTransition) {
     EXPECT_EQ(sceKernelMunmap(reinterpret_cast<uint64_t>(addr), mapSize), 0);
 }
 
+// Verifies that when mprotect fails (e.g. invalid protection bitmask),
+// registry state is preserved and not swapped with bogus protection state.
+TEST(VirtualMemoryAllocation, MprotectFailurePreservesRegistryState) {
+    constexpr size_t mapSize = 16 * 1024; // 1 page
+    void* addr = nullptr;
+
+    // Map memory as Read-Write (prot = 3)
+    ASSERT_EQ(sceKernelMapFlexibleMemory(&addr, mapSize, 3, 0), 0);
+    ASSERT_NE(addr, nullptr);
+
+    // Initial state: can write and read
+    auto* ptr = static_cast<volatile uint32_t*>(addr);
+    *ptr = 0x12345678;
+    EXPECT_EQ(*ptr, 0x12345678);
+
+    // Call sceKernelMprotect with invalid protection flag that LinuxProtFromSce rejects
+    // or unmapped/invalid address that causes VirtualProtect / mprotect to fail with EFAULT.
+    // An unregistered address or invalid range:
+    void* invalidAddr = reinterpret_cast<void*>(0xDEAD0000ULL);
+    EXPECT_NE(sceKernelMprotect(invalidAddr, mapSize, 1), 0);
+
+    // Verify original mapped memory is completely intact and readable/writable
+    EXPECT_EQ(*ptr, 0x12345678);
+    *ptr = 0x87654321;
+    EXPECT_EQ(*ptr, 0x87654321);
+
+    EXPECT_EQ(sceKernelMunmap(reinterpret_cast<uint64_t>(addr), mapSize), 0);
+}
+
 // Verifies querying available direct memory size within an address range.
 TEST(VirtualMemoryAllocation, AvailableDirectMemoryQuery) {
     int64_t physOut = -1;

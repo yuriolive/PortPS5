@@ -42,20 +42,21 @@ struct PhysicalMemoryPool {
         std::lock_guard<std::mutex> lock(_mutex);
         _mark(start, len, false);
 
-        // Find and split or erase range tracking
+        // Walk every _ranges entry that overlaps [start, end), trimming or erasing each one.
+        const uint64_t end = start + len;
         auto it = _ranges.upper_bound(start);
-        if (it == _ranges.begin()) return;
-        --it;
-        if (start < it->second.start || start >= it->second.end) return;
-
-        DirectMemoryBlock block = it->second;
-        _ranges.erase(it);
-
-        if (start > block.start) {
-            _ranges[block.start] = {block.start, start, block.memoryType};
+        if (it != _ranges.begin() && std::prev(it)->second.end > start) {
+            --it;
         }
-        if (start + len < block.end) {
-            _ranges[start + len] = {start + len, block.end, block.memoryType};
+        while (it != _ranges.end() && it->second.start < end) {
+            DirectMemoryBlock b = it->second;
+            it = _ranges.erase(it);
+            if (b.start < start) {
+                _ranges[b.start] = {b.start, start, b.memoryType};
+            }
+            if (b.end > end) {
+                _ranges[end] = {end, b.end, b.memoryType};
+            }
         }
     }
 

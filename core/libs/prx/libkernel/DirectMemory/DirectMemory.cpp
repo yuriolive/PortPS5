@@ -209,13 +209,17 @@ int DoMprotect(const void* addr, size_t len, int prot) {
 #else
         mutation.RegisterMainImage();
 #endif
-        int applyRet = 0;
-        mutation.Protect(pointer, bytes, (prot & 3) != 0, (prot & 2) != 0, [&] {
-            if (mprotect(const_cast<void*>(pointer), bytes, nativeProtection) != 0) {
-                applyRet = SCE_KERNEL_ERROR_EFAULT;
-            }
-        });
-        return applyRet;
+        struct ProtectFailed {};
+        try {
+            mutation.Protect(pointer, bytes, (prot & 3) != 0, (prot & 2) != 0, [&] {
+                if (mprotect(const_cast<void*>(pointer), bytes, nativeProtection) != 0) {
+                    throw ProtectFailed{};
+                }
+            });
+        } catch (const ProtectFailed&) {
+            return SCE_KERNEL_ERROR_EFAULT;
+        }
+        return 0;
     } catch (...) {
         return SCE_KERNEL_ERROR_EINVAL;
     }

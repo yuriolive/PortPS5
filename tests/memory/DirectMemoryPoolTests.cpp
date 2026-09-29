@@ -14,6 +14,8 @@ namespace {
 
 using namespace PortPS5::Testing;
 
+// Verifies that allocating physical direct memory tracks the range extent,
+// permits querying exact and interior offsets, and properly invalidates tracking upon release.
 TEST(DirectMemoryPool, AllocTracksBlockAndQueries) {
     constexpr size_t size = 64 * 1024; // 64 KB = 4 pages
     constexpr size_t alignment = 16 * 1024;
@@ -46,6 +48,7 @@ TEST(DirectMemoryPool, AllocTracksBlockAndQueries) {
     EXPECT_FALSE(found);
 }
 
+// Verifies that freeing a sub-range within an allocated block splits the range into valid sub-blocks.
 TEST(DirectMemoryPool, PartialFreeSplitsBlock) {
     constexpr size_t size = 64 * 1024; // 4 pages
     int64_t physAddr = -1;
@@ -77,6 +80,7 @@ TEST(DirectMemoryPool, PartialFreeSplitsBlock) {
     DirectMemoryFree(physAddr + 2 * PS5_PAGE_SIZE, 2 * PS5_PAGE_SIZE);
 }
 
+// Verifies memory pool batch operations (commit and protect) and block statistics retrieval.
 TEST(DirectMemoryPool, MemoryPoolBatchAndStats) {
     void* addr = nullptr;
     constexpr size_t reserveSize = 2 * 1024 * 1024; // 2 MB = 1 pool block
@@ -110,6 +114,31 @@ TEST(DirectMemoryPool, MemoryPoolBatchAndStats) {
     // Decommit and release
     EXPECT_EQ(sceKernelMemoryPoolDecommit(addr, 64 * 1024, 0), 0);
     EXPECT_EQ(sceKernelMunmap(reinterpret_cast<uint64_t>(addr), reserveSize), 0);
+}
+
+// Verifies that a free operation spanning across multiple allocated blocks trims and clears all overlapping entries.
+TEST(DirectMemoryPool, FreeSpanningMultipleBlocksClearsRanges) {
+    constexpr size_t size = 64 * 1024; // 64 KB = 4 pages
+    constexpr size_t alignment = 16 * 1024;
+    int64_t physAddr1 = -1;
+    int64_t physAddr2 = -1;
+
+    // Allocate two adjacent direct memory blocks
+    ASSERT_EQ(DirectMemoryAlloc(0, 1024 * 1024 * 1024, size, alignment, 1, &physAddr1), 0);
+    ASSERT_EQ(DirectMemoryAlloc(0, 1024 * 1024 * 1024, size, alignment, 2, &physAddr2), 0);
+
+    DirectMemoryBlock block{};
+    EXPECT_TRUE(DirectMemoryQueryBlock(static_cast<uint64_t>(physAddr1), &block));
+    EXPECT_TRUE(DirectMemoryQueryBlock(static_cast<uint64_t>(physAddr2), &block));
+
+    // Release spanning across both blocks partially or completely
+    uint64_t minAddr = std::min(static_cast<uint64_t>(physAddr1), static_cast<uint64_t>(physAddr2));
+    uint64_t maxAddr = std::max(static_cast<uint64_t>(physAddr1), static_cast<uint64_t>(physAddr2)) + size;
+    DirectMemoryFree(static_cast<int64_t>(minAddr), static_cast<size_t>(maxAddr - minAddr));
+
+    // Neither block should exist in _ranges anymore
+    EXPECT_FALSE(DirectMemoryQueryBlock(static_cast<uint64_t>(physAddr1), &block));
+    EXPECT_FALSE(DirectMemoryQueryBlock(static_cast<uint64_t>(physAddr2), &block));
 }
 
 } // namespace
