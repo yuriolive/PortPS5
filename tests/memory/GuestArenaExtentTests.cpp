@@ -236,9 +236,14 @@ TEST(GuestArenaExtent, FailedOpsPreserveFreeSet) {
     EXPECT_EQ(tree.Allocate(0x10001ULL, 1ULL), 0ULL);
     EXPECT_EQ(tree.Allocate(0ULL, 1ULL), 0ULL);
     EXPECT_EQ(tree.Allocate(0x100ULL, 3ULL), 0ULL);
-    // Failing frees: outside the arena, inside a free extent (unknown).
+    // Failing frees: outside the arena, inside a free extent (unknown), and
+    // sub-ranges of the live allocation (never returned as a whole: head
+    // slice, tail slice, overhang). The sub-range cases were accepted before
+    // ownership tracking and would have aliased live guest memory.
     EXPECT_FALSE(tree.Free(0x50000ULL, 0x1000ULL));
     EXPECT_FALSE(tree.Free(0x15000ULL, 0x1000ULL));
+    EXPECT_FALSE(tree.Free(live, 0x800ULL));
+    EXPECT_FALSE(tree.Free(live + 0x800ULL, 0x800ULL));
     EXPECT_EQ(snapshot(), before);
     // Drained-arena variant: with no free extents left, an oversized Free
     // must still be rejected (it previously slipped past the overlap checks
@@ -254,6 +259,28 @@ TEST(GuestArenaExtent, FailedOpsPreserveFreeSet) {
     ASSERT_TRUE(tree.Free(live, 0x1000ULL));
     EXPECT_FALSE(tree.Free(live, 0x1000ULL));  // double free
     EXPECT_EQ(tree.Allocate(0x10000ULL, 1ULL), 0x10000ULL);
+}
+
+// Verifies a ForEachFree visitor may call back into the same allocator: the
+// traversal runs over a snapshot, so extents allocated mid-visit cannot
+// corrupt the iteration (previously resuming through a deleted node's right
+// pointer was use-after-free).
+TEST(GuestArenaExtent, ForEachFreeReentrantVisitorSafe) {
+    PortPS5::GuestMemory::ExtentAllocator tree;
+    ASSERT_TRUE(tree.Init(0x10000ULL, 0x10000ULL));
+    std::uint64_t visited = 0;
+    tree.ForEachFree([&](std::uint64_t, std::uint64_t) {
+        ++visited;
+        if (visited == 1) {
+            EXPECT_EQ(tree.Allocate(0x1000ULL, 1ULL), 0x10000ULL);
+        }
+    });
+    // Snapshot semantics: exactly the one pre-visit extent is observed, even
+    // though the tree changed underneath.
+    EXPECT_EQ(visited, 1ULL);
+    // Tree stays coherent: the remainder is one extent serving the rest.
+    EXPECT_EQ(tree.FreeExtentCount(), 1ULL);
+    EXPECT_EQ(tree.Allocate(0xF000ULL, 1ULL), 0x11000ULL);
 }
 
 // Verifies the tree returns bit-identical addresses to the reference linear
@@ -273,6 +300,43 @@ TEST(GuestArenaExtent, MatchesLinearScanFuzz) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> live;
     live.reserve(8192);
     for (int i = 0; i < kOps; ++i) {
+        const std::uint64_t roll = rng.Next() % 100;
+        if (roll < 4 && !live.empty()) {
+            // Invalid-free probe: corrupt a live entry's base or size, or
+            // probe inside a free gap. Both implementations must reject
+            // without mutating (ownership gate). Skipped when the corrupted
+            // range accidentally matches a live entry exactly.
+            const auto [lb, ls] = live[static_cast<std::size_t>(rng.Next() % live.size())];
+            std::uint64_t fb = lb;
+            std::uint64_t fs = ls;
+            if (rng.Next() % 2) {
+                fb = lb + 1 + rng.Next() % 255;
+            } else {
+                fs = ls + 1 + rng.Next() % 255;
+            }
+            bool exact = false;
+            for (const auto& e : live) {
+                exact = exact || (e.first == fb && e.second == fs);
+            }
+            if (exact) {
+                continue;
+            }
+            EXPECT_FALSE(model.Free(fb, fs)) << "op " << i << " model accepted invalid free";
+            EXPECT_FALSE(tree.Free(fb, fs)) << "op " << i << " base=" << fb << " size=" << fs;
+            continue;
+        }
+        if (roll < 8) {
+            // Invalid-alloc probe: both implementations return 0.
+            std::uint64_t bytes = 0x100ULL;
+            std::uint64_t align = 3ULL;  // non-pow2
+            switch (rng.Next() % 3) {
+                case 0: bytes = 0ULL; align = 1ULL; break;
+                case 1: bytes = 0x100ULL; align = 3ULL; break;
+                default: bytes = kSize * 2ULL; align = 1ULL; break;  // oversized
+            }
+            EXPECT_EQ(tree.Allocate(bytes, align), model.Allocate(bytes, align)) << "op " << i;
+            continue;
+        }
         const bool doAlloc = live.empty() || (rng.Next() % 100) < 70;
         if (doAlloc) {
             // Size mix: tiny grains, 16 KiB-page multiples, and large spans.

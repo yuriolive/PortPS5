@@ -141,6 +141,17 @@ ExtentAllocator::Node* ExtentAllocator::EraseKey(Node*& slot, std::uint64_t key)
     return removed;
 }
 
+// Exact-key lookup; returns the node or nullptr.
+ExtentAllocator::Node* ExtentAllocator::Find(Node* slot, std::uint64_t key) noexcept {
+    while (slot != nullptr) {
+        if (key == slot->base) {
+            return slot;
+        }
+        slot = (key < slot->base) ? slot->left : slot->right;
+    }
+    return nullptr;
+}
+
 // Smallest node with base >= key, or nullptr.
 ExtentAllocator::Node* ExtentAllocator::LowerBound(Node* slot, std::uint64_t key) noexcept {
     Node* best = nullptr;
@@ -189,7 +200,9 @@ void ExtentAllocator::InOrder(const Node* slot, void* fn, VisitorC visit) {
 
 ExtentAllocator::~ExtentAllocator() {
     Destroy(root_);
+    Destroy(liveRoot_);
     root_ = nullptr;
+    liveRoot_ = nullptr;
 }
 
 bool ExtentAllocator::Init(std::uint64_t base, std::uint64_t bytes) noexcept {
@@ -205,6 +218,8 @@ bool ExtentAllocator::Init(std::uint64_t base, std::uint64_t bytes) noexcept {
         return false;
     }
     Destroy(root_);
+    Destroy(liveRoot_);
+    liveRoot_ = nullptr;
     priorityCounter_ = 1;  // priority stream restarts deterministically
     // Bounds are published only once the tree is non-empty, so Contains can
     // tell an uninitialized allocator from an empty arena by testing
@@ -259,14 +274,14 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
     // risking a tighter-but-unsafe prune bound here.
     // Local struct inside a member function: it sees private Node.
     struct Search {
-        static bool Run(Node*& slot, std::uint64_t bytes, std::uint64_t alignment, std::uint64_t& prio,
+        static bool Run(Node*& slot, std::uint64_t bytes, std::uint64_t alignment, Node*& liveRoot, std::uint64_t& prio,
                         std::uint64_t& out) noexcept {
             Node* node = slot;
             if (node == nullptr || node->maxSub < bytes) {
                 return false;
             }
             if (node->left != nullptr && node->left->maxSub >= bytes) {
-                if (Run(node->left, bytes, alignment, prio, out)) {
+                if (Run(node->left, bytes, alignment, liveRoot, prio, out)) {
                     Refresh(node);
                     return true;
                 }
@@ -279,11 +294,10 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                 const std::uint64_t pad = aligned - node->base;
                 if (pad <= node->size && bytes <= node->size - pad) {
                     out = aligned;
-                    // Transactional carve: both remainder nodes are allocated
-                    // BEFORE the original extent is removed, so a nothrow
-                    // failure returns false with the tree untouched
-                    // (previously the extent was deleted first and the
-                    // allocation-sized range leaked from the free tree).
+                    // Transactional carve: the remainder nodes AND the live
+                    // ownership record are allocated BEFORE the original
+                    // extent is removed, so a nothrow failure returns false
+                    // with both trees untouched.
                     const std::uint64_t extentEnd = node->base + node->size;
                     const std::uint64_t allocEnd = aligned + bytes;
                     const std::uint64_t prefixBase = node->base;
@@ -293,6 +307,7 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                     const std::uint64_t suffixSize = extentEnd - allocEnd;
                     Node* pre = nullptr;
                     Node* suf = nullptr;
+                    Node* live = nullptr;
                     if (prefixSize != 0) {
                         pre = new (std::nothrow) Node{prefixBase, prefixSize, prefixSize, MixPriority(++prio)};
                         if (pre == nullptr) {
@@ -306,6 +321,12 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                             return false;
                         }
                     }
+                    live = new (std::nothrow) Node{aligned, bytes, bytes, MixPriority(++prio)};
+                    if (live == nullptr) {
+                        delete pre;
+                        delete suf;
+                        return false;
+                    }
                     Node* merged = Merge(node->left, node->right);
                     delete node;
                     slot = merged;
@@ -315,11 +336,12 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                     if (suf != nullptr) {
                         InsertNode(slot, suf);
                     }
+                    InsertNode(liveRoot, live);
                     return true;
                 }
             }
             if (node->right != nullptr && node->right->maxSub >= bytes) {
-                if (Run(node->right, bytes, alignment, prio, out)) {
+                if (Run(node->right, bytes, alignment, liveRoot, prio, out)) {
                     Refresh(node);
                     return true;
                 }
@@ -329,7 +351,7 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
     };
 
     std::uint64_t out = 0;
-    if (!Search::Run(root_, bytes, alignment, priorityCounter_, out)) {
+    if (!Search::Run(root_, bytes, alignment, liveRoot_, priorityCounter_, out)) {
         return 0;
     }
     return out;
@@ -339,17 +361,28 @@ bool ExtentAllocator::Free(std::uint64_t base, std::uint64_t bytes) noexcept {
     if (!RangeValid(base, bytes) || !Contains(base, bytes)) {
         return false;
     }
+    // Ownership gate: only an exact live allocation may be returned. Without
+    // this, any non-free range (a sub-range of live memory, a never-
+    // allocated gap) would enter the free tree and a later Allocate could
+    // overlap live guest memory.
+    Node* live = Find(liveRoot_, base);
+    if (live == nullptr || live->size != bytes) {
+        return false;
+    }
     const std::uint64_t end = base + bytes;
     Node* prev = Predecessor(root_, base);
     Node* next = LowerBound(root_, base);
+    // With the live gate above, a same-base free extent can no longer exist,
+    // but the overlap checks stay as defense in depth (they are also what
+    // keep a corrupted live set from aliasing free memory).
     if (next != nullptr && next->base == base) {
-        return false;  // exact-base free extent exists: double free
+        return false;
     }
     if (prev != nullptr && prev->base + prev->size > base) {
-        return false;  // overlaps a free extent on the left
+        return false;
     }
     if (next != nullptr && end > next->base) {
-        return false;  // overlaps a free extent on the right
+        return false;
     }
     std::uint64_t newBase = base;
     std::uint64_t newSize = bytes;
@@ -364,14 +397,15 @@ bool ExtentAllocator::Free(std::uint64_t base, std::uint64_t bytes) noexcept {
     if (swallowNext) {
         newSize += next->size;
     }
-    // Transactional insert: the replacement node is allocated BEFORE the
-    // neighbours are removed, so a nothrow failure returns false with the
-    // tree untouched (previously erased extents were lost, contradicting the
-    // documented state-untouched contract).
+    // Transactional insert: the replacement node is allocated BEFORE
+    // anything is removed, so a nothrow failure returns false with both
+    // trees untouched.
     Node* node = new (std::nothrow) Node{newBase, newSize, newSize, MixPriority(++priorityCounter_)};
     if (node == nullptr) {
         return false;
     }
+    Node* removedLive = EraseKey(liveRoot_, base);
+    delete removedLive;
     if (swallowPrev) {
         Node* removed = EraseKey(root_, prev->base);
         delete removed;

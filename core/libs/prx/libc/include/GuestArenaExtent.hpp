@@ -13,6 +13,8 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GUESTARENAEXTENT_HPP
 
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace PortPS5::GuestMemory {
 
@@ -22,10 +24,11 @@ struct FreeExtent {
     std::uint64_t size = 0;
 };
 
-// Address-ordered first-fit allocator over free extents.
+// Address-ordered first-fit allocator over free extents, with ownership
+// tracking over live allocations.
 //
-// The tree is a treap keyed by base address, each node augmented with the
-// largest free extent in its subtree (the Linux rb_subtree_gap technique
+// The free tree is a treap keyed by base address, each node augmented with
+// the largest free extent in its subtree (the Linux rb_subtree_gap technique
 // from the spec, with a treap instead of an rbtree for compactness).
 // Search prunes only subtrees whose maximum is smaller than the request,
 // which is a universally necessary condition, so pruning can never skip a
@@ -33,6 +36,13 @@ struct FreeExtent {
 // uses a weaker bound than the spec's bytes+align-16KiB hint, which is only
 // safe when every extent base is 16 KiB-aligned AND the waste is maximal;
 // see the implementation for the counterexample. Raised as spec question.
+//
+// Ownership: every successful Allocate records [base, size) in a live set
+// (a second treap reusing the same node type); Free requires an exact match
+// and removes it. A range the allocator never returned — including a
+// sub-range of a live allocation — is rejected, so a caller bug fails loudly
+// instead of aliasing live guest memory. (Fixed mappings from the future
+// MarkUsed op record here too, so they free uniformly — wiring PR.)
 class ExtentAllocator {
 public:
     ExtentAllocator() = default;
@@ -48,12 +58,14 @@ public:
     // Lowest-address fit for bytes at a pow2 alignment, or 0 on failure.
     // 0 is never a valid guest address (arena lives above 1 TiB), so it is
     // an unambiguous failure sentinel. bytes == 0 or non-pow2 align fails.
+    // Success records the range in the live set (see class comment).
     [[nodiscard]] std::uint64_t Allocate(std::uint64_t bytes, std::uint64_t alignment) noexcept;
 
-    // Returns [base, base + bytes) to the free set, coalescing neighbours.
-    // Every failure mode (unknown range, overlap with a free extent such as
-    // a double free, out-of-arena or wrapping range, replacement-node
-    // allocation failure) returns false with the tree untouched.
+    // Returns exactly the [base, size) range a previous Allocate returned,
+    // coalescing with neighbouring free extents. Any other range — unknown,
+    // a sub-range of a live allocation, a double free, out-of-arena or
+    // wrapping — returns false with the tree untouched, as does a
+    // replacement-node allocation failure.
     [[nodiscard]] bool Free(std::uint64_t base, std::uint64_t bytes) noexcept;
 
     // True when [address, address + bytes) lies inside the arena bounds.
@@ -65,20 +77,28 @@ public:
     // Test-only introspection: calls visit(base, size) per free extent in
     // ascending address order. Used by the differential test to compare
     // against the reference model's free set. Not for hot paths.
+    // Reentrancy-safe: extents are snapshotted before the first visit, so a
+    // visitor may call back into the allocator (tests do) without crashing
+    // on nodes deleted mid-traversal; the visitor observes the snapshot.
     template <typename Fn>
     void ForEachFree(Fn visit) const {
-        ForEachFreeImpl(&visit, &CallVisitor<Fn>);
+        // Snapshot first (may throw bad_alloc on OOM); the traversal itself
+        // then touches no live tree state.
+        std::vector<FreeExtent> snapshot;
+        ForEachFreeImpl(&snapshot, &AppendExtent);
+        for (const auto& extent : snapshot) {
+            visit(extent.base, extent.size);
+        }
     }
 
 private:
     struct Node;
 
-    template <typename Fn>
-    static void CallVisitor(void* fn, std::uint64_t base, std::uint64_t size) {
-        (*static_cast<Fn*>(fn))(base, size);
+    static void AppendExtent(void* out, std::uint64_t base, std::uint64_t size) {
+        static_cast<std::vector<FreeExtent>*>(out)->push_back(FreeExtent{base, size});
     }
-    using VisitorC = void (*)(void* fn, std::uint64_t base, std::uint64_t size);
-    void ForEachFreeImpl(void* fn, VisitorC visit) const;
+
+    using VisitorC = void (*)(void* fn, std::uint64_t base, std::uint64_t size);    void ForEachFreeImpl(void* fn, VisitorC visit) const;
 
     // Treap primitives (private static members so they can name Node).
     static void Refresh(Node* node) noexcept;
@@ -89,10 +109,13 @@ private:
     static Node* EraseKey(Node*& slot, std::uint64_t key) noexcept;
     static Node* LowerBound(Node* slot, std::uint64_t key) noexcept;
     static Node* Predecessor(Node* slot, std::uint64_t key) noexcept;
+    // Exact-key lookup; returns the node or nullptr.
+    static Node* Find(Node* slot, std::uint64_t key) noexcept;
     static void Destroy(Node* slot) noexcept;
     static void InOrder(const Node* slot, void* fn, VisitorC visit);
 
-    Node* root_ = nullptr;
+    Node* root_ = nullptr;      // free extents, keyed by base
+    Node* liveRoot_ = nullptr;  // live allocations, keyed by base
     std::uint64_t arenaBase_ = 0;
     std::uint64_t arenaEnd_ = 0;
     std::uint64_t priorityCounter_ = 0;
