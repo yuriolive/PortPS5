@@ -170,6 +170,9 @@ bool WriteWatchTracker::Init(std::uint64_t base, std::uint64_t bytes, const Page
     }
     const std::uint64_t count = (bytes + kTrackerShardBytes - 1) / kTrackerShardBytes;
     GenShard* shards = new (std::nothrow) GenShard[count];
+    // Nothrow array-new returns null on allocation failure (no custom
+    // operator new in this tree changes that), so this check is load-bearing:
+    // do not remove it to silence static analysis.
     if (shards == nullptr) {
         return false;
     }
