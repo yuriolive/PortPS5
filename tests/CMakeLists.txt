@@ -104,6 +104,20 @@ portps5_add_gtest(avplayer_state_machine_tests
         unit
 )
 
+# Exercise the same C/System V exports in the standalone non-native PRX.
+portps5_add_gtest(avplayer_exports_tests
+    SOURCES
+        avplayer/AvPlayerStateMachineTests.cpp
+    LIBRARIES
+        libSceAvPlayer
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Python unit tests for tools/check_comments.py — verifies the comment
 # policy linter logic (Rules 1-3) in isolation with no game data required.
 portps5_add_test(check_comments_unit_tests

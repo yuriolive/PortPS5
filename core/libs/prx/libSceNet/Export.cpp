@@ -54,7 +54,7 @@ struct Sock {
     bool nonblock = false;
     bool bound = false;
     bool listening = false;
-    std::uint64_t abort_gen = 0;
+    bool aborted = false;  // Sticky until the socket is closed; protected by g_mutex.
     std::uint16_t port = 0;  // network byte order
     std::uint32_t addr = 0;  // network byte order (IPv4)
     std::uint8_t addr6[16] = {};  // network byte order (IPv6)
@@ -136,17 +136,12 @@ int block_on(std::unique_lock<std::mutex>& lk, int fd, int timeout_us) {
     constexpr int INFINITE_WAIT_SLICE_US = 100000;  // 100 ms
     const auto deadline = std::chrono::steady_clock::now()
         + std::chrono::microseconds(timeout_us > 0 ? timeout_us : INFINITE_WAIT_SLICE_US);
-    auto it_init = g_socks.find(fd);
-    if (it_init == g_socks.end()) {
-        return fail(NET_EBADF);
-    }
-    const std::uint64_t start_gen = it_init->second.abort_gen;
     for (;;) {
         auto it = g_socks.find(fd);
         if (it == g_socks.end()) {
             return fail(NET_EBADF);
         }
-        if (it->second.abort_gen != start_gen) {
+        if (it->second.aborted) {
             return fail(NET_ECONNABORTED);
         }
         if (g_cv.wait_until(lk, deadline) == std::cv_status::timeout) {
@@ -245,7 +240,7 @@ int APS5_VABI sceNetSocketAbort(int s, int flags) {
     if (it == g_socks.end()) {
         return fail(NET_EBADF);
     }
-    ++it->second.abort_gen;
+    it->second.aborted = true;
     g_cv.notify_all();
     return 0;
 }
@@ -278,6 +273,9 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
         }
         std::memcpy(it->second.addr6, raw + 8, 16);
     } else if (family == NET_AF_INET || family == 0) {
+        if (it->second.family != NET_AF_INET) {
+            return fail(NET_EAFNOSUPPORT);
+        }
         std::uint32_t ip = 0;
         std::memcpy(&ip, raw + 4, 4);
         it->second.addr = ip;
@@ -289,7 +287,8 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
         port = allocate_ephemeral_port_locked(it->second.type);
     } else {
         for (const auto& kv : g_socks) {
-            if (kv.first != s && kv.second.bound && kv.second.port == port && kv.second.type == it->second.type) {
+            if (kv.first != s && kv.second.bound && kv.second.port == port && kv.second.type == it->second.type
+                && kv.second.family == it->second.family) {
                 return fail(NET_EADDRINUSE);
             }
         }
@@ -627,13 +626,20 @@ static int parse_ipv6_addr(const char* src, std::uint8_t* dst) {
         if (word_count >= 8) {
             return 0;
         }
-        char* endp = nullptr;
-        unsigned long val = std::strtoul(p, &endp, 16);
-        if (endp == p || val > 0xFFFFu) {
-            return 0;
+        std::uint16_t val = 0;
+        unsigned digits = 0;
+        while (*p != '\0' && *p != ':') {
+            unsigned digit;
+            if (*p >= '0' && *p <= '9') digit = *p - '0';
+            else if (*p >= 'a' && *p <= 'f') digit = *p - 'a' + 10;
+            else if (*p >= 'A' && *p <= 'F') digit = *p - 'A' + 10;
+            else return 0;
+            if (++digits > 4) return 0;
+            val = static_cast<std::uint16_t>((val << 4) | digit);
+            ++p;
         }
-        words[word_count++] = static_cast<std::uint16_t>(val);
-        p = endp;
+        if (digits == 0) return 0;
+        words[word_count++] = val;
         if (*p == ':') {
             if (*(p + 1) == ':') {
                 if (dc_index != -1) {
@@ -645,7 +651,7 @@ static int parse_ipv6_addr(const char* src, std::uint8_t* dst) {
                     break;
                 }
             } else {
-                p++;
+                if (*++p == '\0') return 0;  // A single colon must separate two groups.
             }
         } else if (*p != '\0') {
             return 0;
@@ -654,7 +660,7 @@ static int parse_ipv6_addr(const char* src, std::uint8_t* dst) {
 
     if (dc_index != -1) {
         const int num_to_insert = 8 - word_count;
-        if (num_to_insert < 0) {
+        if (num_to_insert < 1) {
             return 0;
         }
         std::uint16_t expanded[8] = {};

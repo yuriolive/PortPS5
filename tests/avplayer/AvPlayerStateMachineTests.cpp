@@ -21,18 +21,18 @@ int APS5_VABI sceAvPlayerPause(void* h);
 int APS5_VABI sceAvPlayerResume(void* h);
 int APS5_VABI sceAvPlayerStop(void* h);
 int APS5_VABI sceAvPlayerClose(void* h);
-int APS5_VABI sceAvPlayerIsActive(void* h);
+uint8_t APS5_VABI sceAvPlayerIsActive(void* h);
 uint64_t APS5_VABI sceAvPlayerCurrentTime(void* h);
 int APS5_VABI sceAvPlayerJumpToTime(void* h, uint64_t time_ms);
-int APS5_VABI sceAvPlayerSetLooping(void* h, int loop);
+int APS5_VABI sceAvPlayerSetLooping(void* h, uint8_t loop);
 int APS5_VABI sceAvPlayerSetTrickSpeed(void* h, int32_t trick_speed);
 int APS5_VABI sceAvPlayerStreamCount(void* h);
 int APS5_VABI sceAvPlayerEnableStream(void* h, uint32_t stream_id);
 int APS5_VABI sceAvPlayerDisableStream(void* h, uint32_t stream_id);
 int APS5_VABI sceAvPlayerGetStreamInfo(void* h, uint32_t stream_id, void* info);
-int APS5_VABI sceAvPlayerGetVideoData(void* h, void* video_info);
-int APS5_VABI sceAvPlayerGetVideoDataEx(void* h, void* video_info);
-int APS5_VABI sceAvPlayerGetAudioData(void* h, void* audio_info);
+uint8_t APS5_VABI sceAvPlayerGetVideoData(void* h, void* video_info);
+uint8_t APS5_VABI sceAvPlayerGetVideoDataEx(void* h, void* video_info);
+uint8_t APS5_VABI sceAvPlayerGetAudioData(void* h, void* audio_info);
 }
 
 namespace {
@@ -220,6 +220,72 @@ struct FrameInfoExMock {
 };
 static_assert(sizeof(FrameInfoExMock) == 104, "FrameInfoExMock size ABI");
 static_assert(offsetof(FrameInfoExMock, video) == 24, "FrameInfoExMock video offset ABI");
+
+// Counts allocations through the Ex memory object to verify frame-count mapping and cleanup.
+struct ExAllocationCounts {
+    int allocated = 0;
+    int freed = 0;
+};
+
+// Guest texture callback: counts successful requests and returns host storage for synthetic frames.
+void* APS5_VABI CountExAllocations(void* object, uint32_t, uint32_t size) {
+    ++static_cast<ExAllocationCounts*>(object)->allocated;
+    return std::malloc(size);
+}
+
+// Guest texture callback: records cleanup using the same memory object supplied to InitEx.
+void APS5_VABI CountExFrees(void* object, void* ptr) {
+    ++static_cast<ExAllocationCounts*>(object)->freed;
+    std::free(ptr);
+}
+
+// Synthetic guest bytes distinguish Ex fields from the base layout and verify both Bool values.
+// Worker/debug settings deliberately disagree with auto-start and the requested three framebuffers.
+TEST(AvPlayerStateMachine, InitExUsesExtendedLayout) {
+    for (uint8_t autoStart : {0, 1}) {
+        SCOPED_TRACE(static_cast<int>(autoStart));
+        alignas(8) uint8_t init[176] = {};
+        const auto write = [&](size_t offset, const auto& value) {
+            std::memcpy(init + offset, &value, sizeof(value));
+        };
+        ExAllocationCounts counts;
+        write(0, uint64_t{sizeof(init)});
+        write(8, static_cast<void*>(&counts));
+        write(32, &CountExAllocations);
+        write(40, &CountExFrees);
+        write(96, &TestEventCallback);
+        write(104, static_cast<const char*>("eng"));
+        write(112, int32_t{7}); // debugLevel occupies the old frame-count offset.
+        write(116, uint32_t{autoStart == 0 ? 1u : 0u}); // old autoStart offset.
+        write(164, int32_t{3});
+        write(168, autoStart);
+        g_events.clear();
+        void* player = nullptr;
+        ASSERT_EQ(sceAvPlayerInitEx(init, &player), 0);
+        ASSERT_NE(player, nullptr);
+        EXPECT_EQ(sceAvPlayerAddSource(player, "synthetic.mp4"), 0);
+        EXPECT_EQ(sceAvPlayerIsActive(player), autoStart);
+        EXPECT_EQ(g_events.size(), autoStart ? 2u : 1u);
+        if (!g_events.empty()) EXPECT_EQ(g_events[0].eventId, 0x02);
+        if (autoStart && g_events.size() > 1) EXPECT_EQ(g_events[1].eventId, 0x03);
+        if (!autoStart) EXPECT_EQ(sceAvPlayerStart(player), 0);
+        FrameInfoExMock frame{};
+        EXPECT_EQ(sceAvPlayerGetVideoDataEx(player, &frame), 1);
+        EXPECT_NE(frame.data, nullptr);
+        EXPECT_EQ(counts.allocated, 3);
+        EXPECT_EQ(sceAvPlayerClose(player), 0);
+        EXPECT_EQ(counts.freed, 3);
+    }
+}
+
+// Ex initialization retains default null-data behavior and rejects a missing output handle.
+TEST(AvPlayerStateMachine, InitExNullParameters) {
+    EXPECT_EQ(sceAvPlayerInitEx(nullptr, nullptr), static_cast<int>(0x806a0001u));
+    void* player = nullptr;
+    ASSERT_EQ(sceAvPlayerInitEx(nullptr, &player), 0);
+    ASSERT_NE(player, nullptr);
+    EXPECT_EQ(sceAvPlayerClose(player), 0);
+}
 
 // Verifies delivering video frames via sceAvPlayerGetVideoDataEx with custom allocator and verifies framerate at offset 16.
 TEST(AvPlayerStateMachine, VideoDataDeliveryAndFramerate) {

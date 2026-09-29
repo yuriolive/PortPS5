@@ -12,6 +12,8 @@ PRD bars owned here: F2 (save, quit, relaunch and continue) and F8 (online calls
 
 ## Current state
 
+**PortPS5 offline sockets.** `libSceNet` rejects IPv4/IPv6 bind-family mismatches with `NET_EAFNOSUPPORT`; explicit port collisions require matching family and socket type. Socket abort remains set until close so both current and later blocking waiters receive `NET_ECONNABORTED`. IPv6 conversion accepts one-to-four-digit hexadecimal groups and at most one `::` replacing at least one group; prefixes, signs, whitespace, excess digits and trailing single colons are invalid. Invalid conversion leaves the output buffer unchanged.
+
 References are relative to `core/libs/prx/`. PR #5 line numbers are given unless noted otherwise.
 
 **Save storage (`libSceSaveData.native/Export.cpp`).**
@@ -97,6 +99,8 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 | Old AnyPS5 `_sd` layout present | Migrated once by copying. The source is kept. |
 
 ## Tests
+
+- `OfflineNetStackTests` covers bind-family mismatches, port sharing across families/types, malformed and valid IPv6 groups, and concurrent plus post-abort accept calls using synthetic socket state.
 
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
   - Isolated temporary directory fixtures guaranteeing test hermeticity across runs.

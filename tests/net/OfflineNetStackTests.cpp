@@ -56,6 +56,7 @@ namespace {
 using namespace PortPS5::Testing;
 
 constexpr int NET_AF_INET = 2;
+constexpr int NET_AF_INET6 = 28;
 constexpr int NET_SOCK_STREAM = 1;
 constexpr int NET_SOCK_DGRAM = 2;
 constexpr int NET_SOL_SOCKET = 0xFFFF;
@@ -261,6 +262,12 @@ TEST(OfflineNetStack, MultiThreadedSocketAbort) {
     EXPECT_EQ(rc2.load(), -1);
     EXPECT_EQ(err2.load(), 53); // NET_ECONNABORTED
 
+    // Abort is sticky: a waiter entering after the wakeup must also observe it.
+    EXPECT_EQ(sceNetAccept(sock, nullptr, nullptr), -1);
+    EXPECT_EQ(*sceNetErrnoLoc(), 53); // NET_ECONNABORTED
+    EXPECT_EQ(sceNetAccept(sock, nullptr, nullptr), -1);
+    EXPECT_EQ(*sceNetErrnoLoc(), 53);
+
     EXPECT_EQ(sceNetSocketClose(sock), 0);
 }
 
@@ -315,6 +322,89 @@ TEST(OfflineNetStack, Ipv6BindingAndSockname) {
     EXPECT_NE(std::strstr(ipStr, "fe80"), nullptr);
 
     EXPECT_EQ(sceNetSocketClose(sock), 0);
+}
+
+// IPv4 (including the legacy zero-family alias) cannot bind an IPv6 socket, or vice versa.
+TEST(OfflineNetStack, BindRejectsMismatchedFamily) {
+    const int v4 = sceNetSocket("family4", NET_AF_INET, NET_SOCK_STREAM, 0);
+    const int v6 = sceNetSocket("family6", NET_AF_INET6, NET_SOCK_STREAM, 0);
+    ASSERT_GE(v4, 0);
+    ASSERT_GE(v6, 0);
+    uint8_t addr[28] = {};
+    addr[0] = sizeof(addr);
+    for (uint8_t family : {0, NET_AF_INET, NET_AF_INET6}) {
+        addr[1] = family;
+        EXPECT_EQ(sceNetBind_nid_postfix(family == NET_AF_INET6 ? v4 : v6, addr, sizeof(addr)), -1);
+        EXPECT_EQ(*sceNetErrnoLoc(), 47); // NET_EAFNOSUPPORT
+    }
+    EXPECT_EQ(sceNetSocketClose(v4), 0);
+    EXPECT_EQ(sceNetSocketClose(v6), 0);
+}
+
+// Explicit port collisions require both the same family and socket type, in either bind order.
+TEST(OfflineNetStack, BindPortCollisionUsesFamilyAndType) {
+    for (int firstFamily : {NET_AF_INET, NET_AF_INET6}) {
+        const int secondFamily = firstFamily == NET_AF_INET ? NET_AF_INET6 : NET_AF_INET;
+        int sockets[4] = {};
+        const int families[] = {firstFamily, secondFamily, firstFamily, firstFamily};
+        const int types[] = {NET_SOCK_STREAM, NET_SOCK_STREAM, NET_SOCK_STREAM, NET_SOCK_DGRAM};
+        for (int i = 0; i < 4; ++i) {
+            sockets[i] = sceNetSocket("port_family", families[i], types[i], 0);
+            ASSERT_GE(sockets[i], 0);
+            uint8_t addr[28] = {};
+            addr[0] = sizeof(addr);
+            addr[1] = static_cast<uint8_t>(families[i]);
+            const uint16_t port = sceNetHtons_nid_postfix(9080);
+            std::memcpy(addr + 2, &port, sizeof(port));
+            EXPECT_EQ(sceNetBind_nid_postfix(sockets[i], addr, sizeof(addr)), i == 2 ? -1 : 0);
+            if (i == 2) EXPECT_EQ(*sceNetErrnoLoc(), 48); // NET_EADDRINUSE
+        }
+        for (int socket : sockets) EXPECT_EQ(sceNetSocketClose(socket), 0);
+    }
+}
+
+// Strict hextets reject strtoul extensions and malformed separators without touching the output.
+TEST(OfflineNetStack, Ipv6RejectsMalformedGroups) {
+    const char* invalid[] = {
+        "", ":", ":1", "1:2:3:4:5:6:7:8:", "1:2:3:4:5:6:7:",
+        "1:2:3:4:5:6:7:8::", "::1:2:3:4:5:6:7:8", "1:2:3:4::5:6:7:8",
+        ":::1", "1:::2", "1::2::3", "1:2:3:4:5:6:7", "1:2:3:4:5:6:7:8:9",
+        "0x1::", "+1::", "-0::", " 1::", "\t1::", "1:: ", "1::+2", "1::0x2",
+        "00000::", "10000::", "1::00000", "gggg::"
+    };
+    for (const char* address : invalid) {
+        SCOPED_TRACE(address);
+        uint8_t result[16];
+        std::memset(result, 0xa5, sizeof(result));
+        EXPECT_EQ(sceNetInetPton(NET_AF_INET6, address, result), 0);
+        for (uint8_t byte : result) EXPECT_EQ(byte, 0xa5);
+    }
+}
+
+// Expanded/compressed addresses preserve network byte order, including single-group compression.
+TEST(OfflineNetStack, Ipv6AcceptsValidGroups) {
+    struct Case {
+        const char* text;
+        uint16_t words[8];
+    };
+    const Case cases[] = {
+        {"::", {}}, {"::1", {0, 0, 0, 0, 0, 0, 0, 1}},
+        {"1::", {1}}, {"2001:db8::1", {0x2001, 0xdb8, 0, 0, 0, 0, 0, 1}},
+        {"1:2:3:4:5:6:7:8", {1, 2, 3, 4, 5, 6, 7, 8}},
+        {"::1:2:3:4:5:6:7", {0, 1, 2, 3, 4, 5, 6, 7}},
+        {"1:2:3:4:5:6:7::", {1, 2, 3, 4, 5, 6, 7, 0}},
+        {"1:2:3:4::6:7:8", {1, 2, 3, 4, 0, 6, 7, 8}},
+        {"AbCd:0000:ffff:0:1:2:3:4", {0xabcd, 0, 0xffff, 0, 1, 2, 3, 4}}
+    };
+    for (const auto& test : cases) {
+        SCOPED_TRACE(test.text);
+        uint8_t result[16] = {};
+        ASSERT_EQ(sceNetInetPton(NET_AF_INET6, test.text, result), 1);
+        for (int i = 0; i < 8; ++i) {
+            EXPECT_EQ(result[2 * i], test.words[i] >> 8);
+            EXPECT_EQ(result[2 * i + 1], test.words[i] & 0xff);
+        }
+    }
 }
 
 // Verifies ephemeral port allocation wraps and avoids collision with already bound sockets.

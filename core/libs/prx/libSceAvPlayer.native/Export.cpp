@@ -99,7 +99,7 @@ struct FrameInfoEx {
 static_assert(sizeof(FrameInfo) == 40 && offsetof(FrameInfo, timestamp) == 16, "SceAvPlayerFrameInfo ABI");
 static_assert(sizeof(FrameInfoEx) == 104 && offsetof(FrameInfoEx, video) == 24, "SceAvPlayerFrameInfoEx ABI");
 
-// Prefix of sceAvPlayerInitData / sceAvPlayerInitDataEx that this player reads. The Ex layout starts with its own size.
+// Prefix of sceAvPlayerInitData read by the base initializer.
 struct InitPrefix {
     void* memObject;
     void* alloc;
@@ -118,6 +118,47 @@ struct InitPrefix {
     std::int32_t numFramebuffers;
     std::uint8_t autoStart;
 };
+
+// Extended guest ABI: language and per-worker settings precede the frame count and Bool.
+// Keep this layout separate from InitPrefix; only the replacement blocks are shared.
+struct InitPrefixEx {
+    std::uint64_t thisSize;
+    void* memObject;
+    void* alloc;
+    void* dealloc;
+    void* allocTexture;
+    void* deallocTexture;
+    void* fileObject;
+    void* fileOpen;
+    void* fileClose;
+    void* fileRead;
+    void* fileSize;
+    void* eventObject;
+    void* eventCallback;
+    const char* defaultLanguage;
+    std::int32_t debugLevel;
+    std::uint32_t audioDecoderPriority;
+    std::uint32_t audioDecoderAffinity;
+    std::uint32_t videoDecoderPriority;
+    std::uint32_t videoDecoderAffinity;
+    std::uint32_t demuxerPriority;
+    std::uint32_t demuxerAffinity;
+    std::uint32_t controllerPriority;
+    std::uint32_t controllerAffinity;
+    std::uint32_t httpStreamingPriority;
+    std::uint32_t httpStreamingAffinity;
+    std::uint32_t fileStreamingPriority;
+    std::uint32_t fileStreamingAffinity;
+    std::int32_t numOutputVideoFrameBuffers;
+    std::uint8_t autoStart;
+    std::uint8_t reserved[3];
+};
+static_assert(sizeof(InitPrefixEx) == 176, "SceAvPlayerInitDataEx ABI");
+static_assert(offsetof(InitPrefixEx, memObject) == 8, "SceAvPlayerInitDataEx ABI");
+static_assert(offsetof(InitPrefixEx, eventObject) == 88, "SceAvPlayerInitDataEx ABI");
+static_assert(offsetof(InitPrefixEx, defaultLanguage) == 104, "SceAvPlayerInitDataEx ABI");
+static_assert(offsetof(InitPrefixEx, numOutputVideoFrameBuffers) == 164, "SceAvPlayerInitDataEx ABI");
+static_assert(offsetof(InitPrefixEx, autoStart) == 168, "SceAvPlayerInitDataEx ABI");
 
 struct Player {
     std::uint64_t magic = kMagic;
@@ -427,9 +468,18 @@ void* APS5_VABI sceAvPlayerInit(const void* init) {
 // Returns 0 on success or kErrInvalidParams if handle pointer is null.
 int APS5_VABI sceAvPlayerInitEx(const void* init_ex, void** handle) {
     if (handle == nullptr) return kErrInvalidParams;
-    // sceAvPlayerInitDataEx begins with a 64-bit size, followed by the same allocator / file / event blocks.
-    const std::uint8_t* base = static_cast<const std::uint8_t*>(init_ex);
-    auto p = CreateFrom(base != nullptr ? reinterpret_cast<const InitPrefix*>(base + 8) : nullptr);
+    const auto* ex = static_cast<const InitPrefixEx*>(init_ex);
+    InitPrefix init{};
+    if (ex != nullptr) {
+        init.memObject = ex->memObject;
+        init.allocTexture = ex->allocTexture;
+        init.deallocTexture = ex->deallocTexture;
+        init.eventObject = ex->eventObject;
+        init.eventCallback = ex->eventCallback;
+        init.autoStart = ex->autoStart;
+        init.numFramebuffers = ex->numOutputVideoFrameBuffers;
+    }
+    auto p = CreateFrom(ex != nullptr ? &init : nullptr);
     *handle = p ? p.get() : nullptr;
     return 0;
 }
