@@ -63,6 +63,21 @@ portps5_add_gtest(memory_virtual_allocation_tests
         unit
 )
 
+# Direct memory physical pool and SceKernelMemoryPool API verification
+portps5_add_gtest(direct_memory_pool_tests
+    SOURCES
+        memory/DirectMemoryPoolTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+
 # Arena extent-tree allocator differential verification (first-fit order contract)
 portps5_add_gtest(guest_arena_extent_tests
     SOURCES
