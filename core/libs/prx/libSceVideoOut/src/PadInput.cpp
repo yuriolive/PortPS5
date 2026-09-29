@@ -1,3 +1,8 @@
+// libSceVideoOut SDL pad input handling and event translation.
+//
+// Translates SDL keyboard, mouse, and controller events to guest PadState data.
+// Subsystem: video / input. Host-only: no guest-called exports directly in this file.
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -14,11 +19,14 @@ namespace {
 // Why typed config, not env: APS5_* reads are banned by policy;
 // debug.ignore_host_input keeps measurement and recorded-input replay runs
 // from reacting to stray keys or mouse buttons that reach the window.
+// Why the verbatim wrappers: Loader:: methods hash under nid_patcher
+// (libc has no --preserve-exports), so cross-prx callers use the
+// _nid_no_patch free functions (Config.hpp) to survive prx load.
 bool IgnoreHostInput() {
- if (!PortPS5::Config::Loader::IsInitialized()) {
+ if (!PortPS5_Config_Loader_IsInitialized_nid_no_patch()) {
   return false;
  }
- return PortPS5::Config::Loader::Get().debug.ignoreHostInput;
+ return PortPS5_Config_Loader_Get_nid_no_patch().debug.ignoreHostInput;
 }
 }
 

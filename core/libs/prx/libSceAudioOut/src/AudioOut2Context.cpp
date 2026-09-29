@@ -1,3 +1,7 @@
+// libSceAudioOut AudioOut2 context lifecycle, queue pacing, and output device routing.
+// Implements context creation, grain push, queue level query, and port mixing.
+// Subsystem: audio. Exports use System V ABI (APS5_VABI) for guest runtime compatibility.
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -49,8 +53,11 @@ bool AudioOut2TraceEnabled() {
     // that there is nothing to trace with, so tracing stays off. The value is
     // read on every call (never cached in a static) so tests that initialize
     // the config late still take effect.
-    if (!PortPS5::Config::Loader::IsInitialized()) return false;
-    const auto& trace = PortPS5::Config::Loader::Get().debug.trace;
+    // Why the verbatim wrappers: Loader:: methods hash under nid_patcher
+    // (libc has no --preserve-exports), so cross-prx callers use the
+    // _nid_no_patch free functions (Config.hpp) to survive prx load.
+    if (!PortPS5_Config_Loader_IsInitialized_nid_no_patch()) return false;
+    const auto& trace = PortPS5_Config_Loader_Get_nid_no_patch().debug.trace;
     return trace.count(PortPS5::Config::TraceCategory::Audio) != 0;
 }
 
@@ -279,6 +286,7 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) noexcept {
     return 0;
 }
 
+/// Creates an AudioOut2 context and associates it with the audio output device.
 int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) noexcept {
     if (!params || !ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     if (params->num_grains > 192000) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
@@ -309,6 +317,7 @@ int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, voi
     return 0;
 }
 
+/// Destroys an AudioOut2 context and releases all associated output ports.
 int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) noexcept {
     AudioOut2Context* context = nullptr;
     {
@@ -330,6 +339,7 @@ int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) noexcept {
     return 0;
 }
 
+/// Queries current queue depth and available queue slots for an AudioOut2 context.
 int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint32_t* queue_level, uint32_t* available_queue) noexcept {
     auto ref = AcquireContext(ctx);
     if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
@@ -344,6 +354,7 @@ int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint3
     return 0;
 }
 
+/// Pushes mixed audio grains to hardware output queue, optionally blocking when full.
 int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t blocking) noexcept {
     auto ref = AcquireContext(ctx);
     if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
@@ -383,12 +394,14 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
     return 0;
 }
 
+/// Queries memory requirement for AudioOut2 context allocation.
 int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) noexcept {
     if (!params || !memory_size) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     *memory_size = CONTEXT_MEMORY;
     return 0;
 }
 
+/// Resets AudioOut2 context creation parameters to default configuration.
 int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) noexcept {
     if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     std::memset(params, 0, sizeof(*params));
@@ -398,6 +411,7 @@ int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) noexc
     return 0;
 }
 
+/// Sets attribute options on an active AudioOut2 context.
 int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num) noexcept {
     auto ref = AcquireContext(ctx);
     if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
