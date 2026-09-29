@@ -89,6 +89,48 @@ portps5_add_gtest(filesystem_sandbox_path_tests
         unit
 )
 
+# Offline network stack verification (sockets, options, epoll, DNS resolver stubs)
+portps5_add_gtest(offline_net_stack_tests
+    SOURCES
+        net/OfflineNetStackTests.cpp
+    LIBRARIES
+        libSceNet
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# AvPlayer playback state machine verification (Ready/Play/Pause/Stop lifecycle, blank stream info)
+portps5_add_gtest(avplayer_state_machine_tests
+    SOURCES
+        avplayer/AvPlayerStateMachineTests.cpp
+    LIBRARIES
+        libSceAvPlayer.native
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Exercise the same C/System V exports in the standalone non-native PRX.
+portps5_add_gtest(avplayer_exports_tests
+    SOURCES
+        avplayer/AvPlayerStateMachineTests.cpp
+    LIBRARIES
+        libSceAvPlayer
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Python unit tests for tools/check_comments.py — verifies the comment
 # policy linter logic (Rules 1-3) in isolation with no game data required.
 portps5_add_test(check_comments_unit_tests
