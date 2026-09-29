@@ -294,24 +294,35 @@ TEST(SyncOnAddress, RacePerturbationUnderYield) {
     constexpr int THREADS = 4;
 
     for (int iter = 0; iter < ITERATIONS; ++iter) {
-        uint32_t word = 0;
+        uint32_t word = 1; // Start odd so workers enter wait condition
         std::atomic<bool> stop{false};
+        std::atomic<int> ready{0};
         std::atomic<int> completed{0};
+        std::atomic<int> total_waits{0};
         std::vector<std::thread> workers;
 
         for (int t = 0; t < THREADS; ++t) {
             workers.emplace_back([&, t] {
+                ready.fetch_add(1, std::memory_order_release);
                 while (!stop.load(std::memory_order_relaxed)) {
                     uint32_t cur = __atomic_load_n(&word, __ATOMIC_ACQUIRE);
                     if (cur % 2 == 1) {
                         uint32_t timeout = 5000; // 5ms
-                        (void)Wait32(&word, cur, &timeout);
+                        int res = Wait32(&word, cur, &timeout);
+                        // Result must be either OK (woken or value changed) or ETIMEDOUT
+                        EXPECT_TRUE(res == OK || res == KERNEL_ERROR_ETIMEDOUT);
+                        total_waits.fetch_add(1, std::memory_order_relaxed);
                     } else {
                         std::this_thread::yield();
                     }
                 }
                 completed.fetch_add(1, std::memory_order_release);
             });
+        }
+
+        // Ensure all workers are spawned and active before perturbation starts
+        while (ready.load(std::memory_order_acquire) != THREADS) {
+            std::this_thread::yield();
         }
 
         // Perturb the address value and issue wakes concurrently
@@ -326,13 +337,14 @@ TEST(SyncOnAddress, RacePerturbationUnderYield) {
         }
 
         stop.store(true, std::memory_order_release);
-        Store(&word, 999999u);
+        Store(&word, 999998u); // Even number to ensure workers break out of loop
         EXPECT_EQ(Wake(&word, INT_MAX), OK);
 
         for (auto& w : workers) {
             w.join();
         }
         EXPECT_EQ(completed.load(std::memory_order_acquire), THREADS);
+        EXPECT_GT(total_waits.load(std::memory_order_relaxed), 0);
     }
 }
 
