@@ -180,6 +180,10 @@ Other facts:
     outermost uniform headers (`DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader`,
     `DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers`), and the cyclic-header skip
     (`DivergentReadWithCyclicHeaderSkipsPreReadBarrier`).
+  - [x] `s_getpc_b64` names the shader's absolute address (`GetShaderBase` + next-PC offset, ported
+    from upstream `d9ac21c`): PC-relative data behind the shader's own code resolves to the real
+    data instead of near-zero, and relocated copies keep sharing one variant
+    (`SGetpcB64AddsShaderBaseToNextPc`).
   - [x] Stage gate: `SharedMemoryBarrierInserter` inserts barriers only for compute, mesh, and
     tessellation-control stages (Workgroup execution scope is invalid elsewhere), covered by
     `Wave64VertexStageSkipsBarrierInsertion` and `TessellationControlStageInsertsBarrier`.

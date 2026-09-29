@@ -888,6 +888,45 @@ TEST(RecompilerFixesTests, TessellationControlStageInsertsBarrier) {
     EXPECT_EQ((*it)->Opcode(), IrOpcode::Barrier);
 }
 
+TEST(RecompilerFixesTests, SGetpcB64AddsShaderBaseToNextPc) {
+    // Behavioral invariant: s_getpc_b64 must name the shader's absolute address
+    // (GetShaderBase + next-PC offset), not the raw next-PC offset. Shaders that
+    // address data stored behind their own code build the V# with
+    // s_getpc_b64 + s_add_u32 + s_addc_u32; a raw offset resolves near zero, so
+    // every vertex/constant load reads zero and the draw never rasterizes.
+    // Preconditions: SOPP s_getpc_b64 writing an SGPR pair.
+    // Expected: IR contains GetShaderBase feeding IAdd64 with the next-PC constant.
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    TranslationContext context(program, entry, 256u);
+
+    RdnaInstruction inst{};
+    inst.family = RdnaInstructionFamily::SOPP;
+    inst.op = RdnaOpcode::SGetpcB64;
+    inst.destination.kind = RdnaOperandKind::ScalarRegister;
+    inst.destination.reg = 0u;
+
+    context.TranslateInstruction(inst);
+
+    bool foundBase = false;
+    bool foundAdd = false;
+    for (IrValue* val : entry.Instructions()) {
+        if (!val) {
+            continue;
+        }
+        if (val->Opcode() == IrOpcode::GetShaderBase) {
+            foundBase = true;
+        }
+        if (val->Opcode() == IrOpcode::IAdd64) {
+            foundAdd = true;
+        }
+    }
+    EXPECT_TRUE(foundBase);
+    EXPECT_TRUE(foundAdd);
+}
+
 } // namespace
 } // namespace ShaderRecompiler
 

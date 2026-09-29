@@ -176,7 +176,14 @@ void TranslationContext::sInstPrefetch() {
 }
 
 void TranslationContext::sGetpcB64(const RdnaInstruction& inst) {
-    const IrU64 pc(ir.ConstantU64(static_cast<std::uint64_t>(currentProgramCounter) + 4u));
+    // PC-relative data lives behind the shader's own code (e.g. an NGG vertex
+    // shader fetching vertices after its code via s_getpc+s_add_u32+s_addc_u32).
+    // Emitting the raw next-PC offset names a tiny near-zero address, so every
+    // load reads zero and the draw never rasterizes. Add the per-request shader
+    // base so the V# names the real data; relocated copies keep sharing one
+    // compiled variant because the base is evaluated from the code address.
+    IrValue& base = ir.Emit(IrOpcode::GetShaderBase, IrType::U64, {});
+    const IrU64 pc(ir.Emit(IrOpcode::IAdd64, IrType::U64, {&base, &ir.ConstantU64(static_cast<std::uint64_t>(currentProgramCounter) + 4u)}));
     writeU32Pair(inst.destination, extractU64(pc));
 }
 
