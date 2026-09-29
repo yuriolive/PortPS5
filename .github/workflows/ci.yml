@@ -114,6 +114,12 @@ jobs:
           key: ccache-${{ runner.os }}-ci-${{ hashFiles('cmake/toolchains/mingw-gcc15.cmake', 'cmake/toolchains/mingw-gcc15.sha256', 'CMakePresets.json', 'CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Run Unit Tests (ctest --preset ci)
+        # Parallel: the 218 unit tests are host-only with no shared state —
+        # file fixtures use timestamp-unique dirs and timing asserts are
+        # lower-bounds (load only makes them pass by more). Serial ctest
+        # (~4 min, mostly per-test process spawns) was the job's long pole.
+        env:
+          CTEST_PARALLEL_LEVEL: 4
         run: ctest --preset ci
 
       - name: Gate test count
