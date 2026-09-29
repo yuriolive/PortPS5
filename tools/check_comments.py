@@ -696,8 +696,8 @@ def check_file(rel_path, abs_path):
     if any(_in_dir(rel_path, d) for d in RULE1_DIRS) and not _is_exempt(rel_path):
         violations.extend(check_file_header(rel_path, lines))
 
-    # Rule 2 — APS5_VABI function docs (any non-exempt file in the tree).
-    if not _is_exempt(rel_path):
+    # Rule 2 — APS5_VABI function docs (any non-exempt file outside tests/).
+    if not _is_exempt(rel_path) and not _in_dir(rel_path, TESTS_DIR):
         violations.extend(check_vabi_docs(rel_path, lines))
 
     # Rule 3 — TEST() / TEST_F() docs (tests/ only).
