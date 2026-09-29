@@ -240,10 +240,10 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
    names the real base — same limitation as upstream. The fix is dispatch-time
    delivery of the code address (per-dispatch shader data or push constants), never
    baked into the shared variant.
-3. Does the M1 intro-cinematic stage require bindless tables? PR #5's `29b4601` message says so *(unverified)*.
-4. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
-5. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
-6. Intra-divergent-region cross-lane LDS ordering: `SharedMemoryBarrierInserter` orders divergent writes
+4. Does the M1 intro-cinematic stage require bindless tables? PR #5's `29b4601` message says so *(unverified)*.
+5. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
+6. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
+7. Intra-divergent-region cross-lane LDS ordering: `SharedMemoryBarrierInserter` orders divergent writes
    at reconvergence merges and divergent reads at outermost uniform headers (skipped when the header
    lies on a control-flow cycle, where per-iteration execution under divergent loop control would break
    barrier uniformity). A divergent write followed by a divergent read in the SAME region with no
