@@ -888,15 +888,15 @@ TEST(RecompilerFixesTests, TessellationControlStageInsertsBarrier) {
     EXPECT_EQ((*it)->Opcode(), IrOpcode::Barrier);
 }
 
+/// Behavioral invariant: s_getpc_b64 must name the shader's absolute address
+/// (GetShaderBase + next-PC offset), not the raw next-PC offset. Shaders that
+/// address data stored behind their own code build the V# with
+/// s_getpc_b64 + s_add_u32 + s_addc_u32; a raw offset resolves near zero, so
+/// every vertex/constant load reads zero and the draw never rasterizes.
+/// Preconditions: SOPP s_getpc_b64 at a nonzero PC writing SGPR pair s[4:5].
+/// Expected: exactly one GetShaderBase feeding one IAdd64 whose other operand
+/// is the pc+4 constant, with the add result split across s4 (low) and s5 (high).
 TEST(RecompilerFixesTests, SGetpcB64AddsShaderBaseToNextPc) {
-    // Behavioral invariant: s_getpc_b64 must name the shader's absolute address
-    // (GetShaderBase + next-PC offset), not the raw next-PC offset. Shaders that
-    // address data stored behind their own code build the V# with
-    // s_getpc_b64 + s_add_u32 + s_addc_u32; a raw offset resolves near zero, so
-    // every vertex/constant load reads zero and the draw never rasterizes.
-    // Preconditions: SOPP s_getpc_b64 at a nonzero PC writing SGPR pair s[4:5].
-    // Expected: exactly one GetShaderBase feeding one IAdd64 whose other operand
-    // is the pc+4 constant, with the add result split across s4 (low) and s5 (high).
     IrProgram program;
     IrBlock& entry = program.CreateBlock();
     program.SetEntryBlock(entry);
@@ -965,4 +965,3 @@ TEST(RecompilerFixesTests, SGetpcB64AddsShaderBaseToNextPc) {
 
 } // namespace
 } // namespace ShaderRecompiler
-
