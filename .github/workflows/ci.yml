@@ -46,7 +46,7 @@ jobs:
           # shellcheck disable=SC2086
           CHANGED=$(git diff --name-only $RANGE || true)
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -qE '^(core/|tools/|tests/|cmake/|CMakeLists\.txt|CMakePresets\.json|pyproject\.toml|uv\.lock|\.gitmodules|\.github/workflows/ci\.yml|\.github/actions/|docs/workarounds\.md|tests/expected-count|docs/Doxyfile)'; then
+          if echo "$CHANGED" | grep -qE '^(core/|tools/|tests/|cmake/|3rdparty/|CMakeLists\.txt|CMakePresets\.json|pyproject\.toml|uv\.lock|\.gitmodules|\.github/workflows/ci\.yml|\.github/actions/|docs/workarounds\.md|tests/expected-count|docs/Doxyfile)'; then
             echo "code_changed=true" >> "$GITHUB_OUTPUT"
             echo "Code changes detected — Windows build will run."
           else
@@ -264,7 +264,9 @@ jobs:
           $found = $false
           "### Build hashes (SHA256)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          "```" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          # NOTE: single quotes below — in double quotes the backticks would
+          # escape the closing quote and leave the string unterminated.
+          '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           foreach ($t in $targets) {
             if (Test-Path $t) {
               $h = (Get-FileHash -Path $t -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -276,7 +278,7 @@ jobs:
               Write-Host "::warning::hash target not found (skipped): $t"
             }
           }
-          "```" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           if (-not $found) {
             Write-Host "::warning::no shipping binaries found to hash under build/ci"
           }
