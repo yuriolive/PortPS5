@@ -21,9 +21,13 @@ File references are relative to `core/libs/prx/`.
 | NGS2, Audio3d, Audiodec | Throw-stubs: NGS2.native 27, Audio3d 7, Audiodec.native 6. Identical in both trees. | Same. |
 | Tracing | `debug.trace = ["audio", "ajm"]` (see [configuration.md](configuration.md)). No env switches remain on this path. | `APS5_TRACE_AUDIOOUT2` (`AudioOut2Context.cpp:44-47`) and `APS5_TRACE_AJM` (`Ajm.cpp:34-37`). |
 
-Verified gaps:
-- Underrun telemetry exists per context and process-wide (`underruns`, `overrunDrops`, `AudioOut2LatencyMs`), but the single-mixer callback accounting from the Target design is M2 work: until then an underrun is observed at push time when the device queue ran dry.
-- v1 ports and AudioOut2 contexts each open their own OS stream, so they run on independent device clocks.
+Verified gaps closed in M2:
+- Single host mixer (`AudioMixer`) consolidates v1 ports and AudioOut2 contexts onto one SDL device clock (F32 48 kHz WASAPI shared mode).
+- Callback-driven architecture pulling from SPSC lock-free ring buffers, tracking monotonic `frames_consumed` output clock.
+- Real-time underrun accounting in callback when active unpaused sources experience a shortfall; overrun drop ceiling enforced at 100 ms ring fill.
+- Dynamic resampler via `SDL_AudioStream` for non-48 kHz ports.
+- 8-channel bed downmix folds LFE into front pair at -10 dB (gain ~0.316228) and C/RL/RR/SL/SR at -3 dB (gain ~0.707107).
+- Soft limiter replaces fixed 0.5 gain, preventing hard clipping while retaining linear pass-through for normal amplitudes.
 
 ## Decision
 
@@ -87,8 +91,8 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 
 | Milestone | Audio work |
 |---|---|
-| M1 | - [ ] Port AudioOut2 and ATRAC9 from PR #5. Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
-| M2 | - [ ] Single host mixer with the resampler and the soft limiter. TMNT proves the mixing path. Underrun bar enforced in the full run. |
+| M1 | - [x] Port AudioOut2 and ATRAC9 from PR #5. Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
+| M2 | - [x] Single host mixer with the resampler and the soft limiter. TMNT proves the mixing path. Underrun bar enforced in the full run. |
 | M3 | - [ ] Tomb Raider FMV audio within the A/V bar, jointly with [video-fmv.md](video-fmv.md). |
 | M4 | - [ ] Any codec or NGS2 surface that the inventory flags for Bugsnax. |
 | M5 | - [ ] Object-port panning, validated on Demon's Souls. |

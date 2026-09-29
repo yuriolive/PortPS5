@@ -66,9 +66,9 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - [x] Filesystem sandbox: port path-traversal containment (`../`), mount sandbox isolation, and default-deny permission tests from SharpEMU (`KernelSandboxEscapeTests`) ([spec/save-data.md](spec/save-data.md));
   - [ ] Save data: port directory layout, quota enforcement, atomic commit, and crash-safe snapshot restore tests;
   - [x] Input: port DualSense USB report parsing, radial deadzone calculation, rumble motor translation, and hotplug slot assignment tests from KytyPS5 (`PadHapticsTests`) ([spec/input.md](spec/input.md));
-  - [ ] Audio: port AudioOut2 port lifecycle, ATRAC9 header decoding, and mixer resampling tests from KytyPS5 (`AudioOut2PortTests`) ([spec/audio.md](spec/audio.md)).
+  - [x] Audio: port AudioOut2 port lifecycle, ATRAC9 header decoding, and mixer resampling tests from KytyPS5 (`AudioOut2PortTests`) ([spec/audio.md](spec/audio.md)).
 - [ ] Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title, with crash-safe snapshots and a one-time copy of the old `_sd` layout ([spec/save-data.md](spec/save-data.md)).
-- [ ] Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
+- [x] Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
 - [ ] The disk pipeline cache.
 - [ ] Driver: depth/stencil and conditional colour-write state, because 2D engines also set them. They are currently rejected at `State.cpp:152` on `main` and `State.cpp:318-322` in PR #5.
 - [ ] `tools/regress` local regression plus results JSON upload, with the config hash and the "FMV played" rule.

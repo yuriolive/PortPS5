@@ -1,3 +1,17 @@
+// AudioOut.cpp
+// PortPS5 - AudioOut v1 Subsystem Implementation (Audio Subsystem M2)
+//
+// Subsystem Ownership:
+//   Owned by core/libs/prx/libSceAudioOut. Implements the PS5 AudioOut v1
+//   legacy PCM port interfaces (Init, Open, Close, Output, Outputs, SetVolume,
+//   GetPortState) routed onto the unified process-wide host AudioMixer.
+//
+// Threading & Invariants:
+//   - Port table access is serialized with g_mutex.
+//   - Each active port registers an AudioSource on AudioMixer with an SPSC ring.
+//   - All multi-channel streams downmix to stereo F32 with LFE fold at -10 dB.
+//   - Resampling for non-48 kHz sample rates is performed via SDL_AudioStream.
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -6,11 +20,12 @@
 #include <limits>
 #include <mutex>
 #include <vector>
-#include <prx/libc/include/General.hpp>
 
+#include "prx/libc/include/General.hpp"
 #include "SDL.h"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "AudioMixer.hpp"
 
 static constexpr int PORT_TYPE_MAIN = 0;
 static constexpr int PORT_TYPE_BGM = 1;
@@ -24,9 +39,6 @@ static constexpr int PORT_TYPE_AUX = 127;
 static constexpr int PORTS_MAX = 32;
 static constexpr int DEFAULT_VOLUME = 32768;
 static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
-static constexpr std::uint64_t TARGET_LATENCY_US = 40000;
-static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
-static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
 
 // Guest error codes observed on this path: -2144993276 is the invalid-argument
 // code (returned for null pointers), -2144993277 the invalid-handle code.
@@ -69,19 +81,11 @@ static int channelsForFormat(Format f) {
         case Format::F32_8ChStd:
             return 8;
         default:
-            // Unreachable: sceAudioOutOpen validates the format before a port
-            // is created, so an Unknown here is a host bug, not guest input.
             Unsupported("channelsForFormat: unknown format");
     }
 }
 
-static SDL_AudioFormat sdlFormat(Format f) {
-    return formatIsFloat(f) ? AUDIO_F32SYS : AUDIO_S16SYS;
-}
-
-static std::uint32_t bytesPerSample(Format f) {
-    return formatIsFloat(f) ? sizeof(float) : sizeof(std::int16_t);
-}
+static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
 
 struct Port {
     bool used = false;
@@ -92,180 +96,93 @@ struct Port {
     int channels = 0;
     int volume[8] = {};
     std::uint64_t lastOutputTime = 0;
-    SDL_AudioDeviceID device = 0;
-    SDL_AudioSpec spec = {};
+    AudioSource* source = nullptr;
 };
 
 static std::mutex g_mutex;
 static Port g_ports[PORTS_MAX];
-static bool g_sdlInitialized = false;
 
-static bool ensureSdlAudio() {
-    if (g_sdlInitialized) {
-        return true;
-    }
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
-        return false;
-    }
-    g_sdlInitialized = true;
-    return true;
-}
-
-static bool openDevice(Port& port) {
-    if (!ensureSdlAudio()) {
-        return false;
-    }
-    SDL_AudioSpec desired{};
-    desired.freq = static_cast<int>(port.freq);
-    desired.format = sdlFormat(port.format);
-    desired.channels = static_cast<Uint8>(port.channels);
-    desired.samples = static_cast<Uint16>(port.samplesNum);
-    desired.callback = nullptr;
-    SDL_AudioSpec obtained{};
-    port.device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, SDL_AUDIO_ALLOW_ANY_CHANGE);
-    if (port.device == 0) {
-        return false;
-    }
-    port.spec = obtained;
-    SDL_PauseAudioDevice(port.device, 0);
-    return true;
-}
-
-static void closeDevice(Port& port) {
-    if (port.device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) {
-        SDL_ClearQueuedAudio(port.device);
-        SDL_CloseAudioDevice(port.device);
-    }
-    port.device = 0;
-    port.spec = {};
-}
-
-static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
-
-static const void* prepareBuffer(const Port& port, const void* data, std::vector<std::uint8_t>& buf) {
+static void convertAndDownmix(const Port& port, const void* data, std::vector<AudioFrame>& out) {
     const auto frames = port.samplesNum;
     const auto ch = static_cast<std::uint32_t>(port.channels);
-    const auto bps = bytesPerSample(port.format);
-    const auto size = frames * ch * bps;
+    out.resize(frames);
 
-    bool volumeChanged = false;
+    float vol[8] = {};
     for (std::uint32_t i = 0; i < ch; i++) {
-        if (port.volume[i] != DEFAULT_VOLUME) {
-            volumeChanged = true;
-            break;
-        }
+        vol[i] = static_cast<float>(port.volume[i]) / static_cast<float>(DEFAULT_VOLUME);
     }
 
-    if (!volumeChanged && !formatIsStd(port.format)) {
-        return data;
-    }
-
-    buf.resize(size);
     const bool isStd = formatIsStd(port.format) && ch == 8;
 
-    if (formatIsFloat(port.format)) {
-        auto* dst = reinterpret_cast<float*>(buf.data());
-        const auto* src = static_cast<const float*>(data);
-        for (std::uint32_t fr = 0; fr < frames; fr++) {
-            for (std::uint32_t c = 0; c < ch; c++) {
-                const auto srcCh = isStd ? STD_8CH_MAP[c] : c;
-                dst[fr * ch + c] = src[fr * ch + srcCh] *
-                    (static_cast<float>(port.volume[c]) / static_cast<float>(DEFAULT_VOLUME));
+    if (ch == 1) {
+        if (formatIsFloat(port.format)) {
+            const auto* src = static_cast<const float*>(data);
+            for (std::uint32_t i = 0; i < frames; i++) {
+                const float s = src[i] * vol[0];
+                out[i] = AudioFrame{s, s};
+            }
+        } else {
+            const auto* src = static_cast<const std::int16_t*>(data);
+            for (std::uint32_t i = 0; i < frames; i++) {
+                const float s = (static_cast<float>(src[i]) / 32768.0f) * vol[0];
+                out[i] = AudioFrame{s, s};
             }
         }
-    } else {
-        auto* dst = reinterpret_cast<std::int16_t*>(buf.data());
-        const auto* src = static_cast<const std::int16_t*>(data);
-        for (std::uint32_t fr = 0; fr < frames; fr++) {
-            for (std::uint32_t c = 0; c < ch; c++) {
-                const auto srcCh = isStd ? STD_8CH_MAP[c] : c;
-                std::int64_t s = static_cast<std::int64_t>(src[fr * ch + srcCh]) *
-                    port.volume[c] / DEFAULT_VOLUME;
-                s = std::clamp(s,
-                    static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::min()),
-                    static_cast<std::int64_t>(std::numeric_limits<std::int16_t>::max()));
-                dst[fr * ch + c] = static_cast<std::int16_t>(s);
+    } else if (ch == 2) {
+        if (formatIsFloat(port.format)) {
+            const auto* src = static_cast<const float*>(data);
+            for (std::uint32_t i = 0; i < frames; i++) {
+                out[i] = AudioFrame{src[i * 2 + 0] * vol[0], src[i * 2 + 1] * vol[1]};
+            }
+        } else {
+            const auto* src = static_cast<const std::int16_t*>(data);
+            for (std::uint32_t i = 0; i < frames; i++) {
+                out[i] = AudioFrame{
+                    (static_cast<float>(src[i * 2 + 0]) / 32768.0f) * vol[0],
+                    (static_cast<float>(src[i * 2 + 1]) / 32768.0f) * vol[1]
+                };
+            }
+        }
+    } else if (ch == 8) {
+        float frameIn[8] = {};
+        if (formatIsFloat(port.format)) {
+            const auto* src = static_cast<const float*>(data);
+            for (std::uint32_t i = 0; i < frames; i++) {
+                for (std::uint32_t c = 0; c < 8; c++) {
+                    const auto srcCh = isStd ? STD_8CH_MAP[c] : c;
+                    frameIn[c] = src[i * 8 + srcCh];
+                }
+                AudioMixerDownmix8Ch(frameIn, vol, out[i].left, out[i].right);
+            }
+        } else {
+            const auto* src = static_cast<const std::int16_t*>(data);
+            for (std::uint32_t i = 0; i < frames; i++) {
+                for (std::uint32_t c = 0; c < 8; c++) {
+                    const auto srcCh = isStd ? STD_8CH_MAP[c] : c;
+                    frameIn[c] = static_cast<float>(src[i * 8 + srcCh]) / 32768.0f;
+                }
+                AudioMixerDownmix8Ch(frameIn, vol, out[i].left, out[i].right);
             }
         }
     }
-    return buf.data();
 }
 
 static void queueAudio(Port& port, const void* data) {
-    // Without an SDL device there is nothing to queue: the callers already sleep for the block's
-    // duration so the game's timing holds. A null pointer is the documented way to wait until the
-    // port's queued audio has been output (sceAudioOutOutput(handle, NULL)); it queues nothing.
-    if (port.device == 0) return;
+    if (!port.source) return;
     if (data == nullptr) {
-        const std::uint64_t waitStart = sceKernelGetProcessTime();
-        while (SDL_GetQueuedAudioSize(port.device) > 0) {
-            if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-                break;
-            }
-            struct timespec req{};
-            req.tv_sec = 0;
-            req.tv_nsec = static_cast<long>(DRAIN_SLEEP_US * 1000ULL);
-            nanosleep(&req, nullptr);
-        }
+        // Documented PS5 behavior: null buffer waits for queued audio to drain
+        port.source->Drain(200);
         return;
     }
 
-    std::vector<std::uint8_t> prepareBuf;
-    const void* prepared = prepareBuffer(port, data, prepareBuf);
-    const std::uint32_t preparedSize = port.samplesNum *
-        static_cast<std::uint32_t>(port.channels) * bytesPerSample(port.format);
+    std::vector<AudioFrame> stereoFrames;
+    convertAndDownmix(port, data, stereoFrames);
 
-    SDL_AudioCVT cvt{};
-    const int cvtResult = SDL_BuildAudioCVT(
-        &cvt,
-        sdlFormat(port.format), static_cast<Uint8>(port.channels), static_cast<int>(port.freq),
-        port.spec.format, port.spec.channels, port.spec.freq);
+    // Pace against the 40 ms target cushion to prevent runaway queuing
+    port.source->WaitUntilQueuedAtMost(AUDIO_MIXER_TARGET_CUSHION_FRAMES, 200);
 
-    if (cvtResult < 0) {
-        // The formats above come from a port the host itself opened, so a
-        // conversion failure is a broken host audio path, not guest input.
-        Unsupported("SDL_BuildAudioCVT failed");
-    }
-
-    const void* queueData = prepared;
-    std::uint32_t queueSize = preparedSize;
-    std::vector<std::uint8_t> convertBuf;
-
-    if (cvtResult > 0) {
-        convertBuf.resize(static_cast<std::size_t>(preparedSize) * cvt.len_mult);
-        std::memcpy(convertBuf.data(), prepared, preparedSize);
-        cvt.buf = convertBuf.data();
-        cvt.len = static_cast<int>(preparedSize);
-        if (SDL_ConvertAudio(&cvt) < 0) {
-            Unsupported("SDL_ConvertAudio failed");
-        }
-        queueData = cvt.buf;
-        queueSize = static_cast<std::uint32_t>(cvt.len_cvt);
-    }
-
-    const std::uint64_t bufferUs = port.freq != 0
-        ? (1000000ULL * port.samplesNum) / port.freq
-        : 0;
-    const std::uint32_t buffers = bufferUs != 0
-        ? static_cast<std::uint32_t>((TARGET_LATENCY_US + bufferUs - 1) / bufferUs)
-        : 2u;
-    const std::uint32_t minQueued = queueSize * std::clamp(buffers, 2u, 16u);
-    const std::uint64_t waitStart = sceKernelGetProcessTime();
-
-    while (SDL_GetQueuedAudioSize(port.device) > minQueued) {
-        if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-            SDL_ClearQueuedAudio(port.device);
-            break;
-        }
-        struct timespec req{};
-        req.tv_sec = 0;
-        req.tv_nsec = static_cast<long>(DRAIN_SLEEP_US * 1000ULL);
-        nanosleep(&req, nullptr);
-    }
-
-    if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
-        Unsupported("SDL_QueueAudio failed");
-    }
+    // Push into the source ring (automatically resamples if freq != 48000)
+    port.source->PushAndResample(stereoFrames.data(), port.samplesNum);
 }
 
 static bool portTypeValid(int type) {
@@ -285,10 +202,25 @@ static Port* getPort(int handle) {
 
 extern "C" {
 
+/**
+ * @brief Initializes the AudioOut subsystem and host mixer.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAudioOutInit() noexcept {
+    AudioMixer::Get().Initialize();
     return 0;
 }
 
+/**
+ * @brief Opens an AudioOut v1 output port and binds it to the host mixer.
+ * @param userId User identifier (unused).
+ * @param type Port type (Main, BGM, Voice, etc.).
+ * @param index Port index (must be 0).
+ * @param len Grain size in samples per channel.
+ * @param freq Sampling frequency in Hz.
+ * @param param Format bitfield (Format, Channels).
+ * @return Positive port handle on success, or negative SCE error code.
+ */
 int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len,
     std::uint32_t freq, std::uint32_t param) noexcept {
     (void)userId;
@@ -296,8 +228,6 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
         return -2144993270;
     }
     if (index != 0) {
-        // Only the primary index is modelled; a non-zero index is outside
-        // what this implementation supports rather than a guest typo.
         Unsupported("sceAudioOutOpen: index != 0 not supported");
     }
 
@@ -330,7 +260,7 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
                 port.volume[c] = DEFAULT_VOLUME;
             }
             if (type != PORT_TYPE_VIBRATION) {
-                openDevice(port);
+                port.source = AudioMixer::Get().RegisterSource(freq, port.channels);
             }
             return i + 1;
         }
@@ -338,33 +268,36 @@ int APS5_VABI sceAudioOutOpen(int userId, int type, int index, std::uint32_t len
     return -2144993275;
 }
 
+/**
+ * @brief Closes an active AudioOut v1 port and detaches it from the host mixer.
+ * @param handle Valid handle returned from sceAudioOutOpen.
+ * @return 0 on success, or SCE_AUDIO_OUT_ERROR_INVALID_HANDLE.
+ */
 int APS5_VABI sceAudioOutClose(int handle) noexcept {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
         return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
     }
-    closeDevice(*port);
+    if (port->source) {
+        AudioMixer::Get().UnregisterSource(port->source);
+        port->source = nullptr;
+    }
     *port = Port{};
     return 0;
 }
 
+/**
+ * @brief Outputs one block of audio samples on an AudioOut v1 port.
+ * @param handle Port handle.
+ * @param ptr Pointer to audio PCM buffer, or nullptr to drain queued audio.
+ * @return Number of samples processed on success, or negative error code.
+ */
 int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) noexcept {
     std::lock_guard<std::mutex> lock(g_mutex);
     Port* port = getPort(handle);
     if (port == nullptr) {
         return SCE_AUDIO_OUT_ERROR_INVALID_HANDLE;
-    }
-
-    const std::uint64_t blockUs = (1000000ULL * port->samplesNum) / port->freq;
-    const std::uint64_t now = sceKernelGetProcessTime();
-    const std::uint64_t next = port->lastOutputTime + blockUs;
-    if (next > now && port->device == 0) {
-        const std::uint64_t waitUs = next - now;
-        struct timespec req{};
-        req.tv_sec = static_cast<time_t>(waitUs / 1000000ULL);
-        req.tv_nsec = static_cast<long>((waitUs % 1000000ULL) * 1000ULL);
-        nanosleep(&req, nullptr);
     }
 
     try {
@@ -376,6 +309,12 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) noexcept {
     return static_cast<int>(port->samplesNum);
 }
 
+/**
+ * @brief Outputs audio samples simultaneously across multiple AudioOut v1 ports.
+ * @param param Array of output parameter descriptors containing handles and buffer pointers.
+ * @param num Number of descriptors in array.
+ * @return Number of samples output on primary port, or negative error code.
+ */
 int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) noexcept {
     if (param == nullptr || num == 0) {
         return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
@@ -390,37 +329,12 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     }
 
     Port& first = *getPort(param[0].handle);
-    const std::uint64_t blockUs = (1000000ULL * first.samplesNum) / first.freq;
-    const std::uint64_t now = sceKernelGetProcessTime();
-
-    std::uint64_t maxWait = 0;
-    for (std::uint32_t i = 0; i < num; i++) {
-        Port& p = *getPort(param[i].handle);
-        const std::uint64_t next = p.lastOutputTime + blockUs;
-        const std::uint64_t wait = next > now ? next - now : 0;
-        if (wait > maxWait) {
-            maxWait = wait;
-        }
-    }
-
-    bool anyDevice = false;
-    for (std::uint32_t i = 0; i < num; i++) {
-        if (getPort(param[i].handle)->device != 0) {
-            anyDevice = true;
-            break;
-        }
-    }
-
-    if (maxWait != 0 && !anyDevice) {
-        struct timespec req{};
-        req.tv_sec = static_cast<time_t>(maxWait / 1000000ULL);
-        req.tv_nsec = static_cast<long>((maxWait % 1000000ULL) * 1000ULL);
-        nanosleep(&req, nullptr);
-    }
 
     try {
         for (std::uint32_t i = 0; i < num; i++) {
-            if (auto* port = getPort(param[i].handle)) queueAudio(*port, param[i].ptr);
+            if (auto* port = getPort(param[i].handle)) {
+                queueAudio(*port, param[i].ptr);
+            }
         }
     } catch (const std::bad_alloc&) {
         return SCE_AUDIO_OUT_ERROR_OUT_OF_MEMORY;
@@ -428,12 +342,21 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
 
     const std::uint64_t done = sceKernelGetProcessTime();
     for (std::uint32_t i = 0; i < num; i++) {
-        if (auto* port = getPort(param[i].handle)) port->lastOutputTime = done;
+        if (auto* port = getPort(param[i].handle)) {
+            port->lastOutputTime = done;
+        }
     }
 
     return static_cast<int>(first.samplesNum);
 }
 
+/**
+ * @brief Sets per-channel volume multipliers for an AudioOut v1 port.
+ * @param handle Port handle.
+ * @param flag Bitmask selecting which channel volume values to apply.
+ * @param vol Array of volume integers (32768 = 1.0f unity gain).
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) noexcept {
     if (vol == nullptr) {
         return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
@@ -460,6 +383,12 @@ int APS5_VABI sceAudioOutSetVolume(int handle, std::uint32_t flag, int* vol) noe
     return 0;
 }
 
+/**
+ * @brief Queries the runtime output state and configuration of an AudioOut v1 port.
+ * @param handle Port handle.
+ * @param state Pointer receiving the port state structure.
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) noexcept {
     if (state == nullptr) {
         return SCE_AUDIO_OUT_ERROR_INVALID_ARGUMENT;
@@ -496,8 +425,6 @@ int APS5_VABI sceAudioOutGetPortState(int handle, AudioOutPortState* state) noex
             state->channel = 0;
             break;
         default:
-            // Unreachable: the type was validated at open, so an unknown type
-            // here means host-side port corruption.
             Unsupported("sceAudioOutGetPortState: unknown port type");
     }
     return 0;

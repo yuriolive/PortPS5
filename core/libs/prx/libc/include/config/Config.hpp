@@ -1,3 +1,14 @@
+// Config.hpp
+// PortPS5 - Runtime Configuration System
+//
+// Subsystem Ownership:
+//   Owned by core/libs/prx/libc. Coordinates configuration loading, parsing,
+//   and query interfaces across all PortPS5 subsystems.
+//
+// Threading & Invariants:
+//   - Config is initialized once before guest thread execution begins.
+//   - All accessors are read-only and thread-safe without locks.
+
 #ifndef CORE_LIBS_PRX_LIBC_CONFIG_HPP
 #define CORE_LIBS_PRX_LIBC_CONFIG_HPP
 
@@ -183,5 +194,23 @@ private:
 
 }  // namespace Config
 }  // namespace PortPS5
+
+// Verbatim cross-prx Loader API (docs/spec/build-toolchain.md NID rule).
+//
+// Why free functions: `nid_patcher libc` runs without `--preserve-exports`
+// (`core/libs/CMakeLists.txt`), so the mangled `Loader::` methods would hash
+// in the patched DLL while other prx import the verbatim mangled names and
+// the load fails with `GetLastError` 127 (`NidResolver.cpp:54-62`). These
+// `extern "C"` `_nid_no_patch` names are kept verbatim, so every prx links
+// them. Host-to-host calls only (never guest-reachable), hence no APS5_VABI.
+// The `Get` wrapper inherits `Loader::Get` semantics: it aborts when
+// `Initialize` has not run, because start-up must precede guest threads.
+//
+// @brief Reports whether `Loader::Initialize` has succeeded.
+// @return True once a config instance is stored.
+extern "C" bool PortPS5_Config_Loader_IsInitialized_nid_no_patch();
+// @brief Returns the parsed config; aborts when not initialized.
+// @return The process-wide parsed config owned by libc.
+extern "C" const PortPS5::Config::ResolvedConfig& PortPS5_Config_Loader_Get_nid_no_patch();
 
 #endif
