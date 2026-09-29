@@ -101,38 +101,47 @@ int PoolDecommit(void* addr, uint64_t len) {
     }
     const int ret = DoMprotect(addr, static_cast<size_t>(len), 0);
     if (ret == 0) {
-        PoolState& pool = Pool();
-        std::lock_guard<std::mutex> lock(pool.mutex);
-        const uintptr_t start = reinterpret_cast<uintptr_t>(addr);
-        const uintptr_t end = start + static_cast<size_t>(len);
-
-        size_t decommitted = 0;
-        auto it = pool.committedRanges.upper_bound(start);
-        if (it != pool.committedRanges.begin() && std::prev(it)->first + std::prev(it)->second > start) {
-            --it;
-        }
-        while (it != pool.committedRanges.end() && it->first < end) {
-            uintptr_t rStart = it->first;
-            uintptr_t rEnd = rStart + it->second;
-            uintptr_t oStart = std::max(start, rStart);
-            uintptr_t oEnd = std::min(end, rEnd);
-            if (oStart < oEnd) {
-                decommitted += (oEnd - oStart);
-            }
-            it = pool.committedRanges.erase(it);
-            if (rStart < start) {
-                pool.committedRanges[rStart] = start - rStart;
-            }
-            if (rEnd > end) {
-                pool.committedRanges[end] = rEnd - end;
-            }
-        }
-        pool.committedBytes -= (decommitted < pool.committedBytes) ? decommitted : pool.committedBytes;
+        PoolPurgeCommittedRange(reinterpret_cast<uintptr_t>(addr), static_cast<size_t>(len));
     }
     return ret;
 }
 
 }  // namespace
+
+/**
+ * @brief Implementation of memory pool committed range purging.
+ *
+ * Purges committed intervals overlapping [start, start + len) from PoolState and decrements committedBytes.
+ */
+void PoolPurgeCommittedRange(uintptr_t start, size_t len) {
+    if (len == 0) return;
+    PoolState& pool = Pool();
+    std::lock_guard<std::mutex> lock(pool.mutex);
+    const uintptr_t end = start + len;
+
+    size_t decommitted = 0;
+    auto it = pool.committedRanges.upper_bound(start);
+    if (it != pool.committedRanges.begin() && std::prev(it)->first + std::prev(it)->second > start) {
+        --it;
+    }
+    while (it != pool.committedRanges.end() && it->first < end) {
+        uintptr_t rStart = it->first;
+        uintptr_t rEnd = rStart + it->second;
+        uintptr_t oStart = std::max(start, rStart);
+        uintptr_t oEnd = std::min(end, rEnd);
+        if (oStart < oEnd) {
+            decommitted += (oEnd - oStart);
+        }
+        it = pool.committedRanges.erase(it);
+        if (rStart < start) {
+            pool.committedRanges[rStart] = start - rStart;
+        }
+        if (rEnd > end) {
+            pool.committedRanges[end] = rEnd - end;
+        }
+    }
+    pool.committedBytes -= (decommitted < pool.committedBytes) ? decommitted : pool.committedBytes;
+}
 
 extern "C" {
 

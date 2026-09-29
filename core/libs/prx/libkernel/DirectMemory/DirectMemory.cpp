@@ -298,6 +298,7 @@ int DoMunmap(void* addr, size_t len) {
         mutation.Unmap(addr, len, [&](const void*, bool) {
             Unmap(addr, len);
         });
+        PoolPurgeCommittedRange(reinterpret_cast<uintptr_t>(addr), len);
         return 0;
     } catch (...) {
         return SCE_KERNEL_ERROR_EINVAL;

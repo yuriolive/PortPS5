@@ -175,4 +175,31 @@ TEST(DirectMemoryPool, RejectNullPhysOut) {
     EXPECT_EQ(DirectMemoryAlloc(0, 1024 * 1024 * 1024, PS5_PAGE_SIZE, PS5_PAGE_SIZE, 0, nullptr), ::SCE_KERNEL_ERROR_EINVAL);
 }
 
+// Verifies that unmapping a reserved memory pool region via sceKernelMunmap purges committed accounting from PoolState.
+TEST(DirectMemoryPool, MunmapPurgesCommittedMemoryPoolAccounting) {
+    void* addr = nullptr;
+    constexpr size_t reserveSize = 2 * 1024 * 1024; // 2 MB = 1 pool block
+
+    KernelMemoryPoolBlockStats initialStats{};
+    ASSERT_EQ(sceKernelMemoryPoolGetBlockStats(&initialStats, sizeof(initialStats)), 0);
+
+    ASSERT_EQ(sceKernelMemoryPoolReserve(nullptr, reserveSize, reserveSize, 0, &addr), 0);
+    ASSERT_NE(addr, nullptr);
+
+    // Commit 64 KB inside the reservation
+    EXPECT_EQ(sceKernelMemoryPoolCommit(addr, 64 * 1024, 0, 3, 0), 0);
+    KernelMemoryPoolBlockStats committedStats{};
+    ASSERT_EQ(sceKernelMemoryPoolGetBlockStats(&committedStats, sizeof(committedStats)), 0);
+    EXPECT_EQ(committedStats.allocated_flushed_blocks, initialStats.allocated_flushed_blocks + 1);
+
+    // Unmap the reservation directly with sceKernelMunmap without prior PoolDecommit
+    EXPECT_EQ(sceKernelMunmap(reinterpret_cast<uint64_t>(addr), reserveSize), 0);
+
+    // Block stats must reflect that the committed range was purged
+    KernelMemoryPoolBlockStats afterMunmapStats{};
+    ASSERT_EQ(sceKernelMemoryPoolGetBlockStats(&afterMunmapStats, sizeof(afterMunmapStats)), 0);
+    EXPECT_EQ(afterMunmapStats.allocated_flushed_blocks, initialStats.allocated_flushed_blocks);
+}
+
 } // namespace
+

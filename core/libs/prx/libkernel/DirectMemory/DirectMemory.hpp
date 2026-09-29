@@ -71,6 +71,13 @@ int DoMunmap(void* addr, size_t len);
  */
 int DoReserveVirtual(void** addr, size_t len, size_t alignment);
 
+/**
+ * @brief Purges committed address ranges and decrements committed byte accounting for a memory pool range.
+ * @param start Base address to purge.
+ * @param len Size in bytes to purge.
+ */
+void PoolPurgeCommittedRange(uintptr_t start, size_t len);
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 struct KernelMemoryPoolBatchEntry;
