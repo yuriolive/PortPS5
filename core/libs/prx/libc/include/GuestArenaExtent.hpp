@@ -45,9 +45,11 @@ struct FreeExtent {
 // MarkUsed op record here too, so they free uniformly — wiring PR.)
 class ExtentAllocator {
 public:
+    // Starts without an arena; Init must succeed before allocating.
     ExtentAllocator() = default;
     ExtentAllocator(const ExtentAllocator&) = delete;
     ExtentAllocator& operator=(const ExtentAllocator&) = delete;
+    // Releases allocator metadata without freeing or unmapping guest memory.
     ~ExtentAllocator();
 
     // Covers [base, base + bytes) as one free extent, dropping prior state.
@@ -55,20 +57,25 @@ public:
     // allocation failure) returns false with the previous arena untouched.
     [[nodiscard]] bool Init(std::uint64_t base, std::uint64_t bytes) noexcept;
 
-    // Lowest-address fit for bytes at a pow2 alignment, or 0 on failure.
-    // 0 is never a valid guest address (arena lives above 1 TiB), so it is
-    // an unambiguous failure sentinel. bytes == 0 or non-pow2 align fails.
+    // Lowest-address fit for bytes at a nonzero power-of-two byte alignment.
+    // Returns 0 for zero bytes, invalid alignment, no fitting extent, or
+    // metadata allocation failure, leaving free and live ranges unchanged.
+    // Callers must use a nonzero arena base to make 0 an unambiguous failure
+    // sentinel: Init accepts base 0, and allocating there also returns 0.
     // Success records the range in the live set (see class comment).
     [[nodiscard]] std::uint64_t Allocate(std::uint64_t bytes, std::uint64_t alignment) noexcept;
 
-    // Returns exactly the [base, size) range a previous Allocate returned,
-    // coalescing with neighbouring free extents. Any other range — unknown,
-    // a sub-range of a live allocation, a double free, out-of-arena or
+    // Releases exactly the [base, base + bytes) range of a live allocation,
+    // coalescing with neighboring free extents and returning true.
+    // Any other range — unknown, a sub-range of a live allocation, a double
+    // free, out-of-arena or
     // wrapping — returns false with the tree untouched, as does a
     // replacement-node allocation failure.
     [[nodiscard]] bool Free(std::uint64_t base, std::uint64_t bytes) noexcept;
 
     // True when [address, address + bytes) lies inside the arena bounds.
+    // Checks bounds regardless of whether the range is free or allocated.
+    // False before successful Init, for zero bytes, or for a wrapping range.
     [[nodiscard]] bool Contains(std::uint64_t address, std::uint64_t bytes) const noexcept;
 
     // Number of disjoint free extents (introspection for tests).
@@ -80,6 +87,9 @@ public:
     // Reentrancy-safe: extents are snapshotted before the first visit, so a
     // visitor may call back into the allocator (tests do) without crashing
     // on nodes deleted mid-traversal; the visitor observes the snapshot.
+    // Snapshot growth errors (std::bad_alloc or std::length_error) propagate
+    // before any visits. Exceptions from visit propagate immediately,
+    // skipping the remaining extents.
     template <typename Fn>
     void ForEachFree(Fn visit) const {
         // Snapshot first (may throw bad_alloc on OOM); the traversal itself
@@ -94,6 +104,7 @@ public:
 private:
     struct Node;
 
+    // Appends to the vector<FreeExtent> at out; vector growth errors propagate.
     static void AppendExtent(void* out, std::uint64_t base, std::uint64_t size) {
         static_cast<std::vector<FreeExtent>*>(out)->push_back(FreeExtent{base, size});
     }

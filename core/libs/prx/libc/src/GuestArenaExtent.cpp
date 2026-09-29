@@ -180,6 +180,7 @@ ExtentAllocator::Node* ExtentAllocator::Predecessor(Node* slot, std::uint64_t ke
     return best;
 }
 
+// Deletes every metadata node in slot's subtree; nullptr is a no-op.
 void ExtentAllocator::Destroy(Node* slot) noexcept {
     if (slot == nullptr) {
         return;
@@ -189,6 +190,9 @@ void ExtentAllocator::Destroy(Node* slot) noexcept {
     delete slot;
 }
 
+// Visits subtree extents in ascending address order, passing fn through.
+// The callback must not mutate the tree; its exceptions stop traversal and
+// propagate to the caller. A null subtree produces no visits.
 void ExtentAllocator::InOrder(const Node* slot, void* fn, VisitorC visit) {
     if (slot == nullptr) {
         return;
@@ -253,6 +257,8 @@ std::uint64_t ExtentAllocator::FreeExtentCount() const noexcept {
     return count;
 }
 
+// Visits the current free tree without a snapshot; InOrder's callback
+// restrictions and exception propagation apply.
 void ExtentAllocator::ForEachFreeImpl(void* fn, VisitorC visit) const {
     InOrder(root_, fn, visit);
 }
@@ -278,6 +284,10 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
     struct Search {
         enum class Result { Found, NoFit, Oom };
 
+        // Carves the lowest aligned fit from slot and records it in liveRoot.
+        // Requires nonzero bytes and power-of-two alignment. Found makes out
+        // the allocated base; otherwise out is unspecified. NoFit and Oom
+        // preserve both trees and prio; Oom stops the search at the first fit.
         static Result Run(Node*& slot, std::uint64_t bytes, std::uint64_t alignment, Node*& liveRoot, std::uint64_t& prio,
                           std::uint64_t& out) noexcept {
             Node* node = slot;
