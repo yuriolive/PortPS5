@@ -21,7 +21,8 @@
 
 namespace {
 
-// Wrapping-safe align-up; false when the result overflows.
+/// Rounds value up to a nonzero power-of-two alignment and writes out on success.
+/// Returns false on overflow, leaving out unchanged.
 bool AlignUp(std::uint64_t value, std::uint64_t alignment, std::uint64_t& out) {
     const std::uint64_t mask = alignment - 1;
     if (value > UINT64_MAX - mask) {
@@ -36,6 +37,7 @@ bool AlignUp(std::uint64_t value, std::uint64_t alignment, std::uint64_t& out) {
 // arena base and hops over each used range in address order).
 class LinearModel {
 public:
+    /// Resets the reference arena and clears allocations; an empty or wrapping range returns false unchanged.
     bool Init(std::uint64_t base, std::uint64_t bytes) {
         if (bytes == 0 || bytes > UINT64_MAX - base) {
             return false;
@@ -46,6 +48,9 @@ public:
         return true;
     }
 
+    /// Returns the first aligned gap from the linear scan, recording the allocation.
+    /// Returns 0 for invalid arguments, alignment overflow, or insufficient space;
+    /// callers initialize the model with the nonzero arena used by the tests.
     std::uint64_t Allocate(std::uint64_t bytes, std::uint64_t alignment) {
         if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0) {
             return 0;
@@ -71,6 +76,7 @@ public:
         return candidate;
     }
 
+    /// Removes an exact recorded [base, base + bytes) range, or returns false without mutation.
     bool Free(std::uint64_t base, std::uint64_t bytes) {
         const auto it = used_.find(base);
         if (it == used_.end() || it->second != base + bytes) {
@@ -80,7 +86,7 @@ public:
         return true;
     }
 
-    // Free gaps derived from the used map, ascending, for set comparison.
+    /// Returns free gaps as ascending (base, size) pairs derived from the used map.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> FreeExtents() const {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> gaps;
         std::uint64_t cursor = base_;
@@ -105,7 +111,9 @@ private:
 // Deterministic PRNG (splitmix64) so the op stream is identical every run.
 class Rng {
 public:
+    /// Seeds the deterministic operation stream; identical seeds reproduce the same sequence.
     explicit Rng(std::uint64_t seed) : state_(seed) {}
+    /// Advances the generator state and returns the next mixed 64-bit value.
     std::uint64_t Next() {
         std::uint64_t z = (state_ += 0x9E3779B97F4A7C15ULL);
         z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -117,6 +125,7 @@ private:
     std::uint64_t state_;
 };
 
+/// Asserts that model and tree have identical ascending free extents, comparing count, bases, and sizes.
 void ExpectFreeSetsEqual(const LinearModel& model, const PortPS5::GuestMemory::ExtentAllocator& tree) {
     const auto expected = model.FreeExtents();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> actual;
@@ -130,8 +139,8 @@ void ExpectFreeSetsEqual(const LinearModel& model, const PortPS5::GuestMemory::E
 
 }  // namespace
 
-// Verifies fresh allocations come back in ascending address order (the
-// guest-visible first-fit contract titles rely on).
+/// Verifies fresh allocations come back in ascending address order (the
+/// guest-visible first-fit contract titles rely on).
 TEST(GuestArenaExtent, AscendingFirstFitOrder) {
     PortPS5::GuestMemory::ExtentAllocator tree;
     ASSERT_TRUE(tree.Init(0x10000ULL, 0x10000ULL));
@@ -143,8 +152,8 @@ TEST(GuestArenaExtent, AscendingFirstFitOrder) {
     EXPECT_EQ(third, 0x12000ULL);
 }
 
-// Verifies an aligned request skips a tight low extent whose alignment
-// padding would overflow it, landing exactly where the linear scan lands.
+/// Verifies an aligned request skips a tight low extent whose alignment
+/// padding would overflow it, landing exactly where the linear scan lands.
 TEST(GuestArenaExtent, AlignmentSkipsTightExtent) {
     PortPS5::GuestMemory::ExtentAllocator tree;
     LinearModel model;
@@ -156,8 +165,8 @@ TEST(GuestArenaExtent, AlignmentSkipsTightExtent) {
     EXPECT_EQ(model.Allocate(0x800ULL, 0x1000ULL), 0x11000ULL);
 }
 
-// Verifies freeing the middle of three contiguous blocks reuses the lowest
-// fit, and that freeing all three coalesces back to a single extent.
+/// Verifies freeing the middle of three contiguous blocks reuses the lowest
+/// fit, and that freeing all three coalesces back to a single extent.
 TEST(GuestArenaExtent, CoalesceBothNeighbours) {
     PortPS5::GuestMemory::ExtentAllocator tree;
     ASSERT_TRUE(tree.Init(0x10000ULL, 0x30000ULL));
@@ -174,8 +183,8 @@ TEST(GuestArenaExtent, CoalesceBothNeighbours) {
     EXPECT_EQ(tree.Allocate(0x3000ULL, 1ULL), 0x10000ULL);
 }
 
-// Verifies an allocation of the whole arena drains the tree, further
-// allocation fails, and a full free restores one single extent.
+/// Verifies an allocation of the whole arena drains the tree, further
+/// allocation fails, and a full free restores one single extent.
 TEST(GuestArenaExtent, ExactFitAndExhaustion) {
     PortPS5::GuestMemory::ExtentAllocator tree;
     ASSERT_TRUE(tree.Init(0x10000ULL, 0x4000ULL));
@@ -188,9 +197,9 @@ TEST(GuestArenaExtent, ExactFitAndExhaustion) {
     EXPECT_EQ(tree.Allocate(0x4000ULL, 0x4000ULL), 0x10000ULL);
 }
 
-// Verifies invalid arguments fail cleanly with no state change and no throw:
-// zero bytes, non-pow2 alignment, unknown/double/overlapping frees, ranges
-// outside the arena, and wrapping ranges.
+/// Verifies invalid arguments fail cleanly with no state change and no throw:
+/// zero bytes, non-pow2 alignment, unknown/double/overlapping frees, ranges
+/// outside the arena, and wrapping ranges.
 TEST(GuestArenaExtent, InvalidArgsRejected) {
     PortPS5::GuestMemory::ExtentAllocator tree;
     ASSERT_TRUE(tree.Init(0x10000ULL, 0x10000ULL));
@@ -210,12 +219,12 @@ TEST(GuestArenaExtent, InvalidArgsRejected) {
     EXPECT_EQ(tree.Allocate(0x1000ULL, 1ULL), 0x10000ULL);
 }
 
-// Verifies failed operations never mutate the free set: oversized requests
-// (including bytes larger than the whole arena, which once wrapped the
-// containment subtraction and wrongly reported containment, letting Free
-// insert past arenaEnd_ on a drained arena), unknown and double frees, and
-// invalid arguments all leave the tree identical, and the arena still serves
-// allocations afterwards.
+/// Verifies failed operations never mutate the free set: oversized requests
+/// (including bytes larger than the whole arena, which once wrapped the
+/// containment subtraction and wrongly reported containment, letting Free
+/// insert past arenaEnd_ on a drained arena), unknown and double frees, and
+/// invalid arguments all leave the tree identical, and the arena still serves
+/// allocations afterwards.
 TEST(GuestArenaExtent, FailedOpsPreserveFreeSet) {
     PortPS5::GuestMemory::ExtentAllocator tree;
     ASSERT_TRUE(tree.Init(0x10000ULL, 0x10000ULL));
@@ -261,10 +270,10 @@ TEST(GuestArenaExtent, FailedOpsPreserveFreeSet) {
     EXPECT_EQ(tree.Allocate(0x10000ULL, 1ULL), 0x10000ULL);
 }
 
-// Verifies a ForEachFree visitor may call back into the same allocator: the
-// traversal runs over a snapshot, so extents allocated mid-visit cannot
-// corrupt the iteration (previously resuming through a deleted node's right
-// pointer was use-after-free).
+/// Verifies a ForEachFree visitor may call back into the same allocator: the
+/// traversal runs over a snapshot, so extents allocated mid-visit cannot
+/// corrupt the iteration (previously resuming through a deleted node's right
+/// pointer was use-after-free).
 TEST(GuestArenaExtent, ForEachFreeReentrantVisitorSafe) {
     PortPS5::GuestMemory::ExtentAllocator tree;
     ASSERT_TRUE(tree.Init(0x10000ULL, 0x10000ULL));
@@ -283,8 +292,8 @@ TEST(GuestArenaExtent, ForEachFreeReentrantVisitorSafe) {
     EXPECT_EQ(tree.Allocate(0xF000ULL, 1ULL), 0x11000ULL);
 }
 
-// Verifies the tree returns bit-identical addresses to the reference linear
-// scan across a mixed alloc/free stream, with periodic free-set comparison.
+/// Verifies the tree returns bit-identical addresses to the reference linear
+/// scan across a mixed alloc/free stream, with periodic free-set comparison.
 TEST(GuestArenaExtent, MatchesLinearScanFuzz) {
     constexpr std::uint64_t kBase = 0x10'0000'0000ULL;  // arena-like placement above 1 TiB
     constexpr std::uint64_t kSize = 0x4000'0000ULL;     // 1 GiB

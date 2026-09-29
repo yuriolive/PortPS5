@@ -26,19 +26,19 @@
 namespace PortPS5::GuestMemory {
 namespace {
 
-// True when value is a non-zero power of two.
+/// True when value is a non-zero power of two.
 bool IsPow2(std::uint64_t value) noexcept {
     return value != 0 && (value & (value - 1)) == 0;
 }
 
-// False when size is 0 or base + size overflows.
+/// False when size is 0 or base + size overflows.
 bool RangeValid(std::uint64_t base, std::uint64_t size) noexcept {
     return size != 0 && size <= std::numeric_limits<std::uint64_t>::max() - base;
 }
 
-// Deterministic 64-bit mixer for treap priorities (splitmix64, fixed key).
-// Determinism matters: the same op stream must rebuild the same shape so
-// allocation addresses are reproducible run to run.
+/// Deterministic 64-bit mixer for treap priorities (splitmix64, fixed key).
+/// Determinism matters: the same op stream must rebuild the same shape so
+/// allocation addresses are reproducible run to run.
 std::uint64_t MixPriority(std::uint64_t counter) noexcept {
     std::uint64_t z = counter + 0x9E3779B97F4A7C15ULL;
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -57,7 +57,7 @@ struct ExtentAllocator::Node {
     Node* right = nullptr;
 };
 
-// Recomputes the augmentation after a structural change.
+/// Recomputes the augmentation after a structural change.
 void ExtentAllocator::Refresh(Node* node) noexcept {
     std::uint64_t best = node->size;
     if (node->left != nullptr && node->left->maxSub > best) {
@@ -69,7 +69,7 @@ void ExtentAllocator::Refresh(Node* node) noexcept {
     node->maxSub = best;
 }
 
-// Treap merge of two BSTs where every key in left < every key in right.
+/// Treap merge of two BSTs where every key in left < every key in right.
 ExtentAllocator::Node* ExtentAllocator::Merge(Node* left, Node* right) noexcept {
     if (left == nullptr) {
         return right;
@@ -87,7 +87,7 @@ ExtentAllocator::Node* ExtentAllocator::Merge(Node* left, Node* right) noexcept 
     return right;
 }
 
-// Splits slot by key: left gets bases < key, right gets bases >= key.
+/// Splits slot by key: left gets bases < key, right gets bases >= key.
 void ExtentAllocator::Split(Node* slot, std::uint64_t key, Node*& left, Node*& right) noexcept {
     if (slot == nullptr) {
         left = right = nullptr;
@@ -104,7 +104,7 @@ void ExtentAllocator::Split(Node* slot, std::uint64_t key, Node*& left, Node*& r
     }
 }
 
-// Inserts an already-allocated node by base address, preserving heap order.
+/// Inserts an already-allocated node by base address, preserving heap order.
 void ExtentAllocator::InsertNode(Node*& slot, Node* node) noexcept {
     if (slot == nullptr) {
         slot = node;
@@ -124,6 +124,7 @@ void ExtentAllocator::InsertNode(Node*& slot, Node* node) noexcept {
     Refresh(slot);
 }
 
+/// Removes key from slot and returns its detached node for caller disposal, or nullptr if absent.
 ExtentAllocator::Node* ExtentAllocator::EraseKey(Node*& slot, std::uint64_t key) noexcept {
     if (slot == nullptr) {
         return nullptr;
@@ -141,7 +142,7 @@ ExtentAllocator::Node* ExtentAllocator::EraseKey(Node*& slot, std::uint64_t key)
     return removed;
 }
 
-// Exact-key lookup; returns the node or nullptr.
+/// Exact-key lookup; returns the node or nullptr.
 ExtentAllocator::Node* ExtentAllocator::Find(Node* slot, std::uint64_t key) noexcept {
     while (slot != nullptr) {
         if (key == slot->base) {
@@ -152,7 +153,7 @@ ExtentAllocator::Node* ExtentAllocator::Find(Node* slot, std::uint64_t key) noex
     return nullptr;
 }
 
-// Smallest node with base >= key, or nullptr.
+/// Smallest node with base >= key, or nullptr.
 ExtentAllocator::Node* ExtentAllocator::LowerBound(Node* slot, std::uint64_t key) noexcept {
     Node* best = nullptr;
     while (slot != nullptr) {
@@ -166,7 +167,7 @@ ExtentAllocator::Node* ExtentAllocator::LowerBound(Node* slot, std::uint64_t key
     return best;
 }
 
-// Greatest node with base < key, or nullptr.
+/// Greatest node with base < key, or nullptr.
 ExtentAllocator::Node* ExtentAllocator::Predecessor(Node* slot, std::uint64_t key) noexcept {
     Node* best = nullptr;
     while (slot != nullptr) {
@@ -180,7 +181,7 @@ ExtentAllocator::Node* ExtentAllocator::Predecessor(Node* slot, std::uint64_t ke
     return best;
 }
 
-// Deletes every metadata node in slot's subtree; nullptr is a no-op.
+/// Deletes every metadata node in slot's subtree; nullptr is a no-op.
 void ExtentAllocator::Destroy(Node* slot) noexcept {
     if (slot == nullptr) {
         return;
@@ -190,9 +191,9 @@ void ExtentAllocator::Destroy(Node* slot) noexcept {
     delete slot;
 }
 
-// Visits subtree extents in ascending address order, passing fn through.
-// The callback must not mutate the tree; its exceptions stop traversal and
-// propagate to the caller. A null subtree produces no visits.
+/// Visits subtree extents in ascending address order, passing fn through.
+/// The callback must not mutate the tree; its exceptions stop traversal and
+/// propagate to the caller. A null subtree produces no visits.
 void ExtentAllocator::InOrder(const Node* slot, void* fn, VisitorC visit) {
     if (slot == nullptr) {
         return;
@@ -202,6 +203,7 @@ void ExtentAllocator::InOrder(const Node* slot, void* fn, VisitorC visit) {
     InOrder(slot->right, fn, visit);
 }
 
+/// Releases both metadata trees without freeing or unmapping guest memory.
 ExtentAllocator::~ExtentAllocator() {
     Destroy(root_);
     Destroy(liveRoot_);
@@ -209,6 +211,8 @@ ExtentAllocator::~ExtentAllocator() {
     liveRoot_ = nullptr;
 }
 
+/// Resets to one free extent covering [base, base + bytes), discarding live records.
+/// Returns false without changing state for an invalid range or metadata allocation failure.
 bool ExtentAllocator::Init(std::uint64_t base, std::uint64_t bytes) noexcept {
     if (!RangeValid(base, bytes)) {
         return false;
@@ -234,6 +238,8 @@ bool ExtentAllocator::Init(std::uint64_t base, std::uint64_t bytes) noexcept {
     return true;
 }
 
+/// Returns whether the nonempty, nonwrapping range lies within initialized arena bounds.
+/// This bounds check does not establish allocation ownership.
 bool ExtentAllocator::Contains(std::uint64_t address, std::uint64_t bytes) const noexcept {
     if (!RangeValid(address, bytes)) {
         return false;
@@ -249,6 +255,7 @@ bool ExtentAllocator::Contains(std::uint64_t address, std::uint64_t bytes) const
     return bytes <= arenaSize && address >= arenaBase_ && address - arenaBase_ <= arenaSize - bytes;
 }
 
+/// Returns the number of free extents, traversing without allocating metadata.
 std::uint64_t ExtentAllocator::FreeExtentCount() const noexcept {
     std::uint64_t count = 0;
     InOrder(root_, &count, [](void* c, std::uint64_t, std::uint64_t) {
@@ -257,12 +264,15 @@ std::uint64_t ExtentAllocator::FreeExtentCount() const noexcept {
     return count;
 }
 
-// Visits the current free tree without a snapshot; InOrder's callback
-// restrictions and exception propagation apply.
+/// Visits the current free tree without a snapshot; InOrder's callback
+/// restrictions and exception propagation apply.
 void ExtentAllocator::ForEachFreeImpl(void* fn, VisitorC visit) const {
     InOrder(root_, fn, visit);
 }
 
+/// Allocates the lowest-address fit for bytes at a nonzero power-of-two alignment.
+/// Returns 0 on invalid input, no fit, or metadata exhaustion, preserving both trees.
+/// An arena with base 0 can also return 0 on success; callers must avoid that ambiguity.
 std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t alignment) noexcept {
     if (bytes == 0 || !IsPow2(alignment)) {
         return 0;
@@ -284,10 +294,10 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
     struct Search {
         enum class Result { Found, NoFit, Oom };
 
-        // Carves the lowest aligned fit from slot and records it in liveRoot.
-        // Requires nonzero bytes and power-of-two alignment. Found makes out
-        // the allocated base; otherwise out is unspecified. NoFit and Oom
-        // preserve both trees and prio; Oom stops the search at the first fit.
+        /// Carves the lowest aligned fit from slot and records it in liveRoot.
+        /// Requires nonzero bytes and power-of-two alignment. Found makes out
+        /// the allocated base; otherwise out is unspecified. NoFit and Oom
+        /// preserve both trees and prio; Oom stops the search at the first fit.
         static Result Run(Node*& slot, std::uint64_t bytes, std::uint64_t alignment, Node*& liveRoot, std::uint64_t& prio,
                           std::uint64_t& out) noexcept {
             Node* node = slot;
@@ -382,6 +392,8 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
     return out;
 }
 
+/// Releases exactly one live [base, base + bytes) allocation and coalesces adjacent gaps.
+/// Returns false without changing either tree for invalid ownership, bounds, or metadata exhaustion.
 bool ExtentAllocator::Free(std::uint64_t base, std::uint64_t bytes) noexcept {
     if (!RangeValid(base, bytes) || !Contains(base, bytes)) {
         return false;

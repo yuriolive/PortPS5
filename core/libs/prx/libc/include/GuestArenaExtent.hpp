@@ -45,51 +45,53 @@ struct FreeExtent {
 // MarkUsed op record here too, so they free uniformly — wiring PR.)
 class ExtentAllocator {
 public:
-    // Starts without an arena; Init must succeed before allocating.
+    /// Starts without an arena; Init must succeed before allocating.
     ExtentAllocator() = default;
+    /// Copying is disabled because each allocator exclusively owns its metadata.
     ExtentAllocator(const ExtentAllocator&) = delete;
+    /// Copy assignment is disabled to prevent sharing owned metadata nodes.
     ExtentAllocator& operator=(const ExtentAllocator&) = delete;
-    // Releases allocator metadata without freeing or unmapping guest memory.
+    /// Releases allocator metadata without freeing or unmapping guest memory.
     ~ExtentAllocator();
 
-    // Covers [base, base + bytes) as one free extent, dropping prior state.
-    // Every failure mode (zero bytes, wrapping range, replacement-node
-    // allocation failure) returns false with the previous arena untouched.
+    /// Covers [base, base + bytes) as one free extent, dropping prior state.
+    /// Every failure mode (zero bytes, wrapping range, replacement-node
+    /// allocation failure) returns false with the previous arena untouched.
     [[nodiscard]] bool Init(std::uint64_t base, std::uint64_t bytes) noexcept;
 
-    // Lowest-address fit for bytes at a nonzero power-of-two byte alignment.
-    // Returns 0 for zero bytes, invalid alignment, no fitting extent, or
-    // metadata allocation failure, leaving free and live ranges unchanged.
-    // Callers must use a nonzero arena base to make 0 an unambiguous failure
-    // sentinel: Init accepts base 0, and allocating there also returns 0.
-    // Success records the range in the live set (see class comment).
+    /// Lowest-address fit for bytes at a nonzero power-of-two byte alignment.
+    /// Returns 0 for zero bytes, invalid alignment, no fitting extent, or
+    /// metadata allocation failure, leaving free and live ranges unchanged.
+    /// Callers must use a nonzero arena base to make 0 an unambiguous failure
+    /// sentinel: Init accepts base 0, and allocating there also returns 0.
+    /// Success records the range in the live set (see class comment).
     [[nodiscard]] std::uint64_t Allocate(std::uint64_t bytes, std::uint64_t alignment) noexcept;
 
-    // Releases exactly the [base, base + bytes) range of a live allocation,
-    // coalescing with neighboring free extents and returning true.
-    // Any other range — unknown, a sub-range of a live allocation, a double
-    // free, out-of-arena or
-    // wrapping — returns false with the tree untouched, as does a
-    // replacement-node allocation failure.
+    /// Releases exactly the [base, base + bytes) range of a live allocation,
+    /// coalescing with neighboring free extents and returning true.
+    /// Any other range — unknown, a sub-range of a live allocation, a double
+    /// free, out-of-arena or
+    /// wrapping — returns false with the tree untouched, as does a
+    /// replacement-node allocation failure.
     [[nodiscard]] bool Free(std::uint64_t base, std::uint64_t bytes) noexcept;
 
-    // True when [address, address + bytes) lies inside the arena bounds.
-    // Checks bounds regardless of whether the range is free or allocated.
-    // False before successful Init, for zero bytes, or for a wrapping range.
+    /// True when [address, address + bytes) lies inside the arena bounds.
+    /// Checks bounds regardless of whether the range is free or allocated.
+    /// False before successful Init, for zero bytes, or for a wrapping range.
     [[nodiscard]] bool Contains(std::uint64_t address, std::uint64_t bytes) const noexcept;
 
-    // Number of disjoint free extents (introspection for tests).
+    /// Number of disjoint free extents (introspection for tests).
     [[nodiscard]] std::uint64_t FreeExtentCount() const noexcept;
 
-    // Test-only introspection: calls visit(base, size) per free extent in
-    // ascending address order. Used by the differential test to compare
-    // against the reference model's free set. Not for hot paths.
-    // Reentrancy-safe: extents are snapshotted before the first visit, so a
-    // visitor may call back into the allocator (tests do) without crashing
-    // on nodes deleted mid-traversal; the visitor observes the snapshot.
-    // Snapshot growth errors (std::bad_alloc or std::length_error) propagate
-    // before any visits. Exceptions from visit propagate immediately,
-    // skipping the remaining extents.
+    /// Test-only introspection: calls visit(base, size) per free extent in
+    /// ascending address order. Used by the differential test to compare
+    /// against the reference model's free set. Not for hot paths.
+    /// Reentrancy-safe: extents are snapshotted before the first visit, so a
+    /// visitor may call back into the allocator (tests do) without crashing
+    /// on nodes deleted mid-traversal; the visitor observes the snapshot.
+    /// Snapshot growth errors (std::bad_alloc or std::length_error) propagate
+    /// before any visits. Exceptions from visit propagate immediately,
+    /// skipping the remaining extents.
     template <typename Fn>
     void ForEachFree(Fn visit) const {
         // Snapshot first (may throw bad_alloc on OOM); the traversal itself
@@ -104,25 +106,37 @@ public:
 private:
     struct Node;
 
-    // Appends to the vector<FreeExtent> at out; vector growth errors propagate.
+    /// Appends to the `vector<FreeExtent>` at out; vector growth errors propagate.
     static void AppendExtent(void* out, std::uint64_t base, std::uint64_t size) {
         static_cast<std::vector<FreeExtent>*>(out)->push_back(FreeExtent{base, size});
     }
 
-    using VisitorC = void (*)(void* fn, std::uint64_t base, std::uint64_t size);    void ForEachFreeImpl(void* fn, VisitorC visit) const;
+    using VisitorC = void (*)(void* fn, std::uint64_t base, std::uint64_t size);
+    /// Visits the live free tree in address order, forwarding fn to visit.
+    /// The callback must not mutate the tree; callback exceptions propagate.
+    void ForEachFreeImpl(void* fn, VisitorC visit) const;
 
     // Treap primitives (private static members so they can name Node).
+
+    /// Recomputes the subtree maximum for a non-null node after mutation.
     static void Refresh(Node* node) noexcept;
+    /// Returns the merged root; every key in left must precede every key in right.
     static Node* Merge(Node* left, Node* right) noexcept;
+    /// Partitions slot into left (base < key) and right (base >= key) trees.
     static void Split(Node* slot, std::uint64_t key, Node*& left, Node*& right) noexcept;
+    /// Inserts an owned, detached node with a unique base, updating slot and maxima.
     static void InsertNode(Node*& slot, Node* node) noexcept;
-    // Erases the node with exactly key; returns the removed node or nullptr.
+    /// Erases the node with exactly key; returns the removed node or nullptr.
     static Node* EraseKey(Node*& slot, std::uint64_t key) noexcept;
+    /// Returns the smallest-base node at or above key, or nullptr if none exists.
     static Node* LowerBound(Node* slot, std::uint64_t key) noexcept;
+    /// Returns the greatest-base node below key, or nullptr if none exists.
     static Node* Predecessor(Node* slot, std::uint64_t key) noexcept;
-    // Exact-key lookup; returns the node or nullptr.
+    /// Exact-key lookup; returns the node or nullptr.
     static Node* Find(Node* slot, std::uint64_t key) noexcept;
+    /// Deletes all metadata in slot; nullptr is allowed and guest memory is untouched.
     static void Destroy(Node* slot) noexcept;
+    /// Visits slot in address order, forwarding fn; no mutation is allowed and exceptions propagate.
     static void InOrder(const Node* slot, void* fn, VisitorC visit);
 
     Node* root_ = nullptr;      // free extents, keyed by base
