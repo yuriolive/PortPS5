@@ -247,7 +247,9 @@ bool ExtentAllocator::Contains(std::uint64_t address, std::uint64_t bytes) const
 
 std::uint64_t ExtentAllocator::FreeExtentCount() const noexcept {
     std::uint64_t count = 0;
-    ForEachFree([&](std::uint64_t, std::uint64_t) { ++count; });
+    InOrder(root_, &count, [](void* c, std::uint64_t, std::uint64_t) {
+        ++*static_cast<std::uint64_t*>(c);
+    });
     return count;
 }
 
@@ -274,16 +276,21 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
     // risking a tighter-but-unsafe prune bound here.
     // Local struct inside a member function: it sees private Node.
     struct Search {
-        static bool Run(Node*& slot, std::uint64_t bytes, std::uint64_t alignment, Node*& liveRoot, std::uint64_t& prio,
-                        std::uint64_t& out) noexcept {
+        enum class Result { Found, NoFit, Oom };
+
+        static Result Run(Node*& slot, std::uint64_t bytes, std::uint64_t alignment, Node*& liveRoot, std::uint64_t& prio,
+                          std::uint64_t& out) noexcept {
             Node* node = slot;
             if (node == nullptr || node->maxSub < bytes) {
-                return false;
+                return Result::NoFit;
             }
             if (node->left != nullptr && node->left->maxSub >= bytes) {
-                if (Run(node->left, bytes, alignment, liveRoot, prio, out)) {
-                    Refresh(node);
-                    return true;
+                const Result r = Run(node->left, bytes, alignment, liveRoot, prio, out);
+                if (r != Result::NoFit) {
+                    if (r == Result::Found) {
+                        Refresh(node);
+                    }
+                    return r;
                 }
             }
             // Exact check: alignUp can overflow near 2^64, in which case this
@@ -296,8 +303,9 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                     out = aligned;
                     // Transactional carve: the remainder nodes AND the live
                     // ownership record are allocated BEFORE the original
-                    // extent is removed, so a nothrow failure returns false
-                    // with both trees untouched.
+                    // extent is removed, so a nothrow failure aborts with
+                    // Result::Oom and both trees untouched. Priority updates
+                    // are rolled back on failure.
                     const std::uint64_t extentEnd = node->base + node->size;
                     const std::uint64_t allocEnd = aligned + bytes;
                     const std::uint64_t prefixBase = node->base;
@@ -308,24 +316,28 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                     Node* pre = nullptr;
                     Node* suf = nullptr;
                     Node* live = nullptr;
+                    const std::uint64_t initialPrio = prio;
                     if (prefixSize != 0) {
                         pre = new (std::nothrow) Node{prefixBase, prefixSize, prefixSize, MixPriority(++prio)};
                         if (pre == nullptr) {
-                            return false;
+                            prio = initialPrio;
+                            return Result::Oom;
                         }
                     }
                     if (hasSuffix) {
                         suf = new (std::nothrow) Node{suffixBase, suffixSize, suffixSize, MixPriority(++prio)};
                         if (suf == nullptr) {
                             delete pre;
-                            return false;
+                            prio = initialPrio;
+                            return Result::Oom;
                         }
                     }
                     live = new (std::nothrow) Node{aligned, bytes, bytes, MixPriority(++prio)};
                     if (live == nullptr) {
                         delete pre;
                         delete suf;
-                        return false;
+                        prio = initialPrio;
+                        return Result::Oom;
                     }
                     Node* merged = Merge(node->left, node->right);
                     delete node;
@@ -337,21 +349,24 @@ std::uint64_t ExtentAllocator::Allocate(std::uint64_t bytes, std::uint64_t align
                         InsertNode(slot, suf);
                     }
                     InsertNode(liveRoot, live);
-                    return true;
+                    return Result::Found;
                 }
             }
             if (node->right != nullptr && node->right->maxSub >= bytes) {
-                if (Run(node->right, bytes, alignment, liveRoot, prio, out)) {
-                    Refresh(node);
-                    return true;
+                const Result r = Run(node->right, bytes, alignment, liveRoot, prio, out);
+                if (r != Result::NoFit) {
+                    if (r == Result::Found) {
+                        Refresh(node);
+                    }
+                    return r;
                 }
             }
-            return false;
+            return Result::NoFit;
         }
     };
 
     std::uint64_t out = 0;
-    if (!Search::Run(root_, bytes, alignment, liveRoot_, priorityCounter_, out)) {
+    if (Search::Run(root_, bytes, alignment, liveRoot_, priorityCounter_, out) != Search::Result::Found) {
         return 0;
     }
     return out;
