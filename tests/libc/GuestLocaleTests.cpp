@@ -207,6 +207,15 @@ TEST(GuestLocaleTests, StandardStreamsArePlacementConstructedAndUsable) {
     ASSERT_NE(wcinStream, nullptr);
     EXPECT_NE(wcinStream->rdbuf(), nullptr);
 
+    // Verify standard stream ties and flushing settings
+    EXPECT_EQ(cinStream->tie(), coutStream);
+    EXPECT_EQ(cerrStream->tie(), coutStream);
+    EXPECT_NE(cerrStream->flags() & std::ios_base::unitbuf, 0);
+
+    EXPECT_EQ(wcinStream->tie(), wcoutStream);
+    EXPECT_EQ(wcerrStream->tie(), wcoutStream);
+    EXPECT_NE(wcerrStream->flags() & std::ios_base::unitbuf, 0);
+
     // Test that writing to a standard stream object executes through vptr and rdbuf without faulting
     std::stringbuf testBuf;
     std::streambuf* origBuf = cerrStream->rdbuf(&testBuf);

@@ -122,12 +122,20 @@ namespace {
 
 struct StandardStreamsInitializer {
     StandardStreamsInitializer() {
-        new (_ZSt4cout_nid_postfix) std::ostream(std::cout.rdbuf());
-        new (_ZSt4cerr_nid_postfix) std::ostream(std::cerr.rdbuf());
-        new (_ZSt3cin_nid_postfix) std::istream(std::cin.rdbuf());
-        new (_ZSt5wcout_nid_postfix) std::wostream(std::wcout.rdbuf());
-        new (_ZSt5wcerr_nid_postfix) std::wostream(std::wcerr.rdbuf());
-        new (_ZSt4wcin_nid_postfix) std::wistream(std::wcin.rdbuf());
+        auto* coutStream = new (_ZSt4cout_nid_postfix) std::ostream(std::cout.rdbuf());
+        auto* cerrStream = new (_ZSt4cerr_nid_postfix) std::ostream(std::cerr.rdbuf());
+        auto* cinStream = new (_ZSt3cin_nid_postfix) std::istream(std::cin.rdbuf());
+        auto* wcoutStream = new (_ZSt5wcout_nid_postfix) std::wostream(std::wcout.rdbuf());
+        auto* wcerrStream = new (_ZSt5wcerr_nid_postfix) std::wostream(std::wcerr.rdbuf());
+        auto* wcinStream = new (_ZSt4wcin_nid_postfix) std::wistream(std::wcin.rdbuf());
+
+        cinStream->tie(coutStream);
+        cerrStream->tie(coutStream);
+        cerrStream->setf(std::ios_base::unitbuf);
+
+        wcinStream->tie(wcoutStream);
+        wcerrStream->tie(wcoutStream);
+        wcerrStream->setf(std::ios_base::unitbuf);
     }
 };
 
