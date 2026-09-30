@@ -1,3 +1,6 @@
+// Mock-Vulkan driver tests for AGC graphics state decode, pipeline and draw recording.
+// Runs as a standalone executable (lavapipe-labelled ctest); no GPU, guest memory or game
+// data is used. Legacy harness: new cases belong in GoogleTest targets.
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"

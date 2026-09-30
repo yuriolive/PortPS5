@@ -67,30 +67,77 @@ TEST(DepthStencilState, DepthTestAndCompareOps) {
     EXPECT_FALSE(ds.depthWriteEnable) << "depth write with the test disabled is inert";
 }
 
-// Invariant: every supported AGC stencil op maps to the expected Vulkan op; the bitwise
-// ops (9..15) have no Vulkan equivalent and throw.
+// Invariant: the AGC StencilOp enum (AMD gfx10 register database: 0 KEEP, 1 ZERO, 2 ONES,
+// 3 REPLACE_TEST, 4 REPLACE_OP, 5 ADD_CLAMP, 6 SUB_CLAMP, 7 INVERT, 8 ADD_WRAP, 9 SUB_WRAP,
+// 10 AND, 11 OR, 12 XOR, 13 NAND, 14 NOR, 15 XNOR) maps to the matching Vulkan op. Values
+// with no Vulkan equivalent throw.
 TEST(DepthStencilState, StencilOpMapping) {
     using AgcDriver::Graphics::DecodeStencilOp;
-    const VkStencilOp expected[] = {VK_STENCIL_OP_KEEP, VK_STENCIL_OP_ZERO, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_REPLACE,
-        VK_STENCIL_OP_INCREMENT_AND_CLAMP, VK_STENCIL_OP_DECREMENT_AND_CLAMP, VK_STENCIL_OP_INVERT,
-        VK_STENCIL_OP_INCREMENT_AND_WRAP, VK_STENCIL_OP_DECREMENT_AND_WRAP};
-    for (std::uint32_t op = 0; op < 9; ++op) EXPECT_EQ(DecodeStencilOp(op), expected[op]) << op;
-    for (std::uint32_t op = 9; op < 16; ++op) EXPECT_THROW(DecodeStencilOp(op), std::runtime_error) << op;
+    EXPECT_EQ(DecodeStencilOp(0), VK_STENCIL_OP_KEEP);
+    EXPECT_EQ(DecodeStencilOp(1), VK_STENCIL_OP_ZERO);
+    EXPECT_EQ(DecodeStencilOp(3), VK_STENCIL_OP_REPLACE);
+    EXPECT_EQ(DecodeStencilOp(4), VK_STENCIL_OP_REPLACE);
+    EXPECT_EQ(DecodeStencilOp(5), VK_STENCIL_OP_INCREMENT_AND_CLAMP);
+    EXPECT_EQ(DecodeStencilOp(6), VK_STENCIL_OP_DECREMENT_AND_CLAMP);
+    EXPECT_EQ(DecodeStencilOp(7), VK_STENCIL_OP_INVERT);
+    EXPECT_EQ(DecodeStencilOp(8), VK_STENCIL_OP_INCREMENT_AND_WRAP);
+    EXPECT_EQ(DecodeStencilOp(9), VK_STENCIL_OP_DECREMENT_AND_WRAP);
+    for (const std::uint32_t op : {2u, 10u, 11u, 13u, 14u, 15u}) EXPECT_THROW(DecodeStencilOp(op), std::runtime_error) << op;
+    EXPECT_THROW(DecodeStencilOp(16), std::runtime_error);
+}
+
+// Invariant: ADD/SUB add STENCILOPVAL, Vulkan steps by one, so only an op value of 1 is
+// representable. A zero write mask makes any op a KEEP, even an unsupported one.
+TEST(DepthStencilState, StencilAddSubtractOperand) {
+    using AgcDriver::Graphics::DecodeStencilOp;
+    for (const std::uint32_t op : {5u, 6u, 8u, 9u}) {
+        EXPECT_NO_THROW(DecodeStencilOp(op, 0xff, 1));
+        EXPECT_THROW(DecodeStencilOp(op, 0xff, 2), std::runtime_error) << op;
+    }
+    EXPECT_EQ(DecodeStencilOp(10, 0, 0), VK_STENCIL_OP_KEEP);
+    EXPECT_EQ(DecodeStencilOp(5, 0, 7), VK_STENCIL_OP_KEEP);
+}
+
+// Invariant: XOR flips the written bits that are set in STENCILOPVAL. All written bits set
+// is INVERT, none set is KEEP, a partial flip has no Vulkan equivalent and is rejected.
+TEST(DepthStencilState, StencilXorOperands) {
+    using AgcDriver::Graphics::DecodeStencilOp;
+    EXPECT_EQ(DecodeStencilOp(12, 0x0f, 0x0f), VK_STENCIL_OP_INVERT);
+    EXPECT_EQ(DecodeStencilOp(12, 0x0f, 0xff), VK_STENCIL_OP_INVERT);
+    EXPECT_EQ(DecodeStencilOp(12, 0x0f, 0xf0), VK_STENCIL_OP_KEEP);
+    EXPECT_THROW(DecodeStencilOp(12, 0xff, 0x0f), std::runtime_error);
+}
+
+// Invariant: DB_DEPTH_CONTROL 0x002005B7 decodes to stencil+Z+Z-write on, ZFUNC=LEQUAL(3),
+// BACKFACE on, STENCILFUNC=5 (NOTEQUAL), STENCILFUNC_BF=2 (EQUAL); bit layout per the AMD
+// gfx10 register database. Cross-checked against sharpemu's register-decode vector.
+TEST(DepthStencilState, DepthControlRegisterVector) {
+    auto queue = makeQueue();
+    queue.context[0x200] = 0x002005B7u;
+    const auto ds = DecodeState(queue).depthStencil;
+    EXPECT_TRUE(ds.stencilTestEnable);
+    EXPECT_TRUE(ds.depthTestEnable);
+    EXPECT_TRUE(ds.depthWriteEnable);
+    EXPECT_FALSE(ds.depthBoundsTestEnable);
+    EXPECT_EQ(ds.depthCompareOp, VK_COMPARE_OP_LESS_OR_EQUAL);
+    EXPECT_EQ(ds.front.compareOp, VK_COMPARE_OP_NOT_EQUAL);
+    EXPECT_EQ(ds.back.compareOp, VK_COMPARE_OP_EQUAL);
 }
 
 // Invariant: front state comes from the low control fields; with BACKFACE_ENABLE clear the
 // back face mirrors the front, with it set the _BF fields and DB_STENCILREFMASK_BF are used.
 TEST(DepthStencilState, StencilFrontAndBackFaces) {
     auto queue = makeQueue();
-    // Stencil on, STENCILFUNC=LESS(1). Ops: fail=INVERT(6) pass=INCR_WRAP(7) zfail=ZERO(1).
+    // Stencil on, STENCILFUNC=LESS(1). Ops: fail=INVERT(7) pass=ADD_WRAP(8) zfail=ZERO(1);
+    // STENCILOPVAL=1 because ADD_WRAP adds it.
     queue.context[0x200] = 1u | (1u << 8u);
-    queue.context[0x10b] = 6u | (7u << 4u) | (1u << 8u);
-    queue.context[0x10c] = 0x5u | (0xf0u << 8u) | (0x3cu << 16u) | (0x5u << 24u);
+    queue.context[0x10b] = 7u | (8u << 4u) | (1u << 8u);
+    queue.context[0x10c] = 0x5u | (0xf0u << 8u) | (0x3cu << 16u) | (0x1u << 24u);
     auto ds = DecodeState(queue).depthStencil;
     EXPECT_TRUE(ds.stencilTestEnable);
     EXPECT_EQ(ds.front.compareOp, VK_COMPARE_OP_LESS);
     EXPECT_EQ(ds.front.failOp, VK_STENCIL_OP_INVERT);
-    EXPECT_EQ(ds.front.passOp, VK_STENCIL_OP_INCREMENT_AND_WRAP);
+    EXPECT_EQ(ds.front.passOp, VK_STENCIL_OP_INCREMENT_AND_WRAP);  // ADD_WRAP
     EXPECT_EQ(ds.front.depthFailOp, VK_STENCIL_OP_ZERO);
     EXPECT_EQ(ds.front.reference, 0x5u);
     EXPECT_EQ(ds.front.compareMask, 0xf0u);
@@ -98,14 +145,14 @@ TEST(DepthStencilState, StencilFrontAndBackFaces) {
     EXPECT_EQ(ds.back.passOp, ds.front.passOp) << "back mirrors front without BACKFACE_ENABLE";
     EXPECT_EQ(ds.back.writeMask, ds.front.writeMask);
 
-    // BACKFACE_ENABLE: STENCILFUNC_BF=GREATER(4), ops fail=KEEP pass=DECR_CLAMP(5) zfail=REPLACE_TEST(2).
+    // BACKFACE_ENABLE: STENCILFUNC_BF=GREATER(4), ops fail=KEEP pass=SUB_CLAMP(6) zfail=REPLACE_TEST(3).
     queue.context[0x200] |= 0x80u | (4u << 20u);
-    queue.context[0x10b] |= (5u << 16u) | (2u << 20u);
-    queue.context[0x10d] = 0x9u | (0x0fu << 8u) | (0xffu << 16u);
+    queue.context[0x10b] |= (6u << 16u) | (3u << 20u);
+    queue.context[0x10d] = 0x9u | (0x0fu << 8u) | (0xffu << 16u) | (0x1u << 24u);
     ds = DecodeState(queue).depthStencil;
     EXPECT_EQ(ds.back.compareOp, VK_COMPARE_OP_GREATER);
     EXPECT_EQ(ds.back.failOp, VK_STENCIL_OP_KEEP);
-    EXPECT_EQ(ds.back.passOp, VK_STENCIL_OP_DECREMENT_AND_CLAMP);
+    EXPECT_EQ(ds.back.passOp, VK_STENCIL_OP_DECREMENT_AND_CLAMP);  // SUB_CLAMP
     EXPECT_EQ(ds.back.depthFailOp, VK_STENCIL_OP_REPLACE);
     EXPECT_EQ(ds.back.reference, 0x9u);
     EXPECT_EQ(ds.back.compareMask, 0x0fu);
@@ -117,15 +164,20 @@ TEST(DepthStencilState, StencilFrontAndBackFaces) {
 }
 
 // Failure mode: REPLACE_OP with an op value different from the test value cannot be
-// expressed by a single Vulkan reference and must be rejected, not mistranslated.
+// expressed by a single Vulkan reference and must be rejected, not mistranslated. With a zero
+// write mask the op has no effect, so the mismatch is harmless and accepted (sharpemu case).
 TEST(DepthStencilState, ReplaceOpWithDifferentValueRejected) {
     auto queue = makeQueue();
     queue.context[0x200] = 1u;
-    queue.context[0x10b] = 3u << 4u;
-    queue.context[0x10c] = 0x1u | (0x2u << 24u);
+    queue.context[0x10b] = 4u << 4u;  // STENCILZPASS = REPLACE_OP
+    queue.context[0x10c] = 0x1u | (0xffu << 16u) | (0x2u << 24u);
     EXPECT_THROW(DecodeState(queue), std::runtime_error);
-    queue.context[0x10c] = 0x2u | (0x2u << 24u);
+    queue.context[0x10c] = 0x2u | (0xffu << 16u) | (0x2u << 24u);
     EXPECT_NO_THROW(DecodeState(queue));
+    queue.context[0x10c] = 0x1u | (0x2u << 24u);  // write mask 0
+    const auto ds = DecodeState(queue).depthStencil;
+    EXPECT_EQ(ds.front.passOp, VK_STENCIL_OP_KEEP);
+    EXPECT_EQ(ds.front.writeMask, 0u);
 }
 
 // Failure mode: reserved DB_DEPTH_CONTROL bits and bitwise stencil ops are rejected.
@@ -135,7 +187,8 @@ TEST(DepthStencilState, ReservedBitsAndBitwiseOpsRejected) {
     EXPECT_THROW(DecodeState(queue), std::runtime_error);
     queue = makeQueue();
     queue.context[0x200] = 1u;
-    queue.context[0x10b] = 9u;
+    queue.context[0x10b] = 10u;  // STENCIL_AND
+    queue.context[0x10c] = 0xffu << 16u;
     EXPECT_THROW(DecodeState(queue), std::runtime_error);
 }
 
@@ -167,18 +220,41 @@ TEST(DepthStencilState, DepthBounds) {
     EXPECT_THROW(DecodeState(queue), std::runtime_error);
 }
 
-// Invariant: the conditional colour-write bits (30/31) are decoded and, without a bound
-// depth surface, inert (the draw is accepted).
+// Invariant: bit 30 (colour write on depth fail) is decoded and inert without a depth test.
+// Bit 31 (disable colour writes on depth pass) would suppress colour output, which the host
+// pipeline cannot express, so it is rejected whenever CB_TARGET_MASK enables a colour write
+// and only accepted for a draw that writes no colour.
 TEST(DepthStencilState, ConditionalColorWriteBitsDecoded) {
     auto queue = makeQueue();
     queue.context[0x200] = 0x40000000u;
     auto ds = DecodeState(queue).depthStencil;
     EXPECT_TRUE(ds.colorWriteOnDepthFail);
     EXPECT_FALSE(ds.disableColorWriteOnDepthPass);
-    queue.context[0x200] = 0x80000000u;
+    queue.context[0x200] = 0x80000000u;  // CB_TARGET_MASK is 0: no colour is written
     ds = DecodeState(queue).depthStencil;
     EXPECT_FALSE(ds.colorWriteOnDepthFail);
     EXPECT_TRUE(ds.disableColorWriteOnDepthPass);
+    queue.context[0x8e] = 0xf;
+    try {
+        DecodeState(queue);
+        FAIL() << "bit 31 with colour writes enabled must be rejected";
+    } catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("bit 31"), std::string::npos) << error.what();
+    }
+}
+
+// Invariant: with the stencil test disabled, stale stencil ops and replace values left in the
+// registers (bitwise ops, REPLACE_OP with a differing op value) must not reject the draw.
+TEST(DepthStencilState, DisabledStencilIgnoresStaleOperations) {
+    auto queue = makeQueue();
+    queue.context[0x200] = 2u;  // Z only, stencil off
+    queue.context[0x10b] = 10u | (4u << 4u) | (15u << 8u);
+    queue.context[0x10c] = 0x1u | (0xffu << 16u) | (0x2u << 24u);
+    const auto ds = DecodeState(queue).depthStencil;
+    EXPECT_FALSE(ds.stencilTestEnable);
+    EXPECT_EQ(ds.front.passOp, VK_STENCIL_OP_KEEP);
+    queue.context[0x200] = 3u;  // stencil on: the same registers are now rejected
+    EXPECT_THROW(DecodeState(queue), std::runtime_error);
 }
 
 // Invariant: a depth-stencil descriptor round-trips through ToVulkan field for field.

@@ -1,3 +1,6 @@
+// Keyed cache of graphics pipelines (AGC graphics subsystem).
+// The key serialises every State field that reaches pipeline creation, so any new pipeline
+// state must also be appended to the key. Host-side only; no guest-visible ABI.
 #include "prx/libSceAgcDriver/Graphics/include/GraphicsPipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"

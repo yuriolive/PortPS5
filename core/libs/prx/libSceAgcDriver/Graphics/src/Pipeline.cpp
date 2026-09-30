@@ -1,3 +1,6 @@
+// Builds the Vulkan graphics pipeline, render pass and framebuffer for one decoded State.
+// Owns the created Vulkan objects for the lifetime of the Pipeline and releases them on
+// failure or destruction. Host-side only; no guest-visible ABI.
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include <algorithm>

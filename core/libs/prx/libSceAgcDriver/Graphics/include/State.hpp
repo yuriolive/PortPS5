@@ -1,3 +1,7 @@
+// Decoded guest graphics state for one draw (AGC graphics subsystem).
+// Owns the State/ShaderStages/ColorTarget/DepthStencilState value types and the
+// register-to-Vulkan decode entry points. Plain values, no ownership, thread-safe to copy.
+// Register semantics and rejections are specified in docs/spec/gpu-driver.md.
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_STATE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_STATE_HPP
 
@@ -93,11 +97,16 @@ VkPipelineDepthStencilStateCreateInfo ToVulkan(const DepthStencilState& state);
 VkCompareOp DecodeCompareOp(std::uint32_t value);
 
 /**
- * @brief Maps an AGC stencil operation (0..8) to Vulkan.
- * @param value 4-bit register field.
- * @return Matching VkStencilOp. The bitwise ops 9..14 throw (no Vulkan equivalent).
+ * @brief Maps an AGC stencil operation (StencilOp enum, 0..15) to Vulkan.
+ * @param value 4-bit register field: 0 KEEP, 1 ZERO, 2 ONES, 3 REPLACE_TEST, 4 REPLACE_OP,
+ *        5 ADD_CLAMP, 6 SUB_CLAMP, 7 INVERT, 8 ADD_WRAP, 9 SUB_WRAP, 10 AND, 11 OR, 12 XOR,
+ *        13 NAND, 14 NOR, 15 XNOR (AMD gfx10 register database).
+ * @param writeMask The face's STENCILWRITEMASK; zero makes every op a KEEP.
+ * @param opValue The face's STENCILOPVAL: the ADD/SUB operand (must be 1) and the XOR operand.
+ * @return Matching VkStencilOp. ONES, AND, OR, NAND, NOR, XNOR, ADD/SUB with an operand other
+ *         than 1 and XOR that flips only part of the written bits throw (no Vulkan equivalent).
  */
-VkStencilOp DecodeStencilOp(std::uint32_t value);
+VkStencilOp DecodeStencilOp(std::uint32_t value, std::uint32_t writeMask = 0xffu, std::uint32_t opValue = 1u);
 
 ShaderStages DecodeShaderStages(const QueueState& queue);
 State DecodeState(const QueueState& queue);
