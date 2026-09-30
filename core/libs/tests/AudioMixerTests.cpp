@@ -299,7 +299,11 @@ TEST(AudioMixerTests, DriverlessSteadyPushZeroUnderruns) {
     }
 
     EXPECT_EQ(mixer.GetUnderruns(), 0u);
-    EXPECT_EQ(mixer.GetFramesConsumed(), 28800000u);
+    // SimulateCallback re-anchors the wall clock each grain; only real
+    // scheduling slack between the final grain and this read can accrue.
+    const auto consumed = mixer.GetFramesConsumed();
+    EXPECT_GE(consumed, 28800000u);
+    EXPECT_LE(consumed, 28800000u + 480u); // +10 ms wall-clock slack
 
     mixer.UnregisterSource(source);
 }

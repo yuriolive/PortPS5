@@ -90,6 +90,15 @@ void AudioRingBuffer::Drain(std::uint32_t timeoutMs) noexcept {
     WaitUntilQueuedAtMost(0, timeoutMs);
 }
 
+std::uint32_t AudioRingBuffer::ReadPos() const noexcept {
+    return m_readPos.load(std::memory_order_acquire);
+}
+
+void AudioRingBuffer::WaitForReadProgress(std::uint32_t observedRead, std::uint32_t timeoutMs) noexcept {
+    std::uint32_t expected = observedRead;
+    WaitOnAddress(&m_readPos, &expected, sizeof(expected), timeoutMs);
+}
+
 // ---------------------------------------------------------------------------
 // AudioSource Implementation
 // ---------------------------------------------------------------------------
@@ -144,11 +153,33 @@ void AudioSource::ReleaseConsumer() noexcept {
 }
 
 bool AudioSource::PushStereo48k(const AudioFrame* frames, std::uint32_t count) {
+    // Retire elapsed wall-clock frames first so a no-device ring reflects
+    // real-time playback instead of filling to the ceiling between polls.
+    AudioMixer::Get().PumpWallClock();
     const bool pushed = m_ring.Push(frames, count);
     if (!pushed) {
         AudioMixer::Get().RecordOverrunDrop();
     }
     return pushed;
+}
+
+void AudioSource::WaitUntilQueuedAtMost(std::uint32_t targetFrames, std::uint32_t timeoutMs) noexcept {
+    const auto start = std::chrono::steady_clock::now();
+    while (m_ring.QueuedFrames() > targetFrames) {
+        // Retire wall-clock elapsed frames each iteration so a no-device wait
+        // observes real-time drain instead of stalling to the timeout.
+        AudioMixer::Get().PumpWallClock();
+        if (m_ring.QueuedFrames() <= targetFrames) break;
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+        if (elapsedMs >= static_cast<long long>(timeoutMs)) break;
+        const std::uint32_t remainingMs = static_cast<std::uint32_t>(timeoutMs - elapsedMs);
+        m_ring.WaitForReadProgress(m_ring.ReadPos(), std::min(remainingMs, 5u));
+    }
+}
+
+void AudioSource::Drain(std::uint32_t timeoutMs) noexcept {
+    WaitUntilQueuedAtMost(0, timeoutMs);
 }
 
 bool AudioSource::PushAndResample(const AudioFrame* frames, std::uint32_t inCount) {
@@ -332,13 +363,18 @@ void AudioMixer::UpdateWallClockFallback() {
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed = now - m_lastWallClockTime;
     const double elapsedSec = std::chrono::duration<double>(elapsed).count();
-    const auto framesToRetire = static_cast<std::uint32_t>(elapsedSec * AUDIO_MIXER_SAMPLE_RATE);
+    // 64-bit count: the previous 32-bit cast wrapped after ~24.8 h of fallback play.
+    const auto framesToRetire = static_cast<std::uint64_t>(elapsedSec * AUDIO_MIXER_SAMPLE_RATE);
 
     if (framesToRetire > 0) {
-        std::vector<AudioFrame> discard(framesToRetire);
+        // Pop at most one ring capacity: no source ring holds more than that,
+        // while telemetry still advances by the full elapsed count.
+        const auto popCount = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(framesToRetire, AUDIO_MIXER_RING_CAPACITY));
+        static thread_local std::array<AudioFrame, AUDIO_MIXER_RING_CAPACITY> discard;
         for (auto& source : m_sources) {
             if (source.TryAcquireConsumer()) {
-                source.Pop(discard.data(), framesToRetire);
+                source.Pop(discard.data(), popCount);
                 source.ReleaseConsumer();
             }
         }
@@ -346,6 +382,10 @@ void AudioMixer::UpdateWallClockFallback() {
         m_lastWallClockTime += std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double>(static_cast<double>(framesToRetire) / AUDIO_MIXER_SAMPLE_RATE));
     }
+}
+
+void AudioMixer::PumpWallClock() noexcept {
+    UpdateWallClockFallback();
 }
 
 void AudioMixer::AudioCallback(void* userdata, Uint8* stream, int len) {

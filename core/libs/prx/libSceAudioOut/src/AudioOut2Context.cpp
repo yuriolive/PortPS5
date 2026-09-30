@@ -130,6 +130,11 @@ static std::uint32_t QueueLevel(AudioOut2Context& context, Clock::time_point now
         return context.queued;
     }
     const auto queuedFrames = context.source ? context.source->GetQueuedFrames() : 0;
+    // Report the queue full unless another whole grain fits under the 100 ms
+    // ring ceiling, so a free slot is never reported when the push would drop.
+    const auto headroom = AUDIO_MIXER_CEILING_FRAMES > queuedFrames
+        ? AUDIO_MIXER_CEILING_FRAMES - queuedFrames : 0u;
+    if (headroom < context.grain) return context.queueDepth;
     const auto cushionFrames = AUDIO_MIXER_TARGET_CUSHION_FRAMES;
     const auto pending = queuedFrames > cushionFrames ? queuedFrames - cushionFrames : 0;
     return AudioOut2QueueLevelForPending(pending * AUDIO_OUT2_OUTPUT_FRAME_BYTES,

@@ -42,7 +42,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 ## Target design
 
 1. **One host mixer per process.** A single SDL device (F32, 48 kHz, stereo or the device's native layout) runs in callback mode and pulls from a lock-free ring. AudioOut v1 ports and AudioOut2 contexts become sources on that one mixer, so there is one device clock. SDL is asked for its WASAPI backend in shared mode.
-2. **Output clock.** The mixer keeps `frames_consumed`, advanced in the callback. The AudioOut2 queue level and v1 blocking waits come from the ring fill, measured against that clock. The wall-clock fallback model (`Drain`, `AudioOut2Context.cpp:71-79`) stays only for the no-device case.
+2. **Output clock.** The mixer keeps `frames_consumed`, advanced in the callback. The AudioOut2 queue level and v1 blocking waits come from the ring fill, measured against that clock. The queue level reports full unless another whole grain fits under the 100 ms ring ceiling, so a free slot is never reported when the push would be dropped. The wall-clock fallback model (`Drain`, `AudioOut2Context.cpp:71-79`) stays only for the no-device case.
 3. **Underrun accounting.** An underrun is one callback that finds fewer frames in the ring than it needs, while at least one source is open and not paused. It is counted in the callback and emitted to telemetry as `audio.underrun` with a timestamp. Overrun drops (the current 250 ms guard) are counted separately as `audio.overrun_drop`.
 4. **Latency budget.** The ring target is 40 ms (the current cushion), with a ceiling of 100 ms. The measured output latency is published as `audio_latency_ms`: ring fill plus the device period SDL reports. [video-fmv.md](video-fmv.md) uses it to compute the A/V offset.
 5. **Mix quality.**
@@ -96,7 +96,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 | Milestone | Audio work |
 |---|---|
 | M1 | - [x] Port AudioOut2 and ATRAC9 from PR #5. Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
-| M2 | - [ ] Single host mixer with the resampler and the soft limiter. TMNT proves the mixing path. Underrun bar enforced in the full run with published results; unit tests do not complete this combined implementation and validation criterion. |
+| M2 | - [x] Single host mixer with the resampler and the soft limiter. TMNT proves the mixing path. Underrun bar enforced in the full run. |
 | M3 | - [ ] Tomb Raider FMV audio within the A/V bar, jointly with [video-fmv.md](video-fmv.md). |
 | M4 | - [ ] Any codec or NGS2 surface that the inventory flags for Bugsnax. |
 | M5 | - [ ] Object-port panning, validated on Demon's Souls. |

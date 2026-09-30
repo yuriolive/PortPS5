@@ -164,6 +164,16 @@ public:
      */
     void Drain(std::uint32_t timeoutMs) noexcept;
 
+    /**
+     * @brief Observes the current read position for WaitOnAddress-based waits.
+     */
+    std::uint32_t ReadPos() const noexcept;
+
+    /**
+     * @brief Waits until the read position advances past observedRead, or timeout elapses.
+     */
+    void WaitForReadProgress(std::uint32_t observedRead, std::uint32_t timeoutMs) noexcept;
+
 private:
     std::atomic<std::uint32_t> m_writePos{0};
     std::atomic<std::uint32_t> m_readPos{0};
@@ -202,12 +212,17 @@ public:
     bool PushStereo48k(const AudioFrame* frames, std::uint32_t count);
     bool PushAndResample(const AudioFrame* frames, std::uint32_t inCount);
 
-    void WaitUntilQueuedAtMost(std::uint32_t targetFrames, std::uint32_t timeoutMs) noexcept {
-        m_ring.WaitUntilQueuedAtMost(targetFrames, timeoutMs);
-    }
-    void Drain(std::uint32_t timeoutMs) noexcept {
-        m_ring.Drain(timeoutMs);
-    }
+<    /**
+     * @brief Waits until queued frames drop to or below targetFrames.
+     *
+     * Pumps the wall-clock fallback each iteration so a no-device ring drains
+     * in real time instead of stalling to the timeout.
+     */
+    void WaitUntilQueuedAtMost(std::uint32_t targetFrames, std::uint32_t timeoutMs) noexcept;
+    /**
+     * @brief Drains all queued frames up to timeoutMs.
+     */
+    void Drain(std::uint32_t timeoutMs) noexcept;
 
 private:
     friend class AudioMixer;
@@ -250,6 +265,15 @@ public:
 
     bool HasDevice() const noexcept { return m_device != 0; }
     void RecordOverrunDrop() noexcept;
+
+    /**
+     * @brief Retires wall-clock elapsed frames when no device is open.
+     *
+     * No-op while a device is open (the SDL callback is the consumer there).
+     * Guest push/wait paths call this so no-device rings drain in real time.
+     * Never called from the audio callback.
+     */
+    void PumpWallClock() noexcept;
 
     void ResetTelemetryForTesting() noexcept;
     void ForceWallClockForTesting() noexcept;

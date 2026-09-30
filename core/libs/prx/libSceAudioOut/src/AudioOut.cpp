@@ -190,7 +190,19 @@ static void convertAndDownmix(const Port& port, const void* data, std::vector<Au
 }
 
 static void queueAudio(const Port& port, const void* data) {
-    if (!port.source || !port.source->source) return;
+    if (!port.source || !port.source->source) {
+        // Ports without a mixer source (vibration ports, or an exhausted
+        // source pool) still pace the guest on the wall clock so output
+        // returns at real-time rate instead of spinning.
+        if (data != nullptr && port.freq != 0) {
+            const std::uint64_t blockUs = (1000000ULL * port.samplesNum) / port.freq;
+            struct timespec req{};
+            req.tv_sec = static_cast<time_t>(blockUs / 1000000ULL);
+            req.tv_nsec = static_cast<long>((blockUs % 1000000ULL) * 1000ULL);
+            nanosleep(&req, nullptr);
+        }
+        return;
+    }
     std::lock_guard producerLock(port.source->producerMutex);
     auto* source = port.source->source;
     if (data == nullptr) {
