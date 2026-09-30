@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Relinker
 
-Status: draft v2 · 2026-09-27 (M1 relinker item implemented)
+Status: draft v2 · 2026-09-30 (M1 relinker item implemented; AnyPS5 relinker hardening ported)
 
 ## Scope
 
@@ -24,7 +24,7 @@ File references are `core/relinker/...` unless marked `libs/` (= `core/libs/`). 
 
 **Relocations.** `ValidationPolicy` accepts 14 types (`ValidationPolicy.cpp:30-47`), but `WindowsRelocationBuilder::Apply` only handles `R_X86_64_64`, `GLOB_DAT`, `JUMP_SLOT` and `RELATIVE` (`WindowsRelocationBuilder.cpp:21-22`). Any other accepted type fails late, at PE emission. Overlapping targets are rejected (`:24-27`). Import slots are zeroed and bound at startup (`:45-47`). `ValidateSyscallAbsence` is an empty body (`ValidationPolicy.cpp:56-57`).
 
-**Entry and loader stub** (`WindowsEntryStubBuilder.cpp:33-391`). It emits `.startup` (data) and `.entry` (code). The loader calls `GetModuleFileNameA`, then for each library `LoadLibraryExA` (`:256`), then `GetProcAddress` for each import by NID string (`:295`). With `--lazy-binding`, unresolved imports get lazy stubs (`:300`, `:363`, patched into GOT by `WindowsPePatcher.cpp:97-98`). The platform TLS resolver import is special-cased (`:283-287`). The ELF entry is called at `:333`, then `ExitProcess` (`:338`). The stub's own `UNWIND_INFO` is a raw byte list (`:62`: version 1, 10-byte prolog, 6 codes). This is the "magic bytes" example that the decision table in [README.md](README.md#subsystem-specs) cites as `:60`; line 60 is the function-table reservation just before it.
+**Entry and loader stub** (`WindowsEntryStubBuilder.cpp:33-391`). It emits `.startup` (data) and `.entry` (code). The loader calls `GetModuleFileNameA`, then for each library `LoadLibraryExA` (`:256`), then `GetProcAddress` for each import by NID string (`:295`). With `--lazy-binding`, unresolved imports get lazy stubs (`:300`, `:363`, patched into GOT by `WindowsPePatcher.cpp` `writeGotStub` as 8-byte preferred-VA (`ImageBase + stubRva`) DIR64 slots, each with its own base-relocation entry; `.reloc` is therefore built last, after the entry stubs). The platform TLS resolver import is special-cased (`:283-287`). The ELF entry is called at `:333`, then `ExitProcess` (`:338`). The stub's own `UNWIND_INFO` is a raw byte list (`:62`: version 1, 10-byte prolog, 6 codes). This is the "magic bytes" example that the decision table in [README.md](README.md#subsystem-specs) cites as `:60`; line 60 is the function-table reservation just before it.
 
 **NID binding.** The relinker never computes NIDs. It forwards the dynsym name of each import, and `GetProcAddress` matches it against prx exports that `nid_patcher` renamed at build time (`libs/nid/src/NidResolver.cpp:23-66`). `ComputeNid` takes a `libraryName` parameter but does not use it (`libs/nid/src/NidCompute.cpp`), so export names are library-agnostic.
 
@@ -121,6 +121,10 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 | `Unproven` bytes | Count and log them. Never patch them and never fail on them. |
 | Missing prx export at startup | The loader prints `FAIL: unresolved ELF import <nid>` (`WindowsEntryStubBuilder.cpp:99`). Without `--lazy-binding`, it stops. Every FAIL path exits via `ExitProcess` with the printed status (e.g. `0xC0000135`, `0xC0000139`), never via exception dispatch, so the process exit code is the status. |
 | prx-to-prx host import missing at load | Same `FAIL` shape with `GetLastError` 127, but the importer is a prx and the symbol is a verbatim host name: the provider hashed its export while the importer asks verbatim (observed 2026-09-29: `libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx` on the Dreaming Sarah boot path; resolved by exporting verbatim `_nid_no_patch` wrappers). After the message the process exits cleanly non-zero via `ExitProcess(0xC0000135)` with no exception dispatch. |
+| Truncated ELF header (< 0x40 bytes) | `ElfReader::ReadHeader` fails with `File too small for ELF header`, never a later out-of-bounds message. |
+| Untrusted 64-bit file offset near `UINT64_MAX` | `ElfReader` and `Io::ReadUxx`/`WriteUxx`/`ByteReader` bounds checks are written `offset > size \|\| size - offset < N`, so a wrapped sum cannot pass the check. The access throws out-of-range and leaves the buffer unchanged. |
+| Output write error surfaces only at flush (disk full) | `Io::FileWriter::Write` calls `close()` before checking the stream, so the failure is reported as `Failed to write file: <path>` instead of leaving a truncated output reported as success. |
+| Flagless `PT_LOAD` in a Linux guest module (SCE dynlib data segment) | Dropped from the emitted program headers (never mapped on the console); its address range still bounds the appended block. Forcing `PF_R` on it could shadow the preceding RW segment's bss tail. |
 | CodeMap overlap | Fail (`CodeInstructionCollector.cpp:214`). This means data was treated as code, and the seeding is wrong. |
 
 ## Tests
@@ -134,6 +138,7 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
     - Relocation-table consistency: every type `ValidationPolicy` accepts is emitted by the builder.
     - Golden bytes for `.startup`/`.entry` and the `UNWIND_INFO` block.
     - Libc trap: call the SSE4a emulator directly on a synthetic `CONTEXT`, host-CPU independent.
+  - Hardening regressions ported from AnyPS5 (GoogleTest on synthetic bytes, `portps5_add_gtest`): `relinker_elf_reader_bounds_tests` (full-header check plus `e_phoff` near `UINT64_MAX`), `relinker_buffer_bounds_tests` (wrap-free bounds in `Io::ReadUxx`/`WriteUxx`/`ByteReader`), `relinker_file_writer_tests` (deferred flush failure; the `/dev/full` cases run on Linux only and are skipped elsewhere), `relinker_x64_decoder_emms_tests` (EMMS `0F 77` has no ModRM), `relinker_linux_guest_module_writer_tests` (flagless `PT_LOAD` dropped). `windows_lazy_got` (Python, real ELF-to-PE pipeline): lazy-import GOT slots hold the preferred VA and have DIR64 relocations.
 - **Ported Ecosystem Test Suites:**
   - **Wine / Proton PE Construction Patterns:** PE base relocation table generation, section header alignment rules, and export directory table formatting.
 - **Local regression** ([verification.md](verification.md) §2): each gate title converts with `--to-intel` and without, and the conversion report is recorded.

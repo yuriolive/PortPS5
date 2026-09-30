@@ -13,6 +13,7 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
+#include "prx/libScePad/include/ControllerMapping.hpp"
 #include "prx/libc/include/config/Config.hpp"
 
 namespace {
@@ -28,6 +29,60 @@ bool IgnoreHostInput() {
  }
  return PortPS5_Config_Loader_Get_nid_no_patch().debug.ignoreHostInput;
 }
+
+// Radial dead zone fraction from `[input] deadzone` (spec default 0.08).
+double StickDeadzone() {
+ if (!PortPS5_Config_Loader_IsInitialized_nid_no_patch()) {
+  return 0.08;
+ }
+ return PortPS5_Config_Loader_Get_nid_no_patch().input.deadzone;
+}
+}
+
+void PadInput::addController(int deviceIndex) {
+    if (!SDL_IsGameController(deviceIndex)) return;
+    SDL_GameController* controller = SDL_GameControllerOpen(deviceIndex);
+    if (controller == nullptr) return;
+    const SDL_JoystickID id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller));
+    for (const auto& slot : controllers) {
+        if (slot.controller != nullptr && slot.instanceId == id) { SDL_GameControllerClose(controller); return; }
+    }
+    for (std::size_t i = 0; i < controllers.size(); ++i) {
+        if (controllers[i].controller != nullptr) continue;
+        controllers[i] = {controller, id};
+        PadSetControllerConnected_nid_postfix(static_cast<int>(i), true);
+        return;
+    }
+    // All four slots taken: extra controllers are ignored, not an error.
+    SDL_GameControllerClose(controller);
+}
+
+void PadInput::removeController(SDL_JoystickID instanceId) {
+    for (std::size_t i = 0; i < controllers.size(); ++i) {
+        if (controllers[i].controller == nullptr || controllers[i].instanceId != instanceId) continue;
+        SDL_GameControllerClose(controllers[i].controller);
+        controllers[i] = {};
+        PadSetControllerConnected_nid_postfix(static_cast<int>(i), false);
+        return;
+    }
+}
+
+void PadInput::pollControllers(bool neutral) {
+    const double deadzone = StickDeadzone();
+    for (std::size_t i = 0; i < controllers.size(); ++i) {
+        SDL_GameController* c = controllers[i].controller;
+        if (c == nullptr) continue;
+        Pad::ControllerSample sample;
+        if (!neutral) {
+            for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) {
+                sample.buttons[static_cast<std::size_t>(b)] = SDL_GameControllerGetButton(c, static_cast<SDL_GameControllerButton>(b)) != 0;
+            }
+            for (int a = 0; a < SDL_CONTROLLER_AXIS_MAX; ++a) {
+                sample.axes[static_cast<std::size_t>(a)] = SDL_GameControllerGetAxis(c, static_cast<SDL_GameControllerAxis>(a));
+            }
+        }
+        PadPublishControllerInput_nid_postfix(static_cast<int>(i), Pad::BuildControllerState(sample, deadzone));
+    }
 }
 
 void PadInput::setMouseMode(bool enabled) {
@@ -45,7 +100,18 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         pressed.fill(false);
         wheelReleaseTimes.fill({});
         if (mouseEnabled) setMouseMode(false);
+        pollControllers(true);
         publish();
+        return;
+    }
+    // Controllers are host input: with debug.ignore_host_input they are never
+    // attached, so recorded-input replays see a deterministic pad.
+    if (event.type == SDL_CONTROLLERDEVICEADDED) {
+        if (!IgnoreHostInput()) addController(event.cdevice.which);
+        return;
+    }
+    if (event.type == SDL_CONTROLLERDEVICEREMOVED) {
+        removeController(event.cdevice.which);
         return;
     }
     if (IgnoreHostInput() && event.type == SDL_MOUSEWHEEL) {
@@ -93,6 +159,7 @@ void PadInput::Update() {
     if (IgnoreHostInput()) {
         return;
     }
+    pollControllers(SDL_GetKeyboardFocus() == nullptr);
     const auto now = std::chrono::steady_clock::now();
     bool released = false;
     for (std::size_t index = 0; index < Pad::InputMapping.size(); ++index) {
