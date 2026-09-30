@@ -9,6 +9,9 @@ namespace File {
 void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb);
 void FillFileStat(int nativeDescriptor, FileStat* sb);
 
+// Non-throwing stat for guest-facing calls: returns 0, or the host errno (e.g. ENOENT).
+int TryFillFileStat(const std::filesystem::path& nativePath, FileStat* sb);
+
 }
 
 #endif

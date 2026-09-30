@@ -99,13 +99,25 @@ static std::int64_t NativePwrite(int descriptor, const void* buf, std::size_t nb
 }
 #endif
 
+// The sceKernel* file calls report failure as a negative SCE code (0x80020000 | errno);
+// the POSIX-named exports must follow the POSIX convention instead: -1 and errno set,
+// so guest `== -1` checks and errno reads behave like FreeBSD libc.
+static std::int64_t SceToPosix(std::int64_t result) {
+    if (result < 0) {
+        errno = static_cast<int>(static_cast<std::uint32_t>(result) & 0xFFFFu);
+        return -1;
+    }
+    return result;
+}
+
 extern "C" {
 
 int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
     if (path == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    auto native = ResolvePath_nid_no_patch(path);
+    std::filesystem::path native;
+    if (const int error = ResolveKernelPath(path, native)) { errno = error; return -1; }
     if (NativeChmod(native, mode) != 0) {
         throw std::runtime_error(std::string(__func__) + ": chmod failed for " + native.string() + ", errno=" + std::to_string(errno));
     }
@@ -162,7 +174,7 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
 }
 
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
-    return static_cast<int64_t>(sceKernelLseek(d, offset, whence));
+    return SceToPosix(sceKernelLseek(d, offset, whence));
 }
 
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
@@ -178,7 +190,7 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
 }
 
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
-    return sceKernelOpen(path, flags, static_cast<std::uint16_t>(mode));
+    return static_cast<int>(SceToPosix(sceKernelOpen(path, flags, static_cast<std::uint16_t>(mode))));
 }
 
 int APS5_VABI _open_nid_postfix(const char* path, int flags, ...) {
@@ -196,7 +208,7 @@ int APS5_VABI _open_nid_postfix(const char* path, int flags, ...) {
         va_end(arguments);
 #endif
     }
-    return sceKernelOpen(path, flags, mode);
+    return static_cast<int>(SceToPosix(sceKernelOpen(path, flags, mode)));
 }
 
 int64_t APS5_VABI pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t offset) {
@@ -228,30 +240,30 @@ int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_
 }
 
 int64_t APS5_VABI read_nid_postfix(int d, void* buf, uint64_t nbytes) {
-    return sceKernelRead(d, buf, static_cast<size_t>(nbytes));
+    return SceToPosix(sceKernelRead(d, buf, static_cast<size_t>(nbytes)));
 }
 
 std::int64_t APS5_VABI _read_nid_postfix(int descriptor, void* buffer, std::size_t count) {
-    return sceKernelRead(descriptor, buffer, count);
+    return SceToPosix(sceKernelRead(descriptor, buffer, count));
 }
 
 int64_t APS5_VABI write_nid_postfix(int d, const char* str, int64_t size) {
     if (size < 0) {
         APS5_INVALID_ARG_EX;
     }
-    return sceKernelWrite(d, str, static_cast<size_t>(size));
+    return SceToPosix(sceKernelWrite(d, str, static_cast<size_t>(size)));
 }
 
 std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, std::size_t count) {
-    return sceKernelWrite(descriptor, buffer, count);
+    return SceToPosix(sceKernelWrite(descriptor, buffer, count));
 }
 
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
-    return sceKernelStat(path, sb);
+    return static_cast<int>(SceToPosix(sceKernelStat(path, sb)));
 }
 
 int APS5_VABI unlink_nid_postfix(const char* path) {
-    return sceKernelUnlink(path);
+    return static_cast<int>(SceToPosix(sceKernelUnlink(path)));
 }
 
 int APS5_VABI sceKernelCheckReachability(const char* path) {
@@ -332,15 +344,15 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (path == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": path is null");
     }
-    auto native = ResolvePath_nid_no_patch(path);
-    if (NativeRmdir(native) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": rmdir failed for " + native.string() + ", errno=" + std::to_string(errno));
-    }
+    std::filesystem::path native;
+    if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
+    // A real console returns ENOENT/ENOTEMPTY/EACCES as codes; do not throw across the ABI.
+    if (NativeRmdir(native) != 0) return HostErrnoToSce(errno);
     return 0;
 }
 
 int APS5_VABI rmdir_nid_postfix(const char* path) {
-    return sceKernelRmdir(path);
+    return static_cast<int>(SceToPosix(sceKernelRmdir(path)));
 }
 
 }

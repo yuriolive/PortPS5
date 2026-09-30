@@ -11,6 +11,9 @@
 #include <cerrno>
 #include <cstring>
 #include <map>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <vector>
 #include <utility>
 #include <optional>
@@ -66,6 +69,56 @@ struct WorkingDirectory {
 };
 WorkingDirectory& Directories() { static WorkingDirectory state; return state; }
 
+// Fully resolved path of an EXISTING file/directory, following symlinks and NTFS
+// junctions. libstdc++'s canonical()/weakly_canonical() on MinGW does not resolve
+// junctions (a test showed a junction inside the container leaking writes outside),
+// so Windows asks the OS for the final path of an opened handle.
+bool RealPathExisting(const std::filesystem::path& path, std::filesystem::path& out) {
+#ifdef _WIN32
+    const HANDLE handle = CreateFileW(path.c_str(), 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, nullptr);  // BACKUP_SEMANTICS: allow opening directories
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    std::wstring buffer(512, L'\0');
+    DWORD length = GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_DOS);
+    if (length >= buffer.size()) {
+        buffer.assign(length + 1, L'\0');
+        length = GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_DOS);
+    }
+    CloseHandle(handle);
+    if (length == 0 || length >= buffer.size()) return false;
+    buffer.resize(length);
+    // Strip the "\\?\" (or "\\?\UNC\" -> "\\") extended-length prefix for comparison.
+    if (buffer.rfind(L"\\\\?\\UNC\\", 0) == 0) buffer = L"\\\\" + buffer.substr(8);
+    else if (buffer.rfind(L"\\\\?\\", 0) == 0) buffer = buffer.substr(4);
+    out = std::filesystem::path(buffer);
+    return true;
+#else
+    std::error_code error;
+    out = std::filesystem::canonical(path, error);
+    return !error;
+#endif
+}
+
+// True when `host` (whose final component may not exist yet) stays under `root` after
+// resolving links in its deepest existing ancestor. Non-existent tail components cannot
+// be links, so they need no resolution.
+bool StaysUnderRoot(const std::filesystem::path& host, const std::filesystem::path& root) {
+    std::filesystem::path realRoot;
+    if (!RealPathExisting(root, realRoot)) return false;
+    std::filesystem::path ancestor = host;
+    std::error_code error;
+    while (!std::filesystem::exists(ancestor, error)) {
+        if (!ancestor.has_relative_path() || ancestor == ancestor.parent_path()) return false;
+        ancestor = ancestor.parent_path();
+        error.clear();
+    }
+    std::filesystem::path realAncestor;
+    if (!RealPathExisting(ancestor, realAncestor)) return false;
+    const auto relative = realAncestor.lexically_relative(realRoot);
+    return !relative.empty() && *relative.begin() != "..";
+}
+
 // Reserved mount names never fall through to <root>/<name>: an unmounted reserved
 // name must fail rather than silently write next to the executable.
 bool IsReservedMountName(const std::string& name) { return name == SaveDataMountName; }
@@ -117,6 +170,12 @@ bool ResolveMounted(WorkingDirectory& state, const std::string& text, bool absol
     if (escaped) { result.error = 13; return true; }
     std::filesystem::path host = mount->second;
     for (std::size_t i = 1; i < stack.size(); ++i) host /= stack[i];
+    // Lexical checks cannot see a symlink/junction that a host user placed inside the
+    // container. The deepest existing ancestor is resolved through the OS (final path of
+    // an opened handle) and must stay under the real mount root.
+    // Residual: a link swapped in between this check and the native open (TOCTOU);
+    // guests cannot create links through the kernel API, so only a host-side actor can.
+    if (!StaysUnderRoot(host, mount->second)) { result.error = 13; return true; }
     result.host = host.make_preferred();
     return true;
 }

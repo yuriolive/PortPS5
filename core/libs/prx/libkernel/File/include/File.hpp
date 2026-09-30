@@ -30,6 +30,7 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
 int APS5_VABI sceKernelUnlink(const char* path);
 int APS5_VABI sceKernelMkdir(const char* path, std::uint16_t mode);
 int APS5_VABI sceKernelFsync(int fd);
+int APS5_VABI sceKernelRmdir(const char* path);
 
 }
 

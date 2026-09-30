@@ -93,11 +93,25 @@ static bool MapFlags(int sceFlags, int& out) {
 }
 #endif
 
-// Host errno -> SCE kernel error (0x80020000 | FreeBSD errno). Values below 41 are
-// identical between MinGW/glibc and FreeBSD (ENOENT, EBADF, EACCES, EEXIST, EINVAL,
-// ENOSPC ...); ENOTEMPTY is the one mkdir/rmdir code that differs.
+// Host errno -> SCE kernel error (0x80020000 | FreeBSD errno). Only errnos below 35
+// that every libc shares with FreeBSD (EPERM..EPIPE: ENOENT, EBADF, EACCES, EEXIST,
+// EINVAL, ENOSPC ...) pass through. The rest are numbered differently per libc
+// (MinGW: EDEADLK 36, ENAMETOOLONG 38, ENOLCK 39, ENOSYS 40, ENOTEMPTY 41; glibc:
+// EAGAIN 11, ENAMETOOLONG 36, ENOSYS 38, ELOOP 40), so they are mapped by name.
+// EAGAIN/EDEADLK cannot collide as switch labels on any supported libc.
 int HostErrnoToSce(int hostErrno) {
-    if (hostErrno == ENOTEMPTY) hostErrno = 66;
+    switch (hostErrno) {
+    case EAGAIN: hostErrno = 35; break;
+    case EDEADLK: hostErrno = 11; break;
+    case ENAMETOOLONG: hostErrno = 63; break;
+    case ENOLCK: hostErrno = 77; break;
+    case ENOSYS: hostErrno = 78; break;
+    case ENOTEMPTY: hostErrno = 66; break;
+#ifdef ELOOP
+    case ELOOP: hostErrno = 62; break;
+#endif
+    default: break;
+    }
     return SceKernelErrno(hostErrno);
 }
 
@@ -106,7 +120,9 @@ int ResolveKernelPath(const char* path, std::filesystem::path& host) {
     if (resolved.unmounted) {
         // /savedata0 needs the title id, which lives in param.json; loading it
         // mounts the container (AppMetadata.cpp). No title loaded -> no mount.
-        try { GetAppTitleId_nid_postfix(); } catch (...) {}
+        try { GetAppTitleId_nid_postfix(); }
+        catch (const std::exception& e) { APS5_LOG_ERR("savedata: title load failed: %s", e.what()); }
+        catch (...) { APS5_LOG_ERR("savedata: title load failed (unknown exception)%s", ""); }
         resolved = ResolveGuestPathChecked(path);
         if (resolved.unmounted) return ENOENT;
     }
@@ -166,7 +182,8 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     }
     std::filesystem::path native;
     if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
-    File::FillFileStat(native, sb);
+    // A missing file is ENOENT as a code, not an exception (guests probe with stat).
+    if (const int error = File::TryFillFileStat(native, sb)) return HostErrnoToSce(error);
     return 0;
 }
 

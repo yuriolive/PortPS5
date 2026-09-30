@@ -14,9 +14,24 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
+
+// POSIX-named exports (Stdio.cpp) under test; not in a public header. APS5_VABI is
+// mandatory: the definitions use the System V ABI and a mismatched declaration would
+// corrupt argument registers on Windows.
+extern "C" {
+int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
+int APS5_VABI close_nid_postfix(int d);
+std::int64_t APS5_VABI read_nid_postfix(int d, void* buf, std::uint64_t nbytes);
+std::int64_t APS5_VABI write_nid_postfix(int d, const char* str, std::int64_t size);
+std::int64_t APS5_VABI lseek_nid_postfix(int d, std::int64_t offset, int whence);
+int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
+int APS5_VABI unlink_nid_postfix(const char* path);
+int APS5_VABI rmdir_nid_postfix(const char* path);
+}
 
 namespace {
 
@@ -190,6 +205,99 @@ TEST_F(SaveDataTitleIdTest, MountNamesRejectSeparators) {
     EXPECT_FALSE(MountGuestDirectory("a\\b", TempDir() / "m"));
     EXPECT_FALSE(MountGuestDirectory("c:", TempDir() / "m"));
     EXPECT_FALSE(MountGuestDirectory("", TempDir() / "m"));
+}
+
+// Invariant (review: errno table): host errnos whose numbers differ between MinGW/glibc and
+// FreeBSD are mapped by name, so a long save path reports ENAMETOOLONG (63), not ENOTSOCK (38).
+TEST(SaveDataErrno, HostErrnosMapToFreeBsdValues) {
+    EXPECT_EQ(HostErrnoToSce(ENAMETOOLONG), Sce(63));
+    EXPECT_EQ(HostErrnoToSce(ENOTEMPTY), Sce(66));
+    EXPECT_EQ(HostErrnoToSce(ENOSYS), Sce(78));
+    EXPECT_EQ(HostErrnoToSce(EAGAIN), Sce(35));
+    EXPECT_EQ(HostErrnoToSce(ENOENT), Sce(2));
+    EXPECT_EQ(HostErrnoToSce(EEXIST), Sce(17));
+    EXPECT_EQ(HostErrnoToSce(ENOSPC), Sce(28));
+}
+
+// Invariant (review: rmdir/chmod used the unchecked resolver): rmdir returns codes for
+// escapes, unmounted and missing dirs, and removes an empty container directory.
+TEST_F(SaveDataMountTest, RmdirUsesCheckedResolver) {
+    ASSERT_SCE_OK(sceKernelMkdir("/savedata0/gone", 0777));
+    EXPECT_SCE_OK(sceKernelRmdir("/savedata0/gone"));
+    EXPECT_FALSE(std::filesystem::exists(Container() / "gone"));
+    EXPECT_EQ(sceKernelRmdir("/savedata0/gone"), Sce(ENOENT));
+    EXPECT_EQ(sceKernelRmdir("/savedata0/../x"), Sce(EACCES));
+}
+
+TEST(SaveDataUnmounted, RmdirUnmountedReturnsEnoent) {
+    UnmountGuestDirectory(SaveDataMountName);
+    EXPECT_EQ(sceKernelRmdir("/savedata0/x"), Sce(ENOENT));
+}
+
+// Invariant (review: symlink/junction): a link inside the container that points outside is
+// EACCES for both existing and new children. Skipped where links cannot be created
+// (Windows without Developer Mode / privilege).
+TEST_F(SaveDataMountTest, SymlinkOutOfContainerIsDenied) {
+    const auto outside = TempDir() / "outside";
+    std::filesystem::create_directories(outside);
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(outside, Container() / "link", ec);
+#ifdef _WIN32
+    // Symlinks need a privilege on Windows; an NTFS junction (reparse point) does not and
+    // exercises the same escape.
+    if (ec) {
+        const std::string cmd = "cmd /c mklink /J \"" + (Container() / "link").string() + "\" \"" + outside.string() + "\" >nul";
+        if (std::system(cmd.c_str()) == 0) ec.clear();
+    }
+#endif
+    if (ec) GTEST_SKIP() << "cannot create directory symlink: " << ec.message();
+    EXPECT_EQ(sceKernelOpen("/savedata0/link/leak.bin", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_WRONLY, 0666), Sce(EACCES));
+    EXPECT_EQ(sceKernelMkdir("/savedata0/link/sub", 0777), Sce(EACCES));
+    EXPECT_FALSE(std::filesystem::exists(outside / "leak.bin"));
+}
+
+// Invariant (sibling-project edge cases): duplicate and trailing slashes normalise, a longer
+// name sharing the mount prefix is not the mount, and backslash traversal is caught.
+TEST_F(SaveDataMountTest, SlashAndPrefixEdgeCases) {
+    const auto plain = ResolveGuestPathChecked("/savedata0/a/b.sav");
+    EXPECT_EQ(ResolveGuestPathChecked("/savedata0//a///b.sav").host, plain.host);
+    EXPECT_EQ(ResolveGuestPathChecked("/savedata0/a/b.sav/").host, plain.host);
+    EXPECT_FALSE(ResolveGuestPathChecked("/savedata00/x").unmounted);
+    EXPECT_NE(ResolveGuestPathChecked("/savedata00/x").host.parent_path().parent_path(), plain.host.parent_path().parent_path());
+    EXPECT_EQ(ResolveGuestPathChecked("/savedata0\\..\\x").error, 13);
+}
+
+// Invariant (review: POSIX wrappers leaked SCE codes): the POSIX-named exports return -1 and
+// set errno (FreeBSD value), while sceKernel* return the SCE code.
+TEST_F(SaveDataMountTest, PosixWrappersReturnMinusOneAndErrno) {
+    errno = 0;
+    EXPECT_EQ(open_nid_postfix("/savedata0/none.sav", SCE_KERNEL_O_RDONLY, 0), -1);
+    EXPECT_EQ(errno, ENOENT);
+    errno = 0;
+    EXPECT_EQ(open_nid_postfix("/savedata0/../x", SCE_KERNEL_O_RDONLY, 0), -1);
+    EXPECT_EQ(errno, EACCES);
+    errno = 0;
+    FileStat st{};
+    EXPECT_EQ(stat_nid_postfix("/savedata0/none.sav", &st), -1);
+    EXPECT_EQ(errno, ENOENT);
+    errno = 0;
+    EXPECT_EQ(unlink_nid_postfix("/savedata0/none.sav"), -1);
+    EXPECT_EQ(errno, ENOENT);
+    errno = 0;
+    EXPECT_EQ(rmdir_nid_postfix("/savedata0/none"), -1);
+    EXPECT_EQ(errno, ENOENT);
+    errno = 0;
+    EXPECT_EQ(read_nid_postfix(0, nullptr, 4), -1);
+    EXPECT_EQ(errno, EFAULT);
+
+    const int fd = open_nid_postfix("/savedata0/p.sav", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
+    ASSERT_GE(fd, 0);
+    EXPECT_EQ(write_nid_postfix(fd, "abc", 3), 3);
+    EXPECT_EQ(lseek_nid_postfix(fd, 0, 0), 0);
+    char buf[4] = {};
+    EXPECT_EQ(read_nid_postfix(fd, buf, 3), 3);
+    EXPECT_EQ(close_nid_postfix(fd), 0);
+    EXPECT_EQ(unlink_nid_postfix("/savedata0/p.sav"), 0);
 }
 
 } // namespace

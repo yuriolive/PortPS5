@@ -21,8 +21,10 @@ extern "C" void NotImplemented_nid_no_patch(const char* funcName);
 // hit; the threading slice adds caller offset and thread name.
 [[noreturn]] void Unsupported(const char* what);
 
-// Unchecked resolver. For mounted paths a traversal out of the mount is clamped to
-// the mount's host root; use ResolveGuestPathChecked where the error must surface.
+// Unchecked resolver. For a path that escapes a mount, contains ':' inside a mount,
+// or names an unmounted reserved mount (/savedata0), it returns an EMPTY path (so the
+// native call fails); use ResolveGuestPathChecked / ResolveKernelPath where the error
+// code must surface.
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
 extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* hostPath);
 extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix);
