@@ -41,13 +41,23 @@ Short version:
 7. Enforce code comments across all new files, public interfaces, and test fixtures: document file purpose, non-obvious rationale, ABI invariants, and workarounds inline in the code. Iterate and verify builds and unit tests locally before committing.
 8. Every issue, bug report, or review finding is a potential test: always rigorously verify whether a review finding or bot comment is technically correct before acting on it (never apply changes blindly). Once verified, always add a unit or regression test for any edge case, race condition, or bug identified during review or development.
 9. Maintain task checkboxes across `docs/ROADMAP.md` and `docs/spec/`. As tasks, roadmap milestones, or subsystem spec items are completed, mark them as finished (`- [x]`) in the same PR. Keep pending items checked as open (`- [ ]`).
-10. Standardize task plans and PR descriptions. Every task, unit of work, or issue (including beads/`bd` tasks and plans) must follow this structured specification:
+10. Standardize task plans and PR descriptions. Every task, unit of work, or issue (including beans tasks and plans) must follow this structured specification:
    - **Context:** Root problem, motivation, and current state.
    - **Higher Goal:** Architectural intent and systemic benefits.
    - **Acceptance Criteria:** Concrete, verifiable deliverables using checkboxes (`- [ ]` / `- [x]`).
    - **Out of Scope:** Explicit boundaries and deferred items.
    - **Summary of Changes:** Specific files, implementations, tests, or docs modified.
 10. Mandatory GoogleTest (GTest + GMock) for all C++ tests via `portps5_add_gtest`. Never write ad-hoc C++ test runners using bare `abort()`, custom `Require()`, or manual `main()` functions. Always use standard GoogleTest assertions (`EXPECT_*` / `ASSERT_*`) and GTest discovery.
+
+## Task tracking (beans)
+
+Tasks live as markdown files in `.beans/` (tool: [hmans/beans](https://github.com/hmans/beans), CLI `beans`, config `.beans.yml`). Beads (`bd`, `.beads/`) is retired; don't use it. Run `beans prime` at session start and follow its output. Use beans, not TodoWrite or ad-hoc todo lists.
+
+- **Before work:** find or create the bean (`beans create "Title" -t task -s in-progress -d ...`). Its body follows rule 10 (Context, Higher Goal, Acceptance Criteria, Out of Scope, Summary of Changes).
+- **Every PR closes the bean(s) it solves.** In the same PR: tick the acceptance checkboxes, add `## Summary of Changes`, set `-s completed`, and run `beans archive` so the bean file moves to `.beans/archive/`. After merge to `main`, the tree then shows the task as done. Name the bean ID(s) in the PR description.
+- Work deferred or found during the PR gets a new open bean, not a silent TODO.
+- Scrapped work: set `-s scrapped` with a `## Reasons for Scrapping` section, then archive.
+- Commit bean files together with the code change they track.
 
 ## Skills
 
@@ -88,11 +98,10 @@ docs/                 PRD, ROADMAP, spec/
 
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
+3. **Update beans** - Tick acceptance checkboxes, mark finished beans `completed` and run `beans archive` (see Task tracking). Commit the `.beans/` changes with the code
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
