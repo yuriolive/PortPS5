@@ -1,3 +1,9 @@
+// core/libs/prx/libSceAgcDriver/Graphics/include/Context.hpp
+// Vulkan device handles and capability flags shared by every Graphics/ component (buffers, textures,
+// Recorder, HostImport). Owned by VulkanDevice, copied by value into consumers; the device, queue and
+// command pool must outlive every copy. Function pointers resolve lazily through Function<>.
+// Threading: a Context is immutable after VulkanDevice construction (the mutable pool/cache pointers
+// are created once, on first use).
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_CONTEXT_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_CONTEXT_HPP
 
@@ -64,6 +70,12 @@ struct Context {
     GraphicsPipelineCache* graphicsPipelines = nullptr;
     mutable std::shared_ptr<DescriptorCache> descriptorCache;
     mutable std::shared_ptr<SamplerCache> samplerCache;
+    // Appended last on purpose: VulkanDevice::graphicsContext() aggregate-initializes the members above
+    // positionally, so new members must not be inserted before them.
+    // VK_EXT_external_memory_host enabled: guest allocations can be imported as buffers (HostImport).
+    bool externalMemoryHost = false;
+    // VkPhysicalDeviceExternalMemoryHostPropertiesEXT::minImportedHostPointerAlignment (0 when unknown).
+    VkDeviceSize hostImportAlignment = 0;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {
