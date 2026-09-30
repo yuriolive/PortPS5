@@ -46,6 +46,23 @@ std::string makeKey(const Context& context, const State& state, const std::share
     append(key, state.blend.alphaBlendOp);
     append(key, state.blend.colorWriteMask);
     for (const auto value : state.blendConstants) append(key, value);
+    const auto& ds = state.depthStencil;
+    append(key, ds.depthTestEnable);
+    append(key, ds.depthWriteEnable);
+    append(key, ds.depthBoundsTestEnable);
+    append(key, ds.stencilTestEnable);
+    append(key, ds.depthCompareOp);
+    append(key, ds.minDepthBounds);
+    append(key, ds.maxDepthBounds);
+    for (const auto& face : {ds.front, ds.back}) {
+        append(key, face.failOp);
+        append(key, face.passOp);
+        append(key, face.depthFailOp);
+        append(key, face.compareOp);
+        append(key, face.compareMask);
+        append(key, face.writeMask);
+        append(key, face.reference);
+    }
     append(key, state.stages.mesh.has_value());
     append(key, state.stages.tessellation.has_value());
     if (state.stages.mesh) {

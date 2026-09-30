@@ -110,6 +110,10 @@ Pipeline::Pipeline(const Context& context, const State& state, const RenderTarge
         blend.attachmentCount = state.hasColorTarget ? 1 : 0;
         blend.pAttachments = state.hasColorTarget ? &state.blend : nullptr;
         std::copy(state.blendConstants.begin(), state.blendConstants.end(), blend.blendConstants);
+        // The render pass has no depth attachment, so Vulkan ignores this state. Depth bounds are
+        // still cleared: the depthBounds feature is not enabled and its VUID requires VK_FALSE.
+        auto depthStencil = ToVulkan(state.depthStencil);
+        depthStencil.depthBoundsTestEnable = VK_FALSE;
         VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         pipelineInfo.stageCount = static_cast<std::uint32_t>(stages.size());
         pipelineInfo.pStages = stages.data();
@@ -123,6 +127,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const RenderTarge
         pipelineInfo.pViewportState = &viewports;
         pipelineInfo.pRasterizationState = &raster;
         pipelineInfo.pMultisampleState = &samples;
+        pipelineInfo.pDepthStencilState = &depthStencil;
         pipelineInfo.pColorBlendState = &blend;
         pipelineInfo.layout = layout;
         pipelineInfo.renderPass = renderPass;
