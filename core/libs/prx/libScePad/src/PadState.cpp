@@ -283,8 +283,14 @@ void PadManager::PublishControllerInput(int slot, const PadInputState& input) {
     std::lock_guard lock(mutex);
     if (failure) std::rethrow_exception(failure);
     auto& s = slots[static_cast<std::size_t>(slot)];
-    s.controllerInput = input;
+    // First sample from a controller establishes the full connected state even
+    // if SetControllerConnected was never called, and counts as one (re)connect.
+    if (!s.controllerPresent) {
+        ++s.connectedCount;
+    }
     s.controllerPresent = true;
+    s.connected = true;
+    s.controllerInput = input;
 }
 
 void PadManager::SetControllerConnected(int slot, bool connected) {

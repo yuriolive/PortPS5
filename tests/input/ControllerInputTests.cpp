@@ -220,3 +220,21 @@ TEST_F(ControllerInputTest, InvalidSlotIgnored) {
     PadSetControllerConnected_nid_postfix(99, true);
     SUCCEED();
 }
+
+// Invariant (review finding): publishing a controller sample to a slot that was
+// never explicitly connected must still connect it and bump connectedCount
+// exactly once, without double-counting on later samples or a later
+// SetControllerConnected(true).
+TEST_F(ControllerInputTest, FirstPublishEstablishesConnection) {
+    PadData d{};
+    PadPublishControllerInput_nid_postfix(1, PadInputState{});
+    ASSERT_EQ(scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 1, nullptr), 2);
+    ASSERT_EQ(scePadRead_nid_postfix(2, &d, 1), 1);
+    EXPECT_TRUE(d.connected);
+    EXPECT_EQ(d.connected_count, 1);
+
+    PadPublishControllerInput_nid_postfix(1, PadInputState{});
+    PadSetControllerConnected_nid_postfix(1, true);
+    ASSERT_EQ(scePadRead_nid_postfix(2, &d, 1), 1);
+    EXPECT_EQ(d.connected_count, 1);
+}
