@@ -126,15 +126,19 @@ static void Drain(AudioOut2Context& context, Clock::time_point now) {
 // Grains queued and not yet played, as the title sees them. The caller holds the context lock.
 static std::uint32_t QueueLevel(AudioOut2Context& context, Clock::time_point now) {
     Drain(context, now);
-    if (!AudioMixer::Get().HasDevice() || !context.source) {
-        return context.queued;
-    }
-    const auto queuedFrames = context.source ? context.source->GetQueuedFrames() : 0;
+    if (!context.source) return context.queued;
+    // With no device the ring is retired by the wall-clock fallback, which must
+    // be pumped here or a no-device ring would never drain and stay "full".
+    AudioMixer::Get().PumpWallClock();
+    const auto queuedFrames = context.source->GetQueuedFrames();
     // Report the queue full unless another whole grain fits under the 100 ms
     // ring ceiling, so a free slot is never reported when the push would drop.
+    // Applies with or without a device: the ring bounds both paths.
     const auto headroom = AUDIO_MIXER_CEILING_FRAMES > queuedFrames
         ? AUDIO_MIXER_CEILING_FRAMES - queuedFrames : 0u;
     if (headroom < context.grain) return context.queueDepth;
+    // No device: the modelled grain count is the title-visible level.
+    if (!AudioMixer::Get().HasDevice()) return context.queued;
     const auto cushionFrames = AUDIO_MIXER_TARGET_CUSHION_FRAMES;
     const auto pending = queuedFrames > cushionFrames ? queuedFrames - cushionFrames : 0;
     return AudioOut2QueueLevelForPending(pending * AUDIO_OUT2_OUTPUT_FRAME_BYTES,

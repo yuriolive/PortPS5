@@ -670,3 +670,32 @@ TEST(AudioOut2Tests, V1PushTimeoutRecordsStall) {
     EXPECT_EQ(sceAudioOutOutput(handle, pcm.data()), 4096);
     EXPECT_EQ(mixer.GetStalls(), 1u);
 }
+
+// Regression for CodeRabbit finding: with no host device the ring still bounds
+// pushes at the 100 ms ceiling, so QueueLevel must report the queue full when
+// less than one grain of headroom remains (it used to return the model's
+// context.queued, advertising a free slot for a push that would be dropped).
+TEST(AudioOut2Tests, QueueLevelNoDeviceHonorsRingHeadroom) {
+    auto& mixer = AudioMixer::Get();
+    mixer.Shutdown();
+    mixer.ForceWallClockForTesting();
+    mixer.PauseWallClockForTesting(true);
+    ASSERT_FALSE(mixer.HasDevice());
+    AudioOut2ContextParam params{};
+    params.num_grains = 256;
+    params.queue_depth = 4;
+    AudioOut2ContextHandle ctx{};
+    ASSERT_EQ(sceAudioOut2ContextCreate(&params, nullptr, 0, &ctx), 0);
+    auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
+    ASSERT_NE(context->source, nullptr);
+    // Leave 128 frames of headroom: less than one 256-frame grain.
+    std::vector<AudioFrame> frames(AUDIO_MIXER_CEILING_FRAMES - 128);
+    ASSERT_TRUE(context->source->PushStereo48k(frames.data(), frames.size()));
+    std::uint32_t level{}, available{};
+    EXPECT_EQ(sceAudioOut2ContextGetQueueLevel(ctx, &level, &available), 0);
+    EXPECT_EQ(level, 4u);
+    EXPECT_EQ(available, 0u);
+    EXPECT_EQ(sceAudioOut2ContextDestroy(ctx), 0);
+    mixer.PauseWallClockForTesting(false);
+    mixer.Shutdown();
+}

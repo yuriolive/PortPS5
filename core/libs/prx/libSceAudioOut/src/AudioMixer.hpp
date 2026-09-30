@@ -139,6 +139,8 @@ public:
      *
      * Drops the grain and returns false if adding count frames would exceed the
      * 100 ms ring ceiling (4800 frames).
+     * @param frames Stereo frames to copy. @param count Frame count.
+     * @return True if queued, false if dropped. Single producer only.
      */
     bool Push(const AudioFrame* frames, std::uint32_t count) noexcept;
 
@@ -185,7 +187,9 @@ private:
  */
 class AudioSource {
 public:
+    /** @brief Constructs an inactive source; call Init before use. */
     AudioSource();
+    /** @brief Retires the source via Reset (waits for any selected consumer). */
     ~AudioSource();
 
     /**
@@ -201,15 +205,32 @@ public:
      */
     void Reset();
 
+    /** @brief Whether the source is registered and visible to the callback. @return True if active. */
     bool IsActive() const noexcept { return (m_state.load(std::memory_order_acquire) & kActive) != 0; }
+    /** @brief Whether the callback skips this source. @return True if paused (sources start paused). */
     bool IsPaused() const noexcept { return m_paused.load(std::memory_order_relaxed); }
+    /** @brief Pauses or resumes consumption. @param paused True to pause. Lock-free. */
     void SetPaused(bool paused) noexcept { m_paused.store(paused, std::memory_order_release); }
 
+    /** @brief Frames queued in the ring. @return Queued frame count (48 kHz stereo). */
     std::uint32_t GetQueuedFrames() const noexcept { return m_ring.QueuedFrames(); }
+    /** @brief Guest input rate. @return Sample rate in Hz. */
     std::uint32_t GetSampleRate() const noexcept { return m_sampleRate; }
+    /** @brief Guest input channel count. @return Channel count. */
     std::uint32_t GetChannels() const noexcept { return m_channels; }
 
+    /**
+     * @brief Pushes already-48 kHz stereo frames and unpauses the source.
+     * @param frames Stereo frames. @param count Frame count.
+     * @return True if queued. False when the grain would exceed the 100 ms
+     *         ceiling; the grain is dropped and an overrun drop is recorded.
+     */
     bool PushStereo48k(const AudioFrame* frames, std::uint32_t count);
+    /**
+     * @brief Resamples then pushes (see ResampleStereo and PushStereo48k).
+     * @param frames Input-rate stereo frames. @param inCount Input frame count.
+     * @return True if queued; false on resampler failure or ceiling overrun.
+     */
     bool PushAndResample(const AudioFrame* frames, std::uint32_t inCount);
 
     /**
@@ -261,22 +282,42 @@ private:
  */
 class AudioMixer {
 public:
+    /** @brief Process-wide instance. @return The singleton mixer. */
     static AudioMixer& Get();
 
+    /**
+     * @brief Opens the single SDL device (idempotent once successful).
+     * @return True if a device is open. False on device-open failure, in which
+     *         case the mixer stays uninitialized and Initialize may be retried;
+     *         callers then run on the wall-clock fallback.
+     */
     bool Initialize();
+    /** @brief Closes the device and resets all sources. Callers quiesce producers first. */
     void Shutdown();
 
+    /**
+     * @brief Claims a free source slot.
+     * @param sampleRate Guest rate in Hz. @param channels Guest channel count.
+     * @return The source, or nullptr when all 48 slots are occupied.
+     */
     AudioSource* RegisterSource(std::uint32_t sampleRate, std::uint32_t channels);
+    /** @brief Releases a slot from RegisterSource. @param source Source (nullptr ignored). */
     void UnregisterSource(AudioSource* source);
 
+    /** @brief Master output clock. @return Frames consumed since start/reset. */
     std::uint64_t GetFramesConsumed() const noexcept;
+    /** @brief Output latency (ring fill + device period). @return Milliseconds. */
     double GetLatencyMs() const noexcept;
+    /** @brief Callbacks that found an active unpaused source short of frames. @return Count. */
     std::uint64_t GetUnderruns() const noexcept;
+    /** @brief Grains dropped past the 100 ms ceiling. @return Count. */
     std::uint64_t GetOverrunDrops() const noexcept;
     /** @brief Count of blocking pushes that hit the 200 ms timeout (stuck-device stall input). */
     std::uint64_t GetStalls() const noexcept;
 
+    /** @brief Whether an SDL device is open. @return True if the callback is the consumer. */
     bool HasDevice() const noexcept { return m_device != 0; }
+    /** @brief Records one overrun drop (audio.overrun_drop). Lock-free. */
     void RecordOverrunDrop() noexcept;
     /** @brief Records one blocking-push timeout (audio.stall). Thread-safe, lock-free. */
     void RecordStall() noexcept;

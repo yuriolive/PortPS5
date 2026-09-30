@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -122,6 +123,13 @@ void AudioSource::Init(std::uint32_t sampleRate, std::uint32_t channels) {
         m_resampler = SDL_NewAudioStream(
             AUDIO_F32SYS, static_cast<Uint8>(AUDIO_MIXER_CHANNELS), static_cast<int>(m_sampleRate),
             AUDIO_F32SYS, static_cast<Uint8>(AUDIO_MIXER_CHANNELS), static_cast<int>(AUDIO_MIXER_SAMPLE_RATE));
+        if (!m_resampler) {
+            // A non-48 kHz port without a resampler would silently play at the
+            // wrong pitch; this is an unsupported state, not a recoverable error.
+            std::fprintf(stderr, "[audio] SDL_NewAudioStream(%u -> %u Hz) failed: %s\n",
+                         m_sampleRate, AUDIO_MIXER_SAMPLE_RATE, SDL_GetError());
+            Unsupported("AudioSource::Init: cannot create resampler for port rate");
+        }
     }
     m_state.store(kActive, std::memory_order_release);
 }
@@ -219,7 +227,13 @@ bool AudioSource::ResampleStereo(const AudioFrame* frames, std::uint32_t inCount
     const int outFrames = availBytes / static_cast<int>(sizeof(AudioFrame));
     out.resize(outFrames);
     const int got = SDL_AudioStreamGet(m_resampler, out.data(), availBytes);
-    if (got <= 0) {
+    if (got < 0) {
+        // SDL reported a stream error: fail the grain instead of pretending
+        // the resampler produced silence.
+        out.clear();
+        return false;
+    }
+    if (got == 0) {
         out.clear();
         return true;
     }
