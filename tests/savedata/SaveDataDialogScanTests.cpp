@@ -25,7 +25,43 @@ void ResetSaveDataDialogStateForTesting();
 #define DIALOG_TEST_SUITE NativeSaveDataDialogScanTest
 #endif
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace {
+/**
+ * Sets directory last write time portably.
+ * On Windows, std::filesystem::last_write_time on a directory throws
+ * Permission denied because MinGW-w64 libstdc++ opens directories without
+ * FILE_FLAG_BACKUP_SEMANTICS; Win32 SetFileTime works as documented.
+ */
+static void SetDirectoryWriteTime(const std::filesystem::path& path,
+                                  std::filesystem::file_time_type time) {
+#ifdef _WIN32
+    HANDLE h = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        auto sys_time = std::chrono::file_clock::to_sys(time);
+        auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(sys_time.time_since_epoch()).count();
+        ULARGE_INTEGER ull;
+        ull.QuadPart = (static_cast<ULONGLONG>(millis) * 10000ULL) + 116444736000000000ULL;
+        FILETIME ft;
+        ft.dwLowDateTime = ull.LowPart;
+        ft.dwHighDateTime = ull.HighPart;
+        SetFileTime(h, nullptr, nullptr, &ft);
+        CloseHandle(h);
+        return;
+    }
+#endif
+    std::error_code ec;
+    std::filesystem::last_write_time(path, time, ec);
+}
+
 /** Hermetic dialog fixture; the test thread is the only dialog-state owner. */
 class DIALOG_TEST_SUITE : public PortPS5::Testing::TempDirectoryFixture {
 protected:
@@ -82,11 +118,11 @@ TEST_F(DIALOG_TEST_SUITE, IgnoresSnapshotsAndInternalDirectories) {
     for (const char* name : {"a.portps5-prev", "long-save.portps5-prev", ".portps5-prev",
                              ".save.portps5-prev.tmp", "_memory"}) {
         std::filesystem::create_directory(TempDir() / name);
-        std::filesystem::last_write_time(TempDir() / name, now);
+        SetDirectoryWriteTime(TempDir() / name, now);
     }
     ExpectSelected(nullptr);
     std::filesystem::create_directory(TempDir() / "a.portps5-prev-extra");
-    std::filesystem::last_write_time(TempDir() / "a.portps5-prev-extra", now - std::chrono::hours(1));
+    SetDirectoryWriteTime(TempDir() / "a.portps5-prev-extra", now - std::chrono::hours(1));
     ExpectSelected("a.portps5-prev-extra");
 }
 
