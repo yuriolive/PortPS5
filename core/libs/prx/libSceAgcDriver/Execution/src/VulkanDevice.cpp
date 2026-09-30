@@ -1,7 +1,8 @@
-// Vulkan device bring-up and per-device graphics context for the AGC driver (Execution subsystem).
-// Selects the GPU, enables optional features (tessellation, depth bounds, mesh shaders, ...), owns
-// the device-wide caches and hands a Graphics::Context to the graphics subsystem. Not thread-safe
-// beyond the driver worker that owns the device.
+// core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp
+// Vulkan instance/device/queue ownership for the AGC driver: device selection and feature enabling
+// (BDA, mesh shaders, timeline semaphores, external host memory), presentation, and the synchronous
+// dispatch/draw paths. Owns the graphics caches and the single shared VkQueue.
+// Threading: callers serialize device work; Recorder/HostImport (Graphics/) carry their own locks.
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RenderCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"
@@ -80,6 +81,9 @@ struct VulkanDevice::State {
     VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     std::vector<std::uint32_t> capabilities{1};
     std::vector<std::string_view> spirvExtensions;
+    bool externalMemoryHost = false;
+    VkDeviceSize hostImportAlignment = 0;
+    bool timelineSemaphore = false;
     bool tessellationShader = false;
     bool meshShader = false;
     bool fragmentShaderBarycentric = false;
@@ -383,6 +387,26 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         state->capabilities.push_back(5283);
         state->spirvExtensions.push_back("SPV_EXT_mesh_shader");
     }
+    // Recorder (portps5-6): timeline semaphores let a thread wait for a serial without the recorder
+    // lock; VK_EXT_external_memory_host lets HostImport alias guest memory. Both are optional: the
+    // Recorder falls back to fence waits and HostImport to staging.
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
+    if (hasExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timelineFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+        state->timelineSemaphore = timelineFeatures.timelineSemaphore == VK_TRUE;
+        if (state->timelineSemaphore) deviceExtensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        timelineFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
+        timelineFeatures.timelineSemaphore = state->timelineSemaphore ? VK_TRUE : VK_FALSE;
+    }
+    if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
+        VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &hostProperties};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties2);
+        state->externalMemoryHost = hostProperties.minImportedHostPointerAlignment != 0;
+        state->hostImportAlignment = hostProperties.minImportedHostPointerAlignment;
+        if (state->externalMemoryHost) deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+    }
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
     queueInfo.queueFamilyIndex = family;
@@ -424,6 +448,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     if (state->fragmentShaderBarycentric) {
         barycentricFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &barycentricFeatures;
+    }
+    if (state->timelineSemaphore) {
+        timelineFeatures.pNext = byteFeatures.pNext;
+        byteFeatures.pNext = &timelineFeatures;
     }
     bdaFeatures.pNext = &byteFeatures;
     deviceInfo.pNext = &bdaFeatures;
@@ -711,7 +739,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
 }
 
 Graphics::Context VulkanDevice::graphicsContext() const {
-    return Graphics::Context{
+    Graphics::Context context{
         state->device,
         state->physical,
         state->queue,
@@ -726,7 +754,6 @@ Graphics::Context VulkanDevice::graphicsContext() const {
         state->meshLimits,
         state->depthClipControl,
         state->depthRangeUnrestricted,
-        state->depthBounds,
         true,
         state->subgroup,
         state->fragmentShaderBarycentric,
@@ -743,6 +770,10 @@ Graphics::Context VulkanDevice::graphicsContext() const {
         state->descriptorCache,
         state->samplerCache
     };
+    context.externalMemoryHost = state->externalMemoryHost;
+    context.hostImportAlignment = state->hostImportAlignment;
+    context.depthBounds = state->depthBounds;
+    return context;
 }
 
 void VulkanDevice::ResolveMemory(std::uint64_t address, std::size_t bytes, bool writable) {

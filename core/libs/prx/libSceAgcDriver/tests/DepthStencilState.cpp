@@ -584,4 +584,45 @@ TEST(DepthStencilState, ToVulkanCopiesEveryField) {
     EXPECT_EQ(vk.front.reference, 7u);
 }
 
+/// One viewport depth-transform vector: PA_CL_CLIP_CNTL bit 19 (DX_CLIP_SPACE_DEF), Z scale/offset
+/// (PA_CL_VPORT_ZSCALE/ZOFFSET) and the Vulkan min/max depth the host viewport must get.
+struct DepthRangeVector {
+    bool zeroToOne;
+    float scale;
+    float offset;
+    float expectedMin;
+    float expectedMax;
+};
+
+class ViewportDepthRange : public ::testing::TestWithParam<DepthRangeVector> {};
+
+// Invariant: the guest Z transform survives the conversion to a Vulkan depth range in both clip
+// spaces, including reversed-Z (min > max) and a degenerate zero-scale range, and the host
+// scale/offset reconstructed from the result equals the guest's. Vectors ported from SharpEmu
+// `RenderExecutorStateTests.DynamicState_DepthRangePreservesTheGuestTransform` (GPL-2.0).
+TEST_P(ViewportDepthRange, PreservesGuestTransform) {
+    const auto v = GetParam();
+    auto queue = makeQueue();
+    queue.context[0x204] = v.zeroToOne ? 0x80000u : 0u;
+    queue.context[0x113] = std::bit_cast<std::uint32_t>(v.scale);
+    queue.context[0x114] = std::bit_cast<std::uint32_t>(v.offset);
+    const auto state = DecodeState(queue);
+    EXPECT_EQ(state.negativeOneToOne, !v.zeroToOne);
+    EXPECT_FLOAT_EQ(state.viewport.minDepth, v.expectedMin);
+    EXPECT_FLOAT_EQ(state.viewport.maxDepth, v.expectedMax);
+    const float range = state.viewport.maxDepth - state.viewport.minDepth;
+    EXPECT_FLOAT_EQ(v.zeroToOne ? range : range / 2.0f, v.scale);
+    EXPECT_FLOAT_EQ(v.zeroToOne ? state.viewport.minDepth : (state.viewport.maxDepth + state.viewport.minDepth) / 2.0f, v.offset);
+}
+
+INSTANTIATE_TEST_SUITE_P(SharpEmuVectors, ViewportDepthRange, ::testing::Values(
+    DepthRangeVector{false, 0.5f, 0.5f, 0.0f, 1.0f},
+    DepthRangeVector{true, 0.5f, 0.5f, 0.5f, 1.0f},
+    DepthRangeVector{false, -0.5f, 0.5f, 1.0f, 0.0f},
+    DepthRangeVector{true, -1.0f, 1.0f, 1.0f, 0.0f},
+    DepthRangeVector{false, 0.25f, 0.5f, 0.25f, 0.75f},
+    DepthRangeVector{true, 0.25f, 0.5f, 0.5f, 0.75f},
+    DepthRangeVector{false, 0.0f, 0.5f, 0.5f, 0.5f},
+    DepthRangeVector{true, 1.0f, 0.0f, 0.0f, 1.0f}));
+
 }  // namespace

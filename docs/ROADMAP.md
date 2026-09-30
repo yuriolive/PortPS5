@@ -21,12 +21,12 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] The PRD pin table has no TBD cells.
 - [ ] Baseline preserved. At the start of M0, run Demon's Souls on upstream `main` (`e06dbff`) and record the furthest observable stage (for example "SIE logo presented"). After the rebase, the fork reaches that same stage.
 
-## Milestone 1: Selective PR #5 port and runtime core
+## Milestone 1: Selective port of merged AnyPS5 PR #5 and runtime core
 
 **Scope**
-- [ ] Port from PR #5 onto the fork, without its title-specific code:
-  - [ ] the Recorder;
-  - [ ] host import with a staging fallback;
+- [ ] Port from AnyPS5 `main` (merged PR #5) onto the fork, without its title-specific code:
+  - [x] the Recorder (adapted `Recorder` landed in `Graphics/`, portps5-6; driver wiring is tracked in `docs/spec/gpu-driver.md`);
+  - [x] host import with a staging fallback (`HostImport`, portps5-6);
   - [x] GPU detile;
   - [ ] GuestArena/GuestHeap behind `IWriteTracker`;
   - [x] `--to-intel` SSE4a lowering;
@@ -36,10 +36,13 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [ ] Establish foundational subsystem GoogleTest suites ported and adapted from open-source ecosystem references:
   - [x] Kernel synchronization & threading: port futex/umtx, pthread mutex/condvar/rwlock priority, and `WaitOnAddress` race perturbation tests from FreeBSD 12, Wine, and KytyPS5 (`SyncOnAddressTests`) ([spec/threading.md](spec/threading.md));
   - [x] Event queues: port kqueue/kevent edge/level triggers, user events, and timeout cancellation tests from FreeBSD 12 and KytyPS5 (`EventQueueLifetimeTests`);
-  - [x] Virtual memory: port 16 KB page rounding, direct memory mapping, protect state transitions, and memory tracking tests from FreeBSD 12 and KytyPS5 (`VirtualMemoryAllocationTests`, `MemoryTrackerTests`) ([spec/guest-memory.md](spec/guest-memory.md));
+  - [ ] Virtual memory ([spec/guest-memory.md](spec/guest-memory.md)):
+    - [ ] port 16 KB page rounding, direct memory mapping and protect state transitions from FreeBSD 12 and KytyPS5 (`VirtualMemoryAllocationTests`: 241 of Kyty's 3,173 lines ported so far);
+    - [x] port the memory-tracking behaviour from KytyPS5 `MemoryTrackerTests` onto `GuestMemoryTracking::Watch` (`tests/memory/MemoryTrackerTests.cpp`: range validation, page rounding, protection/fault resolution, invalidate, resolver contract, concurrency). Kyty's CPU/GPU dirty-ownership, upload/download ranges, `RangeSet` and region-mask batching have no counterpart until the `IWriteTracker` implementation lands, so they are not ported;
+    - [ ] `IWriteTracker` write-watch tests (`Collect`, `MarkWritten`, generations, aliased views): blocked on the real tracker; only `NullTracker` exists.
   - [x] Kernel error contract, timedwait, thread-self, and host TLS: verify POSIX/SCE errno families, `ETIMEDOUT` / `SCE_KERNEL_ERROR_ETIMEDOUT` conventions, and Win32 TLS isolation (`GuestKernelErrors`, `GuestCondTimedwait`, `GuestThreadSelf`, `HostThreadLocal`) ([spec/threading.md](spec/threading.md));
   - [x] Shader recompiler: port instruction decoding bitfield validation, DPP swizzles, SDWA packing, 64-bit LDS, and divergent control-flow tests from Mesa ACO and KytyPS5 (`ShaderRecompilerComputeTests`, `shaderCfgTests`, `RecompilerFixesTests`) ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
-- [ ] Interim FMV correctness: PR #5's Bink-plane write-back is ported as a general mechanism, *adjacent block-generation advance*, with no switch and no title reference. It serves M1–M2 and is replaced in M3 ([spec/video-fmv.md](spec/video-fmv.md)).
+- [ ] Interim FMV correctness: AnyPS5 `main`'s Bink-plane write-back (merged PR #5) is ported as a general mechanism, *adjacent block-generation advance*, with no switch and no title reference. It serves M1–M2 and is replaced in M3 ([spec/video-fmv.md](spec/video-fmv.md)).
 - [ ] Recompiler: bindless tables with bounds taken from device limits ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
 - [x] Relinker: make the existing `.eh_frame`-seeded CFG (`CodeInstructionCollector`) the only instruction-discovery engine, as one shared `CodeMap` replacing the linear sweep ([spec/relinker.md](spec/relinker.md)); support Linux load-alignment and `--windows-gui` PE subsystem switch.
 - [x] Export ABI: the `APS5_EXPORT_FN` export macro, which declares every export `APS5_VABI` and `noexcept` ([spec/build-toolchain.md](spec/build-toolchain.md)).
@@ -54,7 +57,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - Dreaming Sarah (recorded 2026-09-29): 815 relocation refs / 484 unique NIDs, 478 resolve to built prx exports; 6 missing (all libc locale/iostream data); boot blocked at prx load (`libSceVideoOut` importing `Config::Loader` from `libc.prx`, `GetLastError` 127). Detail in [spec/relinker.md](spec/relinker.md) Open questions.
 
 **Exit criteria**
-- [ ] With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic, the stage PR #5 reached. Its fill and copy kernels run as the title's own shaders, without replacement. The `policy` CI job is green.
+- [ ] With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic, the stage AnyPS5 PR #5 reached. Its fill and copy kernels run as the title's own shaders, without replacement. The `policy` CI job is green.
 - [x] Sync microbenchmark: uncontended lock/unlock at least 10× faster than the old implementation, and the pthread and `SyncOnAddress` GoogleTest suites pass.
 - [ ] The hosted golden corpus contains synthetic shaders that cover every decoded instruction class, and it is green in CI. The local-only game-derived corpus replays with 0 validation failures.
 
@@ -84,7 +87,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 **Scope**
 - [ ] Driver:
   - split into CommandProcessor, Recorder, Buffer/Texture/Pipeline caches, Rasterizer and Presenter;
-  - a GPU-side path for the `DRAW_INDIRECT` family (PR #5 implements these draws only by reading records on the CPU);
+  - a GPU-side path for the `DRAW_INDIRECT` family (AnyPS5 `main@75a8668` takes `vkCmdDraw[Indexed]Indirect[Count]` only when the record fold, shader path, draw index and memory state allow it, and otherwise reads records on the CPU: `Draw.hpp:43`, `Draw.cpp:823-830`);
   - general block-generation write tracking for GPU-written surfaces, replacing the interim adjacent block-generation advance from M1–M2. Tomb Raider and Bugsnax FMV depend on it;
   - redesign capture ordering: resolve buffers on the GPU, resolve images at submit time, and never satisfy a wait from an unexecuted label while a capture depends on it.
 - [ ] Establish Vulkan driver cache and recompiler structurizer GoogleTest suites:
@@ -118,7 +121,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 **Scope**
 - [ ] Demon's Souls from the first level to credits:
   - streaming and resource aliasing at full size;
-  - host-import budget sized automatically (the PR #5 description reports a manual 16 GiB override for later stages);
+  - host-import budget sized automatically (the AnyPS5 PR #5 description on GitHub reports a manual 16 GiB `APS5_HOST_IMPORT_MIB` override for later stages);
   - direct-memory aliasing (the same physical range mapped at several guest addresses) with write tracking, which `GetWriteWatch` may not cover ([spec/guest-memory.md](spec/guest-memory.md));
   - audio object-port panning ([spec/audio.md](spec/audio.md)).
 - [ ] Direct-memory multi-mapping and host-import stress suites: perturbation tests covering concurrent aliased writes and memory tracker cache coherency under 16 GiB budget pressure.

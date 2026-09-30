@@ -14,29 +14,29 @@ PRD bars owned here: F2 (save, quit, relaunch and continue) and F8 (online calls
 
 **PortPS5 offline sockets.** `libSceNet` rejects IPv4/IPv6 bind-family mismatches with `NET_EAFNOSUPPORT`; explicit port collisions require matching family and socket type. Socket abort remains set until close so both current and later blocking waiters receive `NET_ECONNABORTED`. IPv6 conversion accepts one-to-four-digit hexadecimal groups and at most one `::` replacing at least one group; prefixes, signs, whitespace, excess digits and trailing single colons are invalid. Invalid conversion leaves the output buffer unchanged.
 
-References are relative to `core/libs/prx/`. PR #5 line numbers are given unless noted otherwise.
+References are relative to `core/libs/prx/`. The `main@e06dbff` column cites AnyPS5 at that commit. The `main@75a8668` column cites current AnyPS5 main (includes merged PR #5), and line numbers are given for it unless noted otherwise.
 
 **Save storage (`libSceSaveData.native/Export.cpp`).**
 
-| Behaviour | `main` | PR #5 |
+| Behaviour | `main@e06dbff` | `main@75a8668` (incl. merged PR #5) |
 |---|---|---|
 | Root | `_sd`, relative to the process CWD (`:12`) | Same (`:18`, `:23-25`). Not per title, not per user. |
-| Mount point | `"/" + real_path` (`:207`) | `/_sm/<slot>`, aliased through `AddPathAlias_nid_no_patch` (`:286-287`; `libc/src/General.cpp:39`) |
-| Mount slots | 16 (`SaveData.hpp:26`) | Same. Busy and exists checks at `:265-276`. An unknown `mount_mode` throws (`:253-255`). |
-| Backup, event result, memory blobs | Throw | Backup queues an OK event at once (`:77-92`). Memory blobs are persisted as `_sd/_memory_<slot>.bin` with a truncating `ofstream` (`:35-43`, `:333-383`). |
-| Commit, Prepare | No-ops | No-ops (`:94-97`, `:297-301`). Writes go straight to the files. |
-| Params, icons, quota | — | `GetParam` returns zeros (`:182-195`). `DirNameSearch` zeroes params (`:144-146`). `SetParam` and `SaveIcon` are dropped (`:303-331`). `GetMountInfo` reports 32768 free blocks (`:169-180`; `SaveData.hpp:24`). |
-| Other | — | `sceSaveDataTransferringMount` throws (`:402-407`). |
+| Mount point | `"/" + real_path` (`:207`) | `/_sm/<slot>`, aliased through `AddPathAlias_nid_no_patch` (`:363-364`; `libc/src/General.cpp:82`) |
+| Mount slots | 16 (`SaveData.hpp:26`) | Same (`SaveData.hpp:29`). Busy and exists checks at `:342-353`. An unknown `mount_mode` throws (`:330-332`). |
+| Backup, event result, memory blobs | Throw | Backup queues an OK event at once (`:136-151`). Memory blobs are persisted per user and slot as `_sd_mem/u<user>/slot<n>.bin` plus a `.param` sidecar, and whole-file writes go through a temp file and rename (`:64-75`, `:92-115`, `:256-500`). |
+| Commit, Prepare | No-ops | No-ops (`:153-156`, `:374-378`). Writes go straight to the files. |
+| Params, icons, quota | — | `GetParam` returns zeros (`:241-254`). `DirNameSearch` zeroes params (`:203-205`). `SetParam` and `SaveIcon` are dropped (`:380-408`). `GetMountInfo` reports 32768 free blocks (`:228-239`; `SaveData.hpp:27`). |
+| Other | — | `sceSaveDataTransferringMount` returns `SAVE_DATA_ERROR_NOT_FOUND` (`:528-535`). |
 
-**Dialogs.** In `libSceSaveDataDialog.native/Export.cpp`, `Open` sets `FINISHED` immediately (`:51-74`), and `GetResult` always returns OK, the OK button and the first dir name passed in (`:35-49`). `libSceCommonDialog`'s `IsUsed` returns false. Every export in `libSceMsgDialog/Export.cpp:8-63` throws, and PR #5's `libSceMsgDialog.native` exports only a marker variable. `docs/TechnicalDebt.md:14-15` lists the two silent dialog stubs.
+**Dialogs.** In `libSceSaveDataDialog.native/Export.cpp`, `Open` sets `FINISHED` immediately (`:51-74`), and `GetResult` always returns OK, the OK button and the first dir name passed in (`:35-49`). `libSceCommonDialog`'s `IsUsed` returns false. At `main@e06dbff` every export in `libSceMsgDialog/Export.cpp:8-63` throws. On `main@75a8668` that file is a message-dialog state machine with no visible dialog (`libSceMsgDialog/Export.cpp:1-3`), and `libSceMsgDialog.native` exports only a marker variable (`Export.cpp:7`). `docs/TechnicalDebt.md:14-15` lists the two silent dialog stubs.
 
-**User and system services.** `libSceUserService/Export.cpp:85-100` has one constant initial user, and `GetUserName` and `GetUserNumber` throw (`:104`, `:112`). `libSceSystemService/Export.cpp:50-65` `ParamGetInt` returns fixed values (English US, 24-hour clock, Cross as enter), and `ParamGetString` throws (`:67-72`).
+**User and system services.** `libSceUserService/Export.cpp:91-97` has one constant initial user, and `GetUserName` and `GetUserNumber` return that user's name and 1 (`:110-127`). `libSceSystemService/Export.cpp:62-77` `ParamGetInt` returns fixed values (English US, 24-hour clock, Cross as enter), and `ParamGetString` throws (`:79-85`).
 
 **NP and trophies.**
 
-| Library | `main` | PR #5 |
+| Library | `main@e06dbff` | `main@75a8668` (incl. merged PR #5) |
 |---|---|---|
-| NpManager | 25 exports, all throw | Signed-out semantics: `GetState` → `SIGNED_OUT` (`:102-106`); `PollAsync` finishes with `SIGNED_OUT` (`:116-120`); `CheckPremium` and `GetAccountId`/`GetOnlineId` → signed out (`:41-45`, `:70-80`, `:96-100`). 13 of 29 still throw, including `CheckNpAvailability`, `GetNpId`, `HasSignedUp` and every `Register*Callback`. |
+| NpManager | 25 exports, all throw | Signed-out semantics: `GetState` → `SIGNED_OUT` (`:102-106`); `PollAsync` finishes with `SIGNED_OUT` (`:116-120`); `CheckPremium` and `GetAccountId`/`GetOnlineId` → signed out (`:41-45`, `:70-80`, `:96-100`). 13 of 29 still throw, including `CheckNpAvailability`, `GetNpId`, `HasSignedUp` and every `Register*Callback` except `sceNpRegisterStateCallbackA` (`:185`). |
 | NpAuth | 8 exports, all throw | Same |
 | NpWebApi2 | 18 exports, all throw | 24 exports, none throw |
 | NpCppWebApi | — | 157 exports, 51 throw |
@@ -45,7 +45,7 @@ References are relative to `core/libs/prx/`. PR #5 line numbers are given unless
 
 ## Decision
 
-This follows the decision table in [README.md](README.md#subsystem-specs) §Save data: adopt PR #5's `libSceSaveData.native`, replace the silent dialog stubs with scripted and logged results, store saves under `%LOCALAPPDATA%/PortPS5/saves/<titleId>/`, and make a save round-trip per gate title part of local regression.
+This follows the decision table in [README.md](README.md#subsystem-specs) §Save data: adopt AnyPS5 main's `libSceSaveData.native` (merged PR #5), replace the silent dialog stubs with scripted and logged results, store saves under `%LOCALAPPDATA%/PortPS5/saves/<titleId>/`, and make a save round-trip per gate title part of local regression.
 
 On top of that, this spec takes the offline NP decision: signed out, deterministic, never throwing on a gate path.
 

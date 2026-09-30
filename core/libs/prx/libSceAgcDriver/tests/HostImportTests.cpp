@@ -1,0 +1,547 @@
+// core/libs/prx/libSceAgcDriver/tests/HostImportTests.cpp
+//
+// GoogleTest suite for Graphics/HostImport: host import of guest memory with a staging fallback
+// (docs/spec/gpu-driver.md, "Host-import budget and staging"; ROADMAP M1 Lane A, portps5-6). The GPU
+// side is vkCmdFillBuffer, so no shader or game data is involved. Staging tests run on any Vulkan
+// device; import tests are skipped on devices without VK_EXT_external_memory_host (lavapipe has it).
+#include "RecorderTestSupport.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/HostImport.hpp"
+#include <gtest/gtest.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+using namespace AgcDriver::Graphics;
+using AgcDriverTest::AlignedBlock;
+using AgcDriverTest::FakeTracker;
+using AgcDriverTest::VulkanTestDevice;
+
+namespace {
+
+// Counts vkCmdPipelineBarrier calls (forwarding to the real one) to check where HostImport orders work.
+PFN_vkGetDeviceProcAddr hostImportRealProc = nullptr;
+PFN_vkCmdPipelineBarrier hostImportRealBarrier = nullptr;
+std::atomic<int> hostImportBarriers{0};
+
+VKAPI_ATTR void VKAPI_CALL CountBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags flags, std::uint32_t memoryCount, const VkMemoryBarrier* memory, std::uint32_t bufferCount, const VkBufferMemoryBarrier* buffers, std::uint32_t imageCount, const VkImageMemoryBarrier* images) {
+    // The end-of-batch HOST barrier is not a device ordering barrier; count only device-to-device ones.
+    if ((destination & VK_PIPELINE_STAGE_HOST_BIT) == 0) ++hostImportBarriers;
+    hostImportRealBarrier(commands, source, destination, flags, memoryCount, memory, bufferCount, buffers, imageCount, images);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL CountingProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCmdPipelineBarrier") == 0) {
+        hostImportRealBarrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(hostImportRealProc(device, name));
+        return reinterpret_cast<PFN_vkVoidFunction>(&CountBarrier);
+    }
+    return hostImportRealProc(device, name);
+}
+
+class HostImportTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        if (!device.Ok()) GTEST_SKIP() << "no Vulkan device: " << device.Failure();
+        Recorder::Options options;
+        options.timelineSemaphores = device.Timeline();
+        options.tracker = &tracker;
+        recorder = std::make_unique<Recorder>(device.GetContext(), options);
+    }
+    void TearDown() override {
+        // Teardown order: imports/staging first (they sync the recorder), then the recorder.
+        imports.reset();
+        recorder.reset();
+    }
+    void MakeImports(std::uint64_t budget, std::uint64_t stagingCache = 256ull << 20) {
+        HostImportOptions options;
+        options.importBudgetBytes = budget;
+        options.stagingCacheBytes = stagingCache;
+        imports = std::make_unique<HostImport>(device.GetContext(), *recorder, tracker, options);
+    }
+    bool CanImport() const { return device.GetContext().externalMemoryHost && device.GetContext().hostImportAlignment != 0; }
+    std::uint64_t Alignment() const { return device.GetContext().hostImportAlignment; }
+    // Records a fill of the bound range with `value` into the open batch.
+    void Fill(const GuestBinding& binding, std::uint32_t value) {
+        const Recorder::Scope scope(*recorder);
+        const auto commands = recorder->Commands();
+        device.GetContext().Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, binding.buffer, binding.offset, binding.bytes, value);
+    }
+
+    VulkanTestDevice device;
+    FakeTracker tracker;
+    std::unique_ptr<Recorder> recorder;
+    std::unique_ptr<HostImport> imports;
+};
+
+// Invariant: with the import budget at 0 (the spec's test hook) every bind stages, never imports, and
+// the staging copy holds the guest bytes the range had at bind time.
+TEST_F(HostImportTest, BudgetZeroForcesStagingAndCopiesGuestBytes) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    for (std::size_t i = 0; i < 256; ++i) guest.Data()[i] = static_cast<std::byte>(i);
+    const auto result = imports->Bind(guest.Address(), 256, GuestAccess::Read);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    EXPECT_FALSE(result.binding.imported);
+    EXPECT_NE(result.binding.buffer, static_cast<VkBuffer>(VK_NULL_HANDLE));
+    EXPECT_EQ(result.binding.bytes, 256u);
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.imports, 0u);
+    EXPECT_EQ(stats.stagingBinds, 1u);
+    EXPECT_EQ(stats.stagingUploads, 1u);
+}
+
+// Invariant: a staged range is re-uploaded only when the tracker generation moved (or is unknown, 0):
+// an unchanged generation must not copy again, a changed one must.
+TEST_F(HostImportTest, StagingRefreshesOnlyWhenTheGenerationMoves) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    ASSERT_EQ(imports->Bind(guest.Address(), 128, GuestAccess::Read).status, BindStatus::Ok);
+    ASSERT_EQ(imports->Bind(guest.Address(), 128, GuestAccess::Read).status, BindStatus::Ok);
+    EXPECT_EQ(imports->Stats().stagingUploads, 1u) << "same generation: no second copy";
+    tracker.generation = 2;
+    ASSERT_EQ(imports->Bind(guest.Address(), 128, GuestAccess::Read).status, BindStatus::Ok);
+    EXPECT_EQ(imports->Stats().stagingUploads, 2u);
+    tracker.generation = 0;  // unknown: compare nothing, copy always
+    ASSERT_EQ(imports->Bind(guest.Address(), 128, GuestAccess::Read).status, BindStatus::Ok);
+    ASSERT_EQ(imports->Bind(guest.Address(), 128, GuestAccess::Read).status, BindStatus::Ok);
+    EXPECT_EQ(imports->Stats().stagingUploads, 4u);
+}
+
+// Invariant: GPU stores into a staged write bind reach guest memory after the batch completed (write-back
+// completion), are reported to the tracker, and are not visible before.
+TEST_F(HostImportTest, StagedWritesAreWrittenBackOnCompletion) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const auto result = imports->Bind(guest.Address() + 64, 128, GuestAccess::Write);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    ASSERT_FALSE(result.binding.imported);
+    Fill(result.binding, 0xDEADBEEF);
+    std::uint32_t before = 1;
+    std::memcpy(&before, guest.Data() + 64, 4);
+    EXPECT_EQ(before, 0u) << "guest memory is untouched until the write-back";
+    recorder->Sync();
+    for (std::size_t offset = 64; offset < 64 + 128; offset += 4) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, guest.Data() + offset, 4);
+        ASSERT_EQ(value, 0xDEADBEEFu) << "offset " << offset;
+    }
+    std::uint32_t outside = 1;
+    std::memcpy(&outside, guest.Data() + 64 + 128, 4);
+    EXPECT_EQ(outside, 0u) << "only the bound range is written back";
+    ASSERT_EQ(tracker.Written().size(), 1u);
+    EXPECT_EQ(tracker.Written()[0], std::make_pair(guest.Address() + 64, std::uint64_t{128}));
+}
+
+// Invariant: a CPU read through the tracker (flush hook) of a staged, GPU-written range waits for the
+// batch and its write-back, so the CPU observes the GPU's result without an explicit Sync.
+TEST_F(HostImportTest, CpuAccessAfterStagedWriteSeesTheResult) {
+    MakeImports(0);
+    recorder->Activate(&tracker);
+    AlignedBlock guest(4096, 4096);
+    const auto result = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    Fill(result.binding, 0x01020304);
+    tracker.Collect(guest.Address(), 64);
+    std::uint32_t value = 0;
+    std::memcpy(&value, guest.Data(), 4);
+    EXPECT_EQ(value, 0x01020304u);
+}
+
+// Invariant: bind failures are codes, not exceptions: empty, null and overflowing ranges are
+// InvalidRange; an unmapped range is NotMapped.
+TEST_F(HostImportTest, InvalidAndUnmappedRangesReturnCodes) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    EXPECT_EQ(imports->Bind(guest.Address(), 0, GuestAccess::Read).status, BindStatus::InvalidRange);
+    EXPECT_EQ(imports->Bind(0, 16, GuestAccess::Read).status, BindStatus::InvalidRange);
+    EXPECT_EQ(imports->Bind(~std::uint64_t{0} - 4, 64, GuestAccess::Read).status, BindStatus::InvalidRange);
+    EXPECT_EQ(imports->Bind(0x10, 16, GuestAccess::Read).status, BindStatus::NotMapped);
+    // Rejected binds reserve nothing (scenario from sharpemu EmptyUploadDoesNotReserveStagingBytes).
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.stagingBinds, 0u);
+    EXPECT_EQ(stats.stagingUploads, 0u);
+    EXPECT_EQ(stats.imports, 0u);
+}
+
+// Invariant: the staging cache is bounded: past the cap the least recently used copies are dropped, and
+// a dropped range simply re-uploads on its next bind (performance only, never results).
+TEST_F(HostImportTest, StagingCacheDropsLeastRecentlyUsed) {
+    MakeImports(0, 1024);
+    AlignedBlock guest(16384, 4096);
+    for (std::size_t i = 0; i < 4; ++i) ASSERT_EQ(imports->Bind(guest.Address() + i * 4096, 512, GuestAccess::Read).status, BindStatus::Ok);
+    EXPECT_EQ(imports->Stats().stagingUploads, 4u);
+    ASSERT_EQ(imports->Bind(guest.Address(), 512, GuestAccess::Read).status, BindStatus::Ok);
+    EXPECT_EQ(imports->Stats().stagingUploads, 5u) << "the oldest copy was dropped, so it re-uploads";
+}
+
+// The scenarios below are adapted from sharpemu's GPU buffer tests (GPL-2.0-or-later, tests/
+// SharpEmu.Libs.Tests/Gpu/Buffers/GuestBufferCacheTests.cs); only behaviour that has a counterpart in
+// this design is ported, re-expressed against HostImport, not copied.
+
+// Invariant (sharpemu UnalignedReadbackAcrossDownloadBatchesPreservesAdjacentGuestBytes): a staged write
+// back of an odd-offset, odd-length range changes exactly the bound bytes and leaves the adjacent guest
+// bytes (set to a sentinel) untouched.
+TEST_F(HostImportTest, UnalignedStagedWriteBackPreservesAdjacentBytes) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    std::memset(guest.Data(), 0xEE, 256);
+    const auto result = imports->Bind(guest.Address() + 3, 36, GuestAccess::Write);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    Fill(result.binding, 0x5A5A5A5A);
+    recorder->Sync();
+    for (std::size_t i = 0; i < 256; ++i) {
+        const auto expected = (i >= 3 && i < 3 + 36) ? std::byte{0x5A} : std::byte{0xEE};
+        ASSERT_EQ(guest.Data()[i], expected) << "byte " << i;
+    }
+}
+
+// Invariant (sharpemu MergedAllocationPreservesBothGpuWrittenRanges): two overlapping staged write binds
+// from successive batches both land, in submission order: the later batch wins the overlap and the
+// non-overlapping parts of both survive.
+TEST_F(HostImportTest, OverlappingStagedWritesLandInSubmissionOrder) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const auto first = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(first.status, BindStatus::Ok);
+    Fill(first.binding, 0x11111111);
+    recorder->Submit();
+    const auto second = imports->Bind(guest.Address() + 32, 64, GuestAccess::Write);
+    ASSERT_EQ(second.status, BindStatus::Ok);
+    Fill(second.binding, 0x22222222);
+    recorder->Sync();
+    for (std::size_t offset = 0; offset < 96; offset += 4) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, guest.Data() + offset, 4);
+        ASSERT_EQ(value, offset < 32 ? 0x11111111u : 0x22222222u) << "offset " << offset;
+    }
+}
+
+// Invariant (sharpemu ReplacedBufferRemainsAliveUntilRecordedCopiesComplete): refreshing a staged range
+// while a batch still reads the old copy hands out a DIFFERENT buffer, so the in-flight batch never sees
+// its source overwritten.
+TEST_F(HostImportTest, StagingRefreshNeverReusesABufferAnUnfinishedBatchReads) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const auto before = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(before.status, BindStatus::Ok);
+    Fill(before.binding, 1);  // the unfinished open batch uses the first copy
+    tracker.generation = 2;
+    const auto after = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(after.status, BindStatus::Ok);
+    EXPECT_NE(after.binding.buffer, before.binding.buffer);
+    EXPECT_EQ(imports->Stats().stagingUploads, 2u);
+}
+
+#ifdef _WIN32
+// Invariant (sharpemu WrittenObtain_AcrossABackingGapIsRefusedEvenWhenBothEndsAreBacked): a write bind
+// whose range crosses an inaccessible page is refused as NotMapped even though both ends are mapped, and
+// the refusal changes no state: no pending write is noted and no completion is queued.
+TEST_F(HostImportTest, WriteAcrossAnUnmappedHoleIsRefusedWithoutSideEffects) {
+    MakeImports(0);
+    recorder->Activate();
+    constexpr std::size_t Page = 4096;
+    auto* base = static_cast<std::byte*>(VirtualAlloc(nullptr, 3 * Page, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    ASSERT_NE(base, nullptr);
+    DWORD previous = 0;
+    ASSERT_TRUE(VirtualProtect(base + Page, Page, PAGE_NOACCESS, &previous));
+    const auto address = reinterpret_cast<std::uint64_t>(base) + Page - 16;
+    const auto result = imports->Bind(address, 32 + Page, GuestAccess::Write);
+    EXPECT_EQ(result.status, BindStatus::NotMapped);
+    EXPECT_FALSE(recorder->PendingWriteOverlaps(address, 32));
+    EXPECT_FALSE(recorder->HasCompletions());
+    EXPECT_TRUE(imports->Stats().stagingBinds == 0);
+    VirtualFree(base, 0, MEM_RELEASE);
+}
+#endif
+
+// Review finding (PR #49, gitar): a staged bind whose range the OPEN batch writes must not run the
+// flush hook, which would end and submit the batch the caller is still recording into. Invariant: an
+// exact staged copy is served with a barrier and the batch stays open; a partial overlap is reported as
+// OpenBatchWrites (Submit, then retry); neither submits anything.
+TEST_F(HostImportTest, StagedBindOfAnOpenBatchWriteDoesNotSubmitTheBatch) {
+    MakeImports(0);
+    recorder->Activate(&tracker);  // the flush hook is live: Collect would sync the open batch
+    AlignedBlock guest(4096, 4096);
+    const Recorder::Scope scope(*recorder);
+    const auto written = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(written.status, BindStatus::Ok);
+    Fill(written.binding, 0xABCD0123);
+    const auto reread = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(reread.status, BindStatus::Ok);
+    EXPECT_EQ(reread.binding.buffer, written.binding.buffer) << "the producer's own staged copy";
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+    const auto partial = imports->Bind(guest.Address() + 32, 64, GuestAccess::Read);
+    EXPECT_EQ(partial.status, BindStatus::OpenBatchWrites);
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+    recorder->Sync();
+    std::uint32_t value = 0;
+    std::memcpy(&value, guest.Data(), 4);
+    EXPECT_EQ(value, 0xABCD0123u) << "the fill ran exactly once, after the recording finished";
+    // After the Submit the retry succeeds through the normal (flushing) path.
+    EXPECT_EQ(imports->Bind(guest.Address() + 32, 64, GuestAccess::Read).status, BindStatus::Ok);
+}
+
+// Review finding (PR #49, gitar): the staged write-back must be recorded on the recorder that OWNS the
+// HostImport, not on whichever recorder is active (none here). Invariant: a GPU-stored completion label
+// inside a written-back range is re-stored after the write-back overwrote it.
+TEST_F(HostImportTest, StagedWriteBackIsNotedOnTheOwningRecorder) {
+    MakeImports(0);
+    ASSERT_EQ(Recorder::Active(), nullptr) << "this recorder is deliberately not activated";
+    AlignedBlock guest(4096, 4096);
+    const auto result = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    Fill(result.binding, 0x0BADF00D);
+    std::array<std::byte, 4> label{std::byte{0x77}, std::byte{0}, std::byte{0}, std::byte{0}};
+    recorder->AfterCompletions(guest.Address(), label, 1, 0, true);
+    recorder->Sync();
+    std::uint32_t value = 0;
+    std::memcpy(&value, guest.Data(), 4);
+    EXPECT_EQ(value, 0x77u) << "the write-back overlapped the label, so the label is stored after it";
+    std::uint32_t rest = 0;
+    std::memcpy(&rest, guest.Data() + 4, 4);
+    EXPECT_EQ(rest, 0x0BADF00Du);
+}
+
+// Review finding (PR #49, gitar): the open-batch fast path must serve only the copy the open batch
+// actually wrote. Invariant: an exact-key staged copy that is NOT the write target (an earlier read copy
+// of the same range while a larger write went elsewhere) is never served; the bind reports
+// OpenBatchWrites instead of returning pre-write bytes.
+TEST_F(HostImportTest, OpenBatchFastPathNeverServesAnotherProducersCopy) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const Recorder::Scope scope(*recorder);
+    ASSERT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::Ok);  // copy Y, exact key
+    const auto write = imports->Bind(guest.Address(), 128, GuestAccess::Write);               // different producer X
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    Fill(write.binding, 0x0F0F0F0F);
+    const auto read = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    EXPECT_EQ(read.status, BindStatus::OpenBatchWrites) << "Y does not hold what X wrote";
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+}
+
+// Review finding (PR #49, coderabbit): an import reads guest memory directly, but a staged writer reaches
+// it only at completion. Invariant (across batches): after a staged write was submitted, an import read of
+// the range first lands that write, with no flush hook active, so the bind returns only once guest memory
+// holds the result.
+TEST_F(HostImportTest, ImportAfterAnInFlightStagedWriteLandsTheWriteFirst) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(64ull << 20);
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 2, static_cast<std::size_t>(Alignment()));
+    tracker.state = PortPS5::GuestMemory::PageState::ReadOnly;  // a write bind cannot import: it stages
+    const auto write = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    ASSERT_FALSE(write.binding.imported);
+    Fill(write.binding, 0x13572468);
+    recorder->Submit();
+    tracker.state = PortPS5::GuestMemory::PageState::ReadWrite;
+    const auto read = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(read.status, BindStatus::Ok);
+    EXPECT_TRUE(read.binding.imported);
+    std::uint32_t value = 0;
+    std::memcpy(&value, guest.Data(), 4);
+    EXPECT_EQ(value, 0x13572468u) << "the staged write must have landed before the import was handed out";
+}
+
+// Review finding (PR #49, coderabbit): same hazard inside one batch. Invariant: when the OPEN batch has a
+// staged writer of the range, a read bind is served from that staged copy (not an import of guest memory
+// that does not hold the result yet), behind a barrier, without submitting the batch.
+TEST_F(HostImportTest, ImportReadOfAnOpenBatchStagedWriteUsesTheStagedCopy) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(64ull << 20);
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 2, static_cast<std::size_t>(Alignment()));
+    const Recorder::Scope scope(*recorder);
+    tracker.state = PortPS5::GuestMemory::PageState::ReadOnly;
+    const auto write = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    ASSERT_FALSE(write.binding.imported);
+    Fill(write.binding, 0x2468ACE0);
+    tracker.state = PortPS5::GuestMemory::PageState::ReadWrite;
+    const auto read = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(read.status, BindStatus::Ok);
+    EXPECT_FALSE(read.binding.imported) << "an import would read guest memory the staged write has not reached";
+    EXPECT_EQ(read.binding.buffer, write.binding.buffer);
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+}
+
+// Review finding (PR #49, gitar): the open-batch fast path must also refuse when another producer noted a
+// write into the range on the Recorder directly (a driver dispatch, or another HostImport), because the
+// staged copy lacks those bytes. Invariant: the bind reports OpenBatchWrites instead of serving the copy.
+TEST_F(HostImportTest, OpenBatchFastPathRefusesWritesNotedDirectlyOnTheRecorder) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const Recorder::Scope scope(*recorder);
+    const auto write = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    Fill(write.binding, 0x31415926);
+    // Served while this object is the only writer of the range...
+    EXPECT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::Ok);
+    // ...but not once some other recorded work writes part of it.
+    recorder->NotePendingWrite(guest.Address() + 8, 8);
+    EXPECT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::OpenBatchWrites);
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+}
+
+// Review finding (PR #49, coderabbit): a write bind may reuse a buffer earlier GPU work still reads (a
+// cached staging copy whose generation did not move), and submission order alone does not order the
+// writes after those reads. Invariant: every write bind records a device memory dependency in the open
+// batch, in front of the caller's writes; a read bind of an untouched range records none.
+TEST_F(HostImportTest, WriteBindOrdersItsWritesAfterEarlierReads) {
+    auto counting = device.GetContext();
+    hostImportRealProc = counting.deviceProc;
+    counting.deviceProc = &CountingProc;
+    Recorder::Options options;
+    options.timelineSemaphores = device.Timeline();
+    options.tracker = &tracker;
+    Recorder local(counting, options);
+    HostImportOptions importOptions;  // budget 0: staging, where the copy is reused across binds
+    HostImport localImports(counting, local, tracker, importOptions);
+    AlignedBlock guest(4096, 4096);
+    hostImportBarriers = 0;
+    const Recorder::Scope scope(local);
+    const auto read = localImports.Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(read.status, BindStatus::Ok);
+    EXPECT_EQ(hostImportBarriers.load(), 0) << "a read of an untouched range needs no ordering";
+    local.Submit();  // the batch that reads the copy is now in flight
+    const auto write = localImports.Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    EXPECT_EQ(write.binding.buffer, read.binding.buffer) << "the unchanged generation reuses the copy the earlier batch reads";
+    EXPECT_GE(hostImportBarriers.load(), 1) << "the write must be ordered behind the earlier read";
+    local.Sync();
+}
+
+// Review finding (PR #49, coderabbit): imports are keyed by window begin, and a bigger window with the
+// SAME begin as a smaller existing one used to collide: the insert failed, the new import leaked and the
+// returned binding covered memory past the old buffer. Invariant: while a batch still uses the smaller
+// window the bigger range stages (no crash, no leak, accounting unchanged); once it finished the smaller
+// window is replaced and the bigger range imports with consistent accounting.
+TEST_F(HostImportTest, LargerWindowWithTheSameBeginReplacesOrRefusesNeverCollides) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    const auto window = Alignment();
+    MakeImports(window * 4);
+    AlignedBlock guest(static_cast<std::size_t>(window) * 4, static_cast<std::size_t>(window));
+    const auto small = imports->Bind(guest.Address(), 64, GuestAccess::Read);  // window [A, A+window)
+    ASSERT_EQ(small.status, BindStatus::Ok);
+    ASSERT_TRUE(small.binding.imported);
+    const auto size = static_cast<std::size_t>(window) + 64;  // needs window [A, A+2*window): same begin
+    const auto busy = imports->Bind(guest.Address(), size, GuestAccess::Read);
+    ASSERT_EQ(busy.status, BindStatus::Ok);
+    EXPECT_FALSE(busy.binding.imported) << "the smaller window is still used by an unfinished batch";
+    EXPECT_EQ(imports->Stats().imports, 1u);
+    EXPECT_EQ(imports->Stats().importedBytes, window);
+    recorder->Sync();  // the batch that used the small window finished
+    const auto large = imports->Bind(guest.Address(), size, GuestAccess::Read);
+    ASSERT_EQ(large.status, BindStatus::Ok);
+    EXPECT_TRUE(large.binding.imported);
+    EXPECT_EQ(large.binding.bytes, size);
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.imports, 2u);
+    EXPECT_EQ(stats.evictions, 1u) << "the smaller window was replaced";
+    EXPECT_EQ(stats.importedBytes, window * 2) << "exactly the larger window is accounted";
+}
+
+// Invariant: a device with VK_EXT_external_memory_host and a budget imports the guest allocation itself
+// (no copy), and GPU stores land in guest memory directly; the tracker learns of them at completion.
+TEST_F(HostImportTest, ImportedWritesLandInGuestMemoryDirectly) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(64ull << 20);
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 2, static_cast<std::size_t>(Alignment()));
+    const auto result = imports->Bind(guest.Address() + 16, 256, GuestAccess::Write);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    ASSERT_TRUE(result.binding.imported);
+    EXPECT_EQ(result.binding.offset, 16u) << "the binding starts inside the aligned import window";
+    Fill(result.binding, 0xCAFEF00D);
+    recorder->Sync();
+    std::uint32_t inside = 0;
+    std::memcpy(&inside, guest.Data() + 16, 4);
+    EXPECT_EQ(inside, 0xCAFEF00Du);
+    std::uint32_t before = 1;
+    std::memcpy(&before, guest.Data() + 12, 4);
+    EXPECT_EQ(before, 0u) << "bytes before the range are untouched";
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.imports, 1u);
+    EXPECT_EQ(stats.stagingBinds, 0u);
+    ASSERT_EQ(tracker.Written().size(), 1u);
+    EXPECT_EQ(tracker.Written()[0], std::make_pair(guest.Address() + 16, std::uint64_t{256}));
+}
+
+// Invariant: a second bind inside an existing import window reuses it (no second import).
+TEST_F(HostImportTest, ImportWindowIsReused) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(64ull << 20);
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 2, static_cast<std::size_t>(Alignment()));
+    ASSERT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::Ok);
+    const auto second = imports->Bind(guest.Address() + 128, 64, GuestAccess::Read);
+    ASSERT_EQ(second.status, BindStatus::Ok);
+    EXPECT_TRUE(second.binding.imported);
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.imports, 1u);
+    EXPECT_EQ(stats.importHits, 1u);
+}
+
+// Invariant: when any page of the import window is not tracked ReadWrite the bind stages instead (a
+// refused import changes performance only); a ReadOnly window still imports for read-only binds.
+TEST_F(HostImportTest, UntrackedOrReadOnlyPagesFallBackToStaging) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(64ull << 20);
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 2, static_cast<std::size_t>(Alignment()));
+    tracker.state = PortPS5::GuestMemory::PageState::ReadOnly;
+    const auto write = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    EXPECT_FALSE(write.binding.imported) << "GPU writes need ReadWrite pages";
+    tracker.state = PortPS5::GuestMemory::PageState::NotGuest;
+    const auto unknown = imports->Bind(guest.Address() + 256, 64, GuestAccess::Read);
+    ASSERT_EQ(unknown.status, BindStatus::Ok);
+    EXPECT_FALSE(unknown.binding.imported);
+    tracker.state = PortPS5::GuestMemory::PageState::ReadOnly;
+    const auto read = imports->Bind(guest.Address() + 512, 64, GuestAccess::Read);
+    ASSERT_EQ(read.status, BindStatus::Ok);
+    EXPECT_TRUE(read.binding.imported) << "read-only pages import for read-only binds";
+    EXPECT_EQ(imports->Stats().importRefusals, 2u);
+}
+
+// Invariant: the budget is enforced. An import that would exceed it while an unfinished batch still uses
+// the older import is refused (staged); once that batch completed, the LRU import is evicted for it.
+TEST_F(HostImportTest, BudgetEvictsOnlyImportsWhoseBatchesFinished) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    const auto window = Alignment();
+    MakeImports(window);  // room for exactly one window
+    AlignedBlock first(static_cast<std::size_t>(window), static_cast<std::size_t>(window));
+    AlignedBlock second(static_cast<std::size_t>(window), static_cast<std::size_t>(window));
+    ASSERT_TRUE(imports->Bind(first.Address(), 64, GuestAccess::Read).binding.imported);
+    // The first import is still referenced by the unfinished open batch: it cannot be evicted.
+    const auto refused = imports->Bind(second.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(refused.status, BindStatus::Ok);
+    EXPECT_FALSE(refused.binding.imported);
+    EXPECT_EQ(imports->Stats().evictions, 0u);
+    EXPECT_EQ(imports->Stats().importRefusals, 1u);
+    // Finish the batch that could have used the first import, then the second bind evicts it.
+    recorder->Commands();
+    recorder->Sync();
+    const auto admitted = imports->Bind(second.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(admitted.status, BindStatus::Ok);
+    EXPECT_TRUE(admitted.binding.imported);
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.evictions, 1u);
+    EXPECT_EQ(stats.imports, 2u);
+    EXPECT_EQ(stats.importedBytes, window);
+}
+
+// Invariant: a window larger than the whole budget is never imported (and never evicts others for it).
+TEST_F(HostImportTest, WindowLargerThanTheBudgetStages) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(Alignment());
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 4, static_cast<std::size_t>(Alignment()));
+    const auto result = imports->Bind(guest.Address(), static_cast<std::size_t>(Alignment()) * 2, GuestAccess::Read);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    EXPECT_FALSE(result.binding.imported);
+    EXPECT_EQ(imports->Stats().imports, 0u);
+}
+
+}
