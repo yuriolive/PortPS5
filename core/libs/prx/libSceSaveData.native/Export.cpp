@@ -178,8 +178,17 @@ static bool restore_snapshots_and_migrate_if_needed() {
                         return false;
                     }
 
-                    // Only delete snapshot after restore has fully succeeded
-                    std::filesystem::remove_all(snapshotPath, ec);
+                    // Rename snapshot to a hidden cleanup name so future recovery passes ignore it
+                    std::filesystem::path cleanupPath = root / ("." + originalName + ".cleanup.tmp");
+                    std::filesystem::remove_all(cleanupPath, ec);
+                    ec.clear();
+                    std::filesystem::rename(snapshotPath, cleanupPath, ec);
+                    if (ec) {
+                        APS5_LOG_ERR("Crash recovery: failed to rename snapshot for cleanup %s: %s",
+                                     snapshotPath.string().c_str(), ec.message().c_str());
+                        return false;
+                    }
+                    std::filesystem::remove_all(cleanupPath, ec);
                 }
             }
         }
@@ -329,11 +338,23 @@ int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) noexcept {
     }
 
     std::lock_guard lock(g_save_mutex);
-    const auto target = (GetSaveDataBaseDir() / name).string();
+    const std::filesystem::path targetPath = GetSaveDataBaseDir() / name;
     for (const auto& s : g_slots) {
-        if (s.used && s.real_path == target) {
+        if (!s.used) continue;
+        const std::filesystem::path slotPath(s.real_path);
+        std::error_code eqEc;
+        if (std::filesystem::equivalent(slotPath, targetPath, eqEc) && !eqEc) {
             return SAVE_DATA_ERROR_BUSY;
         }
+#ifdef _WIN32
+        if (_stricmp(s.real_path.c_str(), targetPath.string().c_str()) == 0) {
+            return SAVE_DATA_ERROR_BUSY;
+        }
+#else
+        if (s.real_path == targetPath.string()) {
+            return SAVE_DATA_ERROR_BUSY;
+        }
+#endif
     }
 
     try {

@@ -584,6 +584,12 @@ TEST_F(SaveDataFidelityTest, DeleteRejectsInvalidNames) {
     ASSERT_EQ(sceSaveDataMount3(&mount, &mountResult), SAVE_DATA_OK);
     del.dir_name = &mountedDir;
     EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_BUSY);
+
+    // Case-variant paths on Windows resolve to the same save and must return BUSY
+    auto caseVariantDir = MakeDirName("mounted_dir");
+    del.dir_name = &caseVariantDir;
+    EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_BUSY);
+
     EXPECT_EQ(sceSaveDataUmount2(0, &mountResult.mount_point), SAVE_DATA_OK);
 
     auto valid = MakeDirName("VALID");
