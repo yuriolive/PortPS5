@@ -1,3 +1,8 @@
+// core/libs/nid/include/nid/NidPatcherUtils.hpp
+// PortPS5 NID patcher utility functions and export name classification rules.
+// Enforces naming invariants for hashed NID exports, verbatim no-patch exports,
+// and cross-PRX host exports without guest register or ABI corruption.
+
 #ifndef NID_NIDPATCHERUTILS_HPP
 #define NID_NIDPATCHERUTILS_HPP
 
@@ -28,7 +33,8 @@ inline bool IsNidNoPatch(const std::string& name) {
     return (
         name.size() >= kNidNoPatchLen &&
         name.compare(name.size() - kNidNoPatchLen, kNidNoPatchLen, kNidNoPatch) == 0
-    ) || name.compare(0, kSDLPrefixLen, kSDLPrefix) == 0;
+    ) || name.compare(0, kSDLPrefixLen, kSDLPrefix) == 0
+      || name.starts_with("_ZN7PortPS56Config");
 }
 
 inline bool IsNidNoPatchCut(const std::string& name) {
