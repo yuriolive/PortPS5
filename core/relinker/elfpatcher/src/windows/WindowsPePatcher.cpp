@@ -8,6 +8,7 @@
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <io/BufferUtils.hpp>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -32,9 +33,14 @@ void writeDiagnosticsImports(const std::vector<PeImport>& imports) {
 
 void writeGotStub(std::vector<PeSection>& sections, const std::uint32_t targetRva, const std::uint32_t stubRva) {
     for (auto& section : sections) {
-        if (targetRva < section.Rva || targetRva - section.Rva > section.Data.size() - 4)
+        if (section.Data.size() < 8 || targetRva < section.Rva || targetRva - section.Rva > section.Data.size() - 8)
             continue;
-        Io::WriteU32(section.Data, targetRva - section.Rva, stubRva);
+        // A GOT slot is an 8-byte pointer. It is covered by an
+        // IMAGE_REL_BASED_DIR64 base relocation, which only adds the load delta
+        // (loadBase - ImageBase) to the stored value, so the slot must hold the
+        // preferred-VA form (ImageBase + rva). A bare 4-byte RVA would resolve to
+        // (loadBase - ImageBase + rva) and jump into unmapped memory.
+        Io::WriteU64(section.Data, targetRva - section.Rva, ImageBase + stubRva);
         return;
     }
     throw Domain::RelinkerException("Lazy import GOT slot is not contained in any section", targetRva);
@@ -74,12 +80,6 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     }
     directories[9] = WindowsTlsBuilder().Build(sourceElf, originalHeaders, image, sections, relocations.BaseRelocations, nextRva);
     WindowsTrampolineBuilder().Build(trampolines, image, sections, nextRva);
-    auto relocationData = relocationBuilder.BuildBaseRelocations(relocations.BaseRelocations);
-    if (!relocationData.empty()) {
-        directories[5] = {nextRva, CheckedRva(relocationData.size())};
-        sections.push_back({".reloc", nextRva, SectionRead | 0x02000040u, std::move(relocationData)});
-        nextRva = AlignRva(nextRva + sections.back().Data.size());
-    }
     const WindowsImportBuilder importBuilder;
     auto nativeImports = importBuilder.Build(nextRva);
     directories[1] = nativeImports.Directory;
@@ -98,11 +98,26 @@ std::vector<std::uint8_t> WindowsPePatcher::Patch(const std::vector<std::uint8_t
     auto entry = WindowsEntryStubBuilder().Build(nextRva, image.GetEntryRva(), nativeImports, libraries, relocations.Imports, runPath, lazyBinding, dependencyDiagnostics, dynamicSection.GuestModules);
     directories[3] = entry.ExceptionDirectory;
     const auto entryRva = entry.Code.Rva;
+    nextRva = AlignRva(entry.Code.Rva + CheckedRva(entry.Code.Data.size()));
     sections.push_back(std::move(nativeImports.Section));
     sections.push_back(std::move(entry.Data));
     sections.push_back(std::move(entry.Code));
-    for (const auto& lazyStub : entry.LazyStubs)
+    // .reloc is built last: the lazy-stub GOT slots written below need their own
+    // base relocation entries, which are only known once the entry stubs exist.
+    // Import targets are disjoint from the RELATIVE targets already collected
+    // (WindowsRelocationBuilder rejects overlapping targets), but guard against
+    // a slot listed twice: a duplicate DIR64 entry would add the load delta twice.
+    for (const auto& lazyStub : entry.LazyStubs) {
         writeGotStub(sections, lazyStub.TargetRva, lazyStub.StubRva);
+        if (std::find(relocations.BaseRelocations.begin(), relocations.BaseRelocations.end(), lazyStub.TargetRva) == relocations.BaseRelocations.end())
+            relocations.BaseRelocations.push_back(lazyStub.TargetRva);
+    }
+    auto relocationData = relocationBuilder.BuildBaseRelocations(relocations.BaseRelocations);
+    if (!relocationData.empty()) {
+        directories[5] = {nextRva, CheckedRva(relocationData.size())};
+        sections.push_back({".reloc", nextRva, SectionRead | 0x02000040u, std::move(relocationData)});
+        nextRva = AlignRva(nextRva + sections.back().Data.size());
+    }
     return WindowsPeWriter().Write(sections, entryRva, directories, _windowsGui);
 }
 

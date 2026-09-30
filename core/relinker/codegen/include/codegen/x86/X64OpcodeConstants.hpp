@@ -1,3 +1,8 @@
+// Named x86-64 opcode and ModRM-range constants for the relinker's decoder.
+// Subsystem: relinker codegen (X64InstructionDecoder, rewriter, matcher).
+// Header-only constexpr values: no runtime state, safe from any thread. Values
+// describe host-side decoding of guest code and are never part of a guest ABI.
+
 #ifndef CODEGEN_X86_X64OPCODECONSTANTS_HPP
 #define CODEGEN_X86_X64OPCODECONSTANTS_HPP
 
@@ -130,6 +135,10 @@ inline constexpr std::uint8_t TwoByteModRmRangeFMin = 0x38;
 inline constexpr std::uint8_t TwoByteModRmRangeFMax = 0x3A;
 inline constexpr std::uint8_t TwoByteModRmRangeGMin = 0x54;
 inline constexpr std::uint8_t TwoByteModRmRangeGMax = 0x7F;
+/// @brief Second opcode byte of EMMS (0F 77).
+/// @details It lies inside ModRM range G (0x54..0x7F) but is a bare 2-byte
+/// instruction with no ModRM byte, so the decoder must exclude it from that range.
+inline constexpr std::uint8_t TwoByteEmms = 0x77;
 inline constexpr std::uint8_t TwoByteModRmRangeHMin = 0xD0;
 inline constexpr std::uint8_t TwoByteModRmRangeHMax = 0xFE;
 inline constexpr std::uint8_t TwoByteNopModRm = 0x1F;

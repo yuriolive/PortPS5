@@ -1,3 +1,8 @@
+// libScePad internal PadManager: per-slot state behind scePadRead and friends.
+// Subsystem: input (docs/spec/input.md). Owns four pad slots (handle = slot+1),
+// the keyboard/mouse host sample (slot 0) and per-slot controller samples.
+// Threading: every method takes the single `mutex`; scePad* exports run on guest
+// threads while publishers run on the VideoOut window thread.
 #ifndef CORE_LIBS_PRX_LIBSCEPAD_PADINTERNAL_HPP
 #define CORE_LIBS_PRX_LIBSCEPAD_PADINTERNAL_HPP
 
@@ -21,6 +26,8 @@ struct PadSlotState {
     PadVibrationParam vibration{};
     PadLightBarParam lightBar{};
     bool motionSensorEnabled = false;
+    bool controllerPresent = false;   // a physical SDL controller owns this slot
+    PadInputState controllerInput;    // latest controller sample for this slot
 };
 
 class PadManager {
@@ -39,10 +46,23 @@ public:
     int ResetLightBar(int handle);
 
     void PublishInput(const PadInputState& input);
+    // Controller source for `slot` (0..3). Merged with keyboard/mouse on slot 0.
+    void PublishControllerInput(int slot, const PadInputState& input);
+    void SetControllerConnected(int slot, bool connected);
     void ReportInputFailure(std::exception_ptr error);
 
     // Test hook: direct manipulation of slots for deterministic unit testing
     void TestSetSlotConnected(int slot, bool connected);
+    /**
+     * @brief Test hook: return a slot to its freshly-constructed state.
+     *
+     * Closes the slot, drops any controller, and restores connectedCount, the
+     * connected flag and the timestamp baseline so singleton state does not leak
+     * between tests.
+     *
+     * @param slot Slot index 0..PAD_MAX_SLOTS-1; out-of-range values are ignored.
+     */
+    void TestResetSlot(int slot);
 
 private:
     PadManager();
