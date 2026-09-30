@@ -1,3 +1,8 @@
+// core/libs/SceTypes.hpp
+// Guest-visible parameter and result structs shared by the PS5 replacement
+// libraries (prx). Layouts are ABI: guest code fills and reads these in place,
+// so fields use explicit-width types and each consumer static_asserts sizes.
+
 #ifndef CORE_LIBS_SCE_TYPES_HPP
 #define CORE_LIBS_SCE_TYPES_HPP
 
@@ -1711,6 +1716,32 @@ struct PngDecImageInfo {
     std::uint16_t color_space;
     std::uint16_t bit_depth;
     std::uint32_t image_flag;
+};
+
+struct JpegEncCreateParam {
+    std::uint32_t size;
+    std::uint32_t attr;
+};
+
+struct JpegEncEncodeParam {
+    const void* image;
+    void* jpeg;
+    std::uint32_t image_size;
+    std::uint32_t jpeg_size;
+    std::uint32_t image_width;
+    std::uint32_t image_height;
+    std::uint32_t image_pitch;
+    std::uint16_t pixel_format;
+    std::uint16_t encode_mode;
+    std::uint16_t color_space;
+    std::uint8_t sampling_type;
+    std::uint8_t compression_ratio;
+    std::int32_t restart_interval;
+};
+
+struct JpegEncOutputInfo {
+    std::uint32_t size;
+    std::uint32_t height;
 };
 
 struct PlayGoInitParams {

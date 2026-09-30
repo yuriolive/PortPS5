@@ -1,3 +1,7 @@
+// core/shader/recompiler/Translation/src/IntegerInstructions.cpp
+// Translation of integer ALU instructions (scalar and vector): simple unary/binary ops, bit-field, byte-permute
+// and alignment ops, and the compare helpers. Each routine follows the RDNA2 ISA pseudo-code for operand order,
+// shift-count masking and SCC/VCC effects; see docs/spec/shader-recompiler.md for the decisions behind them.
 #include "Translation/IntegerInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
@@ -484,6 +488,35 @@ bool TranslationContext::sBitcmpB32(const RdnaInstruction& inst, bool expected) 
     return true;
 }
 
+// s_bitcmp0_b64 / s_bitcmp1_b64 (RDNA2 ISA, SOPC): SCC = (S0.u64[S1.u32[5:0]] == expected). The bit index
+// uses only S1[5:0], so the shift count is masked to 63 before it reaches the (width-bounded) 64-bit shift.
+bool TranslationContext::sBitcmpB64(const RdnaInstruction& inst, bool expected) {
+    const IrU64 value = readU64(sourceAt(inst, 0u));
+    const IrU32 offset(ir.BitwiseAnd(readU32(sourceAt(inst, 1u)).Value(), ir.Constant(63u)));
+    const IrU64 shifted(ir.Emit(IrOpcode::ShiftRightLogical64, IrType::U64, {&value.Value(), &offset.Value()}));
+    const IrU64 bit(ir.Emit(IrOpcode::BitwiseAnd64, IrType::U64, {&shifted.Value(), &ir.ConstantU64(1u)}));
+    writeCompareResult(inst.destination, IrU1(ir.Emit(IrOpcode::IEqual64, IrType::U1, {&bit.Value(), &ir.ConstantU64(expected ? 1u : 0u)})));
+    return true;
+}
+
+// s_ashr_i64 (RDNA2 ISA, SOP2 0x23): D = S0.i64 >> S1[5:0] (sign-filled), SCC = (D != 0).
+// The source is a *signed* 64-bit operand, so a 32-bit literal constant is sign-extended (unlike the B64 bitwise
+// ops, where a literal zero-extends). All sources are read before the destination and SCC are written, so SCC,
+// the shift count or the destination pair may alias the sources. The backend masks the count to 63.
+bool TranslationContext::sAshrI64(const RdnaInstruction& inst) {
+    const RdnaOperand& sourceOperand = sourceAt(inst, 0u);
+    std::array<IrU32, 2> pair = readU32Pair(sourceOperand);
+    if (sourceOperand.kind == RdnaOperandKind::LiteralConstant) {
+        pair[1] = IrU32(ir.Constant((sourceOperand.value & 0x80000000u) != 0u ? 0xffffffffu : 0u));
+    }
+    const IrU64 value(ir.ConstructU64(pair[0].Value(), pair[1].Value()));
+    const IrU32 count = readU32(sourceAt(inst, 1u));
+    IrValue& result = ir.Emit(IrOpcode::ShiftRightArithmetic64, IrType::U64, {&value.Value(), &count.Value()});
+    writeOperand(inst.destination, &result);
+    ir.SetScc(ir.Emit(IrOpcode::INotEqual64, IrType::U1, {&result, &ir.ConstantU64(0u)}));
+    return true;
+}
+
 bool TranslationContext::vAlignbitB32(const RdnaInstruction& inst) {
     const IrU32 hi = readU32(sourceAt(inst, 0u));
     const IrU32 lo = readU32(sourceAt(inst, 1u));
@@ -529,6 +562,36 @@ bool TranslationContext::vAddLshlU32(const RdnaInstruction& inst) {
     const IrU32 sum(ir.IAdd(lhs.Value(), rhs.Value()));
     const IrU32 result(ir.ShiftLeftLogical(sum.Value(), shift.Value()));
     writeOperand(inst.destination, &result.Value());
+    return true;
+}
+
+// v_perm_b32 (RDNA2 ISA, VOP3 opcode 0x344): every result byte k (bits 8k+7:8k) is chosen by selector byte
+// S2[8k+7:8k] from the eight bytes of the 64-bit value {S0 (bytes 4..7), S1 (bytes 0..3)}:
+//   sel 0..7   : that byte;
+//   sel 8..11  : 0xff if bit 7 of byte (2*(sel-8)+1) is set (sign of byte 1, 3, 5, 7), else 0x00;
+//   sel 12     : 0x00;
+//   sel >= 13  : 0xff.
+// Each result byte is computed independently with selects, which keeps the lowering branch-free.
+bool TranslationContext::vPermB32(const RdnaInstruction& inst) {
+    const IrU32 high = readU32(sourceAt(inst, 0u));
+    const IrU32 low = readU32(sourceAt(inst, 1u));
+    const IrU32 selectors = readU32(sourceAt(inst, 2u));
+    IrValue* result = &ir.Constant(0u);
+    for (std::uint32_t byte = 0u; byte < 4u; ++byte) {
+        IrValue& selector = ir.BitwiseAnd(ir.ShiftRightLogical(selectors.Value(), ir.Constant(byte * 8u)), ir.Constant(255u));
+        // Sign selectors 8..11 read byte 2*(sel&3)+1.
+        IrValue& signIndex = ir.IAdd(ir.IMul(ir.BitwiseAnd(selector, ir.Constant(3u)), ir.Constant(2u)), ir.Constant(1u));
+        IrValue& index = ir.Select(ir.ULessThan(selector, ir.Constant(8u)), selector, signIndex);
+        IrValue& word = ir.Select(ir.ULessThan(index, ir.Constant(4u)), low.Value(), high.Value());
+        IrValue& shift = ir.IMul(ir.BitwiseAnd(index, ir.Constant(3u)), ir.Constant(8u));
+        IrValue& value = ir.BitwiseAnd(ir.ShiftRightLogical(word, shift), ir.Constant(255u));
+        IrValue& sign = ir.Select(ir.UGreaterThan(value, ir.Constant(127u)), ir.Constant(255u), ir.Constant(0u));
+        IrValue& selected = ir.Select(ir.ULessThan(selector, ir.Constant(8u)), value, sign);
+        IrValue& fill = ir.Select(ir.IEqual(selector, ir.Constant(12u)), ir.Constant(0u), ir.Constant(255u));
+        IrValue& output = ir.Select(ir.ULessThan(selector, ir.Constant(12u)), selected, fill);
+        result = &ir.BitwiseOr(*result, ir.ShiftLeftLogical(output, ir.Constant(byte * 8u)));
+    }
+    writeOperand(inst.destination, result);
     return true;
 }
 

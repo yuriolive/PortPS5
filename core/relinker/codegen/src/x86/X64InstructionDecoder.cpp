@@ -1,3 +1,10 @@
+// x86-64 instruction length decoder and control-flow classifier.
+// Subsystem: relinker codegen. Owns Decode (length only) and DecodeInstruction
+// (length, ModRM/RIP-relative info, branch kind). Both paths must agree on
+// which opcodes carry a ModRM byte, or linear/recursive sweeps desynchronise.
+// Stateless and const: safe to call concurrently. Input bytes are untrusted
+// guest code; every read is bounded by the `available` argument.
+
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>
@@ -252,7 +259,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
                    (opcode >= TwoByteModRmRangeCMin && opcode <= TwoByteModRmRangeCMax) ||
                    (opcode >= TwoByteModRmRangeDMin && opcode <= TwoByteModRmRangeDMax) ||
                    (opcode >= TwoByteModRmRangeEMin && opcode <= TwoByteModRmRangeEMax) ||
-                   (opcode >= TwoByteModRmRangeGMin && opcode <= TwoByteModRmRangeGMax) ||
+                   (opcode >= TwoByteModRmRangeGMin && opcode <= TwoByteModRmRangeGMax && opcode != TwoByteEmms) ||
                    (opcode >= TwoByteModRmRangeHMin && opcode <= TwoByteModRmRangeHMax) ||
                    (opcode >= TwoByteModRmRangeIMin && opcode <= TwoByteModRmRangeIMax) ||
                    (opcode >= TwoBytePrefetchGrpMin && opcode <= TwoBytePrefetchGrpMax) ||
@@ -505,7 +512,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             (op >= TwoByteModRmRangeCMin && op <= TwoByteModRmRangeCMax) ||
             (op >= TwoByteModRmRangeDMin && op <= TwoByteModRmRangeDMax) ||
             (op >= TwoByteModRmRangeEMin && op <= TwoByteModRmRangeEMax) ||
-            (op >= TwoByteModRmRangeGMin && op <= TwoByteModRmRangeGMax) ||
+            (op >= TwoByteModRmRangeGMin && op <= TwoByteModRmRangeGMax && op != TwoByteEmms) ||
             (op >= TwoByteModRmRangeHMin && op <= TwoByteModRmRangeHMax) ||
             (op >= TwoByteModRmRangeIMin && op <= TwoByteModRmRangeIMax) ||
             (op >= TwoBytePrefetchGrpMin && op <= TwoBytePrefetchGrpMax) ||

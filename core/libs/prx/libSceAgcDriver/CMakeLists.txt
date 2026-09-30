@@ -436,6 +436,15 @@ if(BUILD_TESTING)
         LABELS   unit
     )
 
+    # Instruction-semantics tests for the RDNA2 fixes ported from upstream (lane E): decode, translate and
+    # interpret the emitted IR for hand-assembled synthetic instructions. No GPU, no game data.
+    portps5_add_gtest(recompiler_ported_instruction_tests
+        SOURCES  ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/RdnaPortedInstructionTests.cpp
+        INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/golden
+        LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   unit
+    )
+
     # Hosted recompiler-golden gate (M1 exit): synthetic corpus replay over every
     # decoded instruction class. Labelled 'golden' so ctest --preset golden runs only
     # this suite; it is excluded from the 'unit' preset and its expected-count gate.
