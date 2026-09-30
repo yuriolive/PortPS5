@@ -121,6 +121,8 @@ public:
      * it is safe for a caller that is still recording into the open batch.
      */
     void SyncInFlightWrites(std::uint64_t address, std::size_t bytes);
+    /** @return How many write notes of the OPEN batch overlap the range (one per NotePendingWrite call). */
+    std::size_t OpenWriteCount(std::uint64_t address, std::size_t bytes) const;
     /** @return Whether the OPEN (unsubmitted) batch writes the range: a wait on it must submit first. */
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
 

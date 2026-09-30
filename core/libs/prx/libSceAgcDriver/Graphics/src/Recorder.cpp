@@ -413,6 +413,14 @@ void Recorder::SyncInFlightWrites(std::uint64_t address, std::size_t bytes) {
     if (target != 0) FinishUpTo(target);
 }
 
+std::size_t Recorder::OpenWriteCount(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return 0;
+    const Scope scope(*this);
+    if (open == nullptr) return 0;
+    const auto end = address + bytes;
+    return static_cast<std::size_t>(std::count_if(open->writes.begin(), open->writes.end(), [&](const auto& range) { return address < range.second && range.first < end; }));
+}
+
 bool Recorder::OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
     const Scope scope(*this);
     return bytes != 0 && open != nullptr && overlaps(*open, address, address + bytes);

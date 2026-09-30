@@ -350,6 +350,25 @@ TEST_F(HostImportTest, ImportReadOfAnOpenBatchStagedWriteUsesTheStagedCopy) {
     EXPECT_EQ(recorder->Submissions(), 0u);
 }
 
+// Review finding (PR #49, gitar): the open-batch fast path must also refuse when another producer noted a
+// write into the range on the Recorder directly (a driver dispatch, or another HostImport), because the
+// staged copy lacks those bytes. Invariant: the bind reports OpenBatchWrites instead of serving the copy.
+TEST_F(HostImportTest, OpenBatchFastPathRefusesWritesNotedDirectlyOnTheRecorder) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const Recorder::Scope scope(*recorder);
+    const auto write = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    Fill(write.binding, 0x31415926);
+    // Served while this object is the only writer of the range...
+    EXPECT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::Ok);
+    // ...but not once some other recorded work writes part of it.
+    recorder->NotePendingWrite(guest.Address() + 8, 8);
+    EXPECT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::OpenBatchWrites);
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+}
+
 // Invariant: a device with VK_EXT_external_memory_host and a budget imports the guest allocation itself
 // (no copy), and GPU stores land in guest memory directly; the tracker learns of them at completion.
 TEST_F(HostImportTest, ImportedWritesLandInGuestMemoryDirectly) {

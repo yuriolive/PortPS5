@@ -314,13 +314,16 @@ bool HostImport::openStagedWriteOverlaps(std::uint64_t address, std::size_t byte
 bool HostImport::openWritesOnlyFromStaging(std::uint64_t address, std::size_t bytes, const std::pair<std::uint64_t, std::size_t>& key) const {
     if (openWritesSerial != recorder.Submissions() + 1) return false;
     const auto end = address + bytes;
-    bool any = false;
+    std::size_t own = 0;
     for (const auto& write : openWrites) {
         if (!(address < write.end && write.begin < end)) continue;
         if (write.imported || write.key != key) return false;
-        any = true;
+        ++own;
     }
-    return any;
+    // Every write note of the open batch over the range must be one of ours: the Recorder also holds notes
+    // made directly (the driver's dispatches) or by another HostImport, whose bytes this copy lacks. Each
+    // of our writes adds exactly one note, so equal counts mean no foreign writer.
+    return own != 0 && own == recorder.OpenWriteCount(address, bytes);
 }
 
 void HostImport::barrierAgainstOpenWrites() {
