@@ -166,8 +166,21 @@ TEST_F(SaveDataMountTest, NullPathsReturnEfault) {
 
 // Invariant: invalid descriptors / whence / access mode are error codes, not exceptions.
 TEST_F(SaveDataMountTest, InvalidArgumentsReturnCodes) {
-    // A just-closed descriptor is in the CRT's valid range, so the CRT reports EBADF instead of
-    // invoking its invalid-parameter handler (which aborts for out-of-range values on UCRT).
+#ifdef _WIN32
+    // UCRT calls its invalid-parameter handler for a bad descriptor and the default handler
+    // terminates the process, so the test must not depend on which fd values the CRT treats
+    // as "merely closed". Install a returning handler (MinGW exposes only the process-wide setter; the test is single-threaded here); the CRT then takes its
+    // documented path (return -1, errno = EBADF). Restored on scope exit.
+    struct InvalidParameterGuard {
+        _invalid_parameter_handler previous;
+        static void Ignore(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, uintptr_t) {}
+        InvalidParameterGuard() : previous(_set_invalid_parameter_handler(&Ignore)) {}
+        ~InvalidParameterGuard() { _set_invalid_parameter_handler(previous); }
+    } invalidParameterGuard;
+#endif
+    EXPECT_EQ(sceKernelClose(-1), Sce(EBADF));
+    EXPECT_EQ(sceKernelClose(99999), Sce(EBADF));
+    EXPECT_EQ(sceKernelLseek(99999, 0, 0), Sce(EBADF));
     const int fd = sceKernelOpen("/savedata0/closed.sav", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_RDWR, 0666);
     ASSERT_GE(fd, 0);
     ASSERT_SCE_OK(sceKernelClose(fd));
