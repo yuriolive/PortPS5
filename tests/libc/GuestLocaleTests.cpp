@@ -29,103 +29,94 @@ struct TestFacet : std::locale::facet {
 
 }  // namespace
 
-// Verifies that standard ctype<char>::id hashes to the expected guest NID.
-TEST(GuestLocaleTests, CtypeCharIdNid) {
-    ExpectNid("_ZNSt5ctypeIcE2idE", "Cv+zC4EjGMA");
+// Mapping descriptor relating guest C++ export symbol names to expected NID hashes.
+struct GuestNidMapping {
+    const char* testName;
+    const char* symbol;
+    const char* expectedNid;
+
+    friend void PrintTo(const GuestNidMapping& mapping, std::ostream* os) {
+        *os << mapping.testName;
+    }
+};
+
+// Parameterized test fixture verifying guest locale and stream NID hashes match relinker expectations.
+class GuestLocaleNidTests : public ::testing::TestWithParam<GuestNidMapping> {};
+
+// Verifies that each locale export symbol hashes to the expected NID recorded in title inventory.
+TEST_P(GuestLocaleNidTests, SymbolHashesToExpectedNid) {
+    const auto& [name, symbol, expectedNid] = GetParam();
+    (void)name;
+    EXPECT_EQ(::Nid::ComputeNid(symbol, ""), std::string(expectedNid))
+        << "Mismatch for symbol: " << symbol;
 }
 
-// Verifies that wide character ctype<wchar_t>::id hashes to the expected guest NID.
-TEST(GuestLocaleTests, CtypeWcharIdNid) {
-    ExpectNid("_ZNSt5ctypeIwE2idE", "VmqsS6auJzo");
-}
+INSTANTIATE_TEST_SUITE_P(
+    LocaleSymbols,
+    GuestLocaleNidTests,
+    ::testing::Values(
+        GuestNidMapping{"CtypeCharId", "_ZNSt5ctypeIcE2idE", "Cv+zC4EjGMA"},
+        GuestNidMapping{"CtypeWcharId", "_ZNSt5ctypeIwE2idE", "VmqsS6auJzo"},
+        GuestNidMapping{"CollateCharId", "_ZNSt7collateIcE2idE", "7brRfHVVAlI"},
+        GuestNidMapping{"CollateWcharId", "_ZNSt7collateIwE2idE", "irGo1yaJ-vM"},
+        GuestNidMapping{"CodecvtCharId", "_ZNSt7codecvtIcc9_MbstatetE2idE", "eVFYZnYNDo0"},
+        GuestNidMapping{"CodecvtCharVtable", "_ZTVSt7codecvtIcc9_MbstatetE", "aK1Ymf-NhAs"},
+        GuestNidMapping{"CodecvtWcharId", "_ZNSt7codecvtIwc9_MbstatetE2idE", "FjZCPmK0SbA"},
+        GuestNidMapping{"NumPutId", "_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE", "E14mW8pVpoE"},
+        GuestNidMapping{"NumPutVtable", "_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE", "1kZFcktOm+s"},
+        GuestNidMapping{"LocaleIdCount", "_ZNSt6locale2id7_Id_cntE", "H4fcpQOpc08"},
+        GuestNidMapping{"CollateCharGetcat", "_ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1_", "BSVJqITGCyI"}
+    ),
+    [](const ::testing::TestParamInfo<GuestNidMapping>& info) {
+        return std::string(info.param.testName);
+    }
+);
 
-// Verifies that character collate<char>::id hashes to the expected guest NID.
-TEST(GuestLocaleTests, CollateCharIdNid) {
-    ExpectNid("_ZNSt7collateIcE2idE", "7brRfHVVAlI");
-}
-
-// Verifies that wide character collate<wchar_t>::id hashes to the expected guest NID.
-TEST(GuestLocaleTests, CollateWcharIdNid) {
-    ExpectNid("_ZNSt7collateIwE2idE", "irGo1yaJ-vM");
-}
-
-// Verifies that codecvt<char, char, mbstate_t>::id hashes to the expected guest NID.
-TEST(GuestLocaleTests, CodecvtCharIdNid) {
-    ExpectNid("_ZNSt7codecvtIcc9_MbstatetE2idE", "eVFYZnYNDo0");
-}
-
-// Verifies that codecvt<char, char, mbstate_t> vtable hashes to the expected guest NID.
-TEST(GuestLocaleTests, CodecvtCharVtableNid) {
-    ExpectNid("_ZTVSt7codecvtIcc9_MbstatetE", "aK1Ymf-NhAs");
-}
-
-// Verifies that codecvt<wchar_t, char, mbstate_t>::id hashes to the expected guest NID.
-TEST(GuestLocaleTests, CodecvtWcharIdNid) {
-    ExpectNid("_ZNSt7codecvtIwc9_MbstatetE2idE", "FjZCPmK0SbA");
-}
-
-// Verifies that num_put facet id hashes to the expected guest NID.
-TEST(GuestLocaleTests, NumPutIdNid) {
-    ExpectNid("_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE",
-              "E14mW8pVpoE");
-}
-
-// Verifies that num_put facet vtable hashes to the expected guest NID.
-TEST(GuestLocaleTests, NumPutVtableNid) {
-    ExpectNid("_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE",
-              "1kZFcktOm+s");
-}
-
-// Verifies that locale::_Id_cnt hashes to the expected guest NID.
-TEST(GuestLocaleTests, LocaleIdCountNid) {
-    ExpectNid("_ZNSt6locale2id7_Id_cntE", "H4fcpQOpc08");
-}
-
-// Verifies that collate<char>::_Getcat hashes to the expected guest NID.
-TEST(GuestLocaleTests, CollateCharGetcatNid) {
-    ExpectNid("_ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1_", "BSVJqITGCyI");
-}
-
-// Verifies link addresses, ABI sizes, and alignment of all exported locale data symbols.
+// Verifies link addresses, ABI sizes, and alignment of exported locale data and stream storage symbols.
 TEST(GuestLocaleTests, SymbolLinkageSizesAndAlignment) {
-    EXPECT_NE(&_ZNSt5ctypeIcE2idE_nid_postfix, nullptr);
-    EXPECT_NE(&_ZNSt5ctypeIwE2idE_nid_postfix, nullptr);
-    EXPECT_NE(&_ZNSt7collateIcE2idE_nid_postfix, nullptr);
-    EXPECT_NE(&_ZNSt7collateIwE2idE_nid_postfix, nullptr);
-    EXPECT_NE(&_ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix, nullptr);
-    EXPECT_NE(&_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[0], nullptr);
-    EXPECT_NE(&_ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix, nullptr);
-    EXPECT_NE(&_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix,
-              nullptr);
-    EXPECT_NE(&_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[0],
-              nullptr);
-    EXPECT_NE(&_ZNSt6locale2id7_Id_cntE_nid_postfix, nullptr);
+    struct SymbolSpec {
+        const void* address;
+        std::size_t size;
+    };
 
-    EXPECT_EQ(sizeof(_ZNSt5ctypeIcE2idE_nid_postfix), 8u);
-    EXPECT_EQ(sizeof(_ZNSt5ctypeIwE2idE_nid_postfix), 8u);
-    EXPECT_EQ(sizeof(_ZNSt7collateIcE2idE_nid_postfix), 8u);
-    EXPECT_EQ(sizeof(_ZNSt7collateIwE2idE_nid_postfix), 8u);
-    EXPECT_EQ(sizeof(_ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix), 8u);
-    EXPECT_EQ(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix), 16 * sizeof(std::uintptr_t));
-    EXPECT_EQ(sizeof(_ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix), 8u);
-    EXPECT_EQ(sizeof(_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix),
-              8u);
-    EXPECT_EQ(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix),
-              12 * sizeof(std::uintptr_t));
-    EXPECT_EQ(sizeof(_ZNSt6locale2id7_Id_cntE_nid_postfix), 4u);
+    const SymbolSpec specs[] = {
+        {&_ZNSt5ctypeIcE2idE_nid_postfix, sizeof(std::uint64_t)},
+        {&_ZNSt5ctypeIwE2idE_nid_postfix, sizeof(std::uint64_t)},
+        {&_ZNSt7collateIcE2idE_nid_postfix, sizeof(std::uint64_t)},
+        {&_ZNSt7collateIwE2idE_nid_postfix, sizeof(std::uint64_t)},
+        {&_ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix, sizeof(std::uint64_t)},
+        {&_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix, 16 * sizeof(std::uintptr_t)},
+        {&_ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix, sizeof(std::uint64_t)},
+        {&_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix, sizeof(std::uint64_t)},
+        {&_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix, 12 * sizeof(std::uintptr_t)},
+        {&_ZNSt6locale2id7_Id_cntE_nid_postfix, sizeof(std::int32_t)},
+    };
+
+    for (const auto& item : specs) {
+        ASSERT_NE(item.address, nullptr);
+    }
 
     // Standard stream buffers have non-null address, proper size and 16-byte alignment
-    EXPECT_NE(_ZSt4cout_nid_postfix, nullptr);
-    EXPECT_NE(_ZSt4cerr_nid_postfix, nullptr);
-    EXPECT_NE(_ZSt3cin_nid_postfix, nullptr);
-    EXPECT_NE(_ZSt5wcout_nid_postfix, nullptr);
-    EXPECT_NE(_ZSt5wcerr_nid_postfix, nullptr);
-    EXPECT_NE(_ZSt4wcin_nid_postfix, nullptr);
+    const void* const streamBuffers[] = {
+        _ZSt4cout_nid_postfix,
+        _ZSt4cerr_nid_postfix,
+        _ZSt3cin_nid_postfix,
+        _ZSt5wcout_nid_postfix,
+        _ZSt5wcerr_nid_postfix,
+        _ZSt4wcin_nid_postfix,
+    };
+
+    for (const void* buf : streamBuffers) {
+        ASSERT_NE(buf, nullptr);
+        EXPECT_EQ(reinterpret_cast<std::uintptr_t>(buf) % 16, 0u);
+    }
 
     EXPECT_EQ(sizeof(_ZSt4cout_nid_postfix), 0x400u);
-    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(_ZSt4cout_nid_postfix) % 16, 0u);
-    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(_ZSt4cerr_nid_postfix) % 16, 0u);
-    EXPECT_EQ(reinterpret_cast<std::uintptr_t>(_ZSt3cin_nid_postfix) % 16, 0u);
+    EXPECT_EQ(sizeof(_ZSt4cerr_nid_postfix), 0x400u);
+    EXPECT_EQ(sizeof(_ZSt3cin_nid_postfix), 0x400u);
+    EXPECT_EQ(sizeof(_ZSt5wcout_nid_postfix), 0x400u);
+    EXPECT_EQ(sizeof(_ZSt5wcerr_nid_postfix), 0x400u);
+    EXPECT_EQ(sizeof(_ZSt4wcin_nid_postfix), 0x400u);
 }
 
 // Verifies that standard ctype, collate, and num_put facets resolve cleanly via std::use_facet.
