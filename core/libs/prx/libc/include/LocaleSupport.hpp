@@ -153,7 +153,7 @@ void APS5_VABI _ZNSt8ios_baseD2Ev_nid_postfix(std::ios_base* self);
 const std::locale* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix();
 
 /**
- * @brief Registers a locale facet with the runtime.
+ * @brief Registers a locale facet with the runtime and increments the facet ID counter.
  * @param facet Locale facet to register.
  */
 void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(std::locale::facet* facet);

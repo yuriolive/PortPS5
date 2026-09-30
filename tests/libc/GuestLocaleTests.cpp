@@ -22,6 +22,11 @@ void ExpectNid(const char* stripped, const char* expected) {
     EXPECT_EQ(::Nid::ComputeNid(stripped, ""), std::string(expected));
 }
 
+// Test fixture facet to verify facet registration through the exported runtime symbol.
+struct TestFacet : std::locale::facet {
+    static inline std::locale::id id;
+};
+
 }  // namespace
 
 // Verifies that standard ctype<char>::id hashes to the expected guest NID.
@@ -176,37 +181,75 @@ TEST(GuestLocaleTests, BasicStreamFormattingWithoutExceptions) {
     EXPECT_EQ(c, 300);
 }
 
-// Verifies that std::locale facet IDs and _Id_cnt increment properly without memory corruption.
-TEST(GuestLocaleTests, FacetIdAndCounterLifecycle) {
-    // Record initial counter state
+// Verifies that standard stream buffers are placement-constructed as usable iostream objects.
+TEST(GuestLocaleTests, StandardStreamsArePlacementConstructedAndUsable) {
+    auto* coutStream = reinterpret_cast<std::ostream*>(_ZSt4cout_nid_postfix);
+    ASSERT_NE(coutStream, nullptr);
+    EXPECT_NE(coutStream->rdbuf(), nullptr);
+
+    auto* cerrStream = reinterpret_cast<std::ostream*>(_ZSt4cerr_nid_postfix);
+    ASSERT_NE(cerrStream, nullptr);
+    EXPECT_NE(cerrStream->rdbuf(), nullptr);
+
+    auto* cinStream = reinterpret_cast<std::istream*>(_ZSt3cin_nid_postfix);
+    ASSERT_NE(cinStream, nullptr);
+    EXPECT_NE(cinStream->rdbuf(), nullptr);
+
+    auto* wcoutStream = reinterpret_cast<std::wostream*>(_ZSt5wcout_nid_postfix);
+    ASSERT_NE(wcoutStream, nullptr);
+    EXPECT_NE(wcoutStream->rdbuf(), nullptr);
+
+    auto* wcerrStream = reinterpret_cast<std::wostream*>(_ZSt5wcerr_nid_postfix);
+    ASSERT_NE(wcerrStream, nullptr);
+    EXPECT_NE(wcerrStream->rdbuf(), nullptr);
+
+    auto* wcinStream = reinterpret_cast<std::wistream*>(_ZSt4wcin_nid_postfix);
+    ASSERT_NE(wcinStream, nullptr);
+    EXPECT_NE(wcinStream->rdbuf(), nullptr);
+
+    // Test that writing to a standard stream object executes through vptr and rdbuf without faulting
+    std::stringbuf testBuf;
+    std::streambuf* origBuf = cerrStream->rdbuf(&testBuf);
+    *cerrStream << "PortPS5 stream ok " << 42;
+    EXPECT_EQ(testBuf.str(), "PortPS5 stream ok 42");
+    cerrStream->rdbuf(origBuf);
+}
+
+// Verifies that locale facet registration drives the runtime _Id_cnt increment.
+TEST(GuestLocaleTests, FacetRegistrationDrivesIdCounter) {
     const std::int32_t initialCount = _ZNSt6locale2id7_Id_cntE_nid_postfix;
 
-    // Simulate guest runtime facet ID assignment: when a facet id is first registered,
-    // the runtime atomically increments _Id_cnt and assigns the unique sequence number.
-    std::uint64_t simulatedGuestFacetId1 = 0;
-    std::uint64_t simulatedGuestFacetId2 = 0;
+    TestFacet testFacet;
 
-    if (simulatedGuestFacetId1 == 0) {
-        simulatedGuestFacetId1 = static_cast<std::uint64_t>(++_ZNSt6locale2id7_Id_cntE_nid_postfix);
-    }
-    if (simulatedGuestFacetId2 == 0) {
-        simulatedGuestFacetId2 = static_cast<std::uint64_t>(++_ZNSt6locale2id7_Id_cntE_nid_postfix);
-    }
+    _ZNSt6locale5facet9_RegisterEv_nid_postfix(&testFacet);
+    EXPECT_EQ(_ZNSt6locale2id7_Id_cntE_nid_postfix, initialCount + 1);
 
-    EXPECT_GT(simulatedGuestFacetId1, 0u);
-    EXPECT_GT(simulatedGuestFacetId2, simulatedGuestFacetId1);
-    EXPECT_EQ(_ZNSt6locale2id7_Id_cntE_nid_postfix, initialCount + 2);
+    // Register with null pointer must safely no-op without altering the counter
+    _ZNSt6locale5facet9_RegisterEv_nid_postfix(nullptr);
+    EXPECT_EQ(_ZNSt6locale2id7_Id_cntE_nid_postfix, initialCount + 1);
 
-    // Verify standard facet symbols can be safely read and updated without affecting adjacent memory
+    // Clean up
+    _ZNSt6locale2id7_Id_cntE_nid_postfix = initialCount;
+}
+
+// Verifies that facet ID symbols and _Id_cnt are isolated in memory and writable without corruption.
+TEST(GuestLocaleTests, FacetIdStorageAndSymbolIsolation) {
+    const std::int32_t initialCount = _ZNSt6locale2id7_Id_cntE_nid_postfix;
     const std::uint64_t originalCtypeId = _ZNSt5ctypeIcE2idE_nid_postfix;
-    _ZNSt5ctypeIcE2idE_nid_postfix = simulatedGuestFacetId1;
-    EXPECT_EQ(_ZNSt5ctypeIcE2idE_nid_postfix, simulatedGuestFacetId1);
 
-    // Ensure adjacent symbols are unaffected (no corruption)
+    // Simulate inlined guest code incrementing _Id_cnt and writing to facet id
+    const std::uint64_t assignedId = static_cast<std::uint64_t>(++_ZNSt6locale2id7_Id_cntE_nid_postfix);
+    _ZNSt5ctypeIcE2idE_nid_postfix = assignedId;
+
+    EXPECT_EQ(_ZNSt5ctypeIcE2idE_nid_postfix, assignedId);
+    EXPECT_EQ(_ZNSt6locale2id7_Id_cntE_nid_postfix, initialCount + 1);
+
+    // Ensure adjacent symbols are unaffected (no out-of-bounds corruption)
     EXPECT_EQ(_ZNSt7collateIcE2idE_nid_postfix, 0u);
     EXPECT_EQ(_ZNSt7collateIwE2idE_nid_postfix, 0u);
+    EXPECT_EQ(_ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix, 0u);
 
-    // Restore original state
+    // Restore state
     _ZNSt5ctypeIcE2idE_nid_postfix = originalCtypeId;
     _ZNSt6locale2id7_Id_cntE_nid_postfix = initialCount;
 }

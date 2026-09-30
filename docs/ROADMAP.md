@@ -51,7 +51,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI).
 - [ ] Hosted CI job `driver-lavapipe`.
 - [ ] Inventory each gate title's imports (NIDs, audio and video codecs, dialogs).
-  - Dreaming Sarah (recorded 2026-09-29): 815 relocation refs / 484 unique NIDs, all 484/484 resolve to built prx exports (6 libc locale/iostream data symbols resolved); `libSceVideoOut` `Config::Loader` verbatim exports resolved. Detail in [spec/relinker.md](spec/relinker.md) Open questions.
+  - Dreaming Sarah (recorded 2026-09-29): 815 relocation refs / 484 unique NIDs, all 484/484 resolve at link time to built prx exports (6 libc locale/iostream data symbols resolve to stubs/host-backed placeholders); `libSceVideoOut` `Config::Loader` verbatim exports resolved. Detail in [spec/relinker.md](spec/relinker.md) Open questions.
 
 **Exit criteria**
 - [ ] With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic, the stage PR #5 reached. Its fill and copy kernels run as the title's own shaders, without replacement. The `policy` CI job is green.

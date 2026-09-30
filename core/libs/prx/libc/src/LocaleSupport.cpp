@@ -10,6 +10,7 @@
 #include <cwchar>
 #include <cwctype>
 #include <ios>
+#include <iostream>
 #include <locale>
 #include <memory>
 
@@ -109,6 +110,31 @@ alignas(16) unsigned char _ZSt5wcout_nid_postfix[0x400]{};
 alignas(16) unsigned char _ZSt5wcerr_nid_postfix[0x400]{};
 alignas(16) unsigned char _ZSt4wcin_nid_postfix[0x400]{};
 
+static_assert(sizeof(std::ostream) <= sizeof(_ZSt4cout_nid_postfix), "std::ostream buffer too small");
+static_assert(sizeof(std::ostream) <= sizeof(_ZSt4cerr_nid_postfix), "std::ostream buffer too small");
+static_assert(sizeof(std::istream) <= sizeof(_ZSt3cin_nid_postfix), "std::istream buffer too small");
+static_assert(sizeof(std::wostream) <= sizeof(_ZSt5wcout_nid_postfix), "std::wostream buffer too small");
+static_assert(sizeof(std::wostream) <= sizeof(_ZSt5wcerr_nid_postfix), "std::wostream buffer too small");
+static_assert(sizeof(std::wistream) <= sizeof(_ZSt4wcin_nid_postfix), "std::wistream buffer too small");
+static_assert(alignof(std::ostream) <= 16, "std::ostream alignment exceeds buffer alignment");
+
+namespace {
+
+struct StandardStreamsInitializer {
+    StandardStreamsInitializer() {
+        new (_ZSt4cout_nid_postfix) std::ostream(std::cout.rdbuf());
+        new (_ZSt4cerr_nid_postfix) std::ostream(std::cerr.rdbuf());
+        new (_ZSt3cin_nid_postfix) std::istream(std::cin.rdbuf());
+        new (_ZSt5wcout_nid_postfix) std::wostream(std::wcout.rdbuf());
+        new (_ZSt5wcerr_nid_postfix) std::wostream(std::wcerr.rdbuf());
+        new (_ZSt4wcin_nid_postfix) std::wistream(std::wcin.rdbuf());
+    }
+};
+
+const StandardStreamsInitializer g_standardStreamsInitializer;
+
+}  // namespace
+
 /// Destructs std::ios_base instance.
 void APS5_VABI _ZNSt8ios_baseD2Ev_nid_postfix(std::ios_base* self) {
     if (self == nullptr) throw std::invalid_argument("ios_base destructor: null object");
@@ -120,9 +146,12 @@ const std::locale* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix() {
     return &std::locale::classic();
 }
 
-/// Registers a locale facet with the runtime.
-void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(std::locale::facet*) {
-    NotImplemented_nid_no_patch("locale::facet::_Register");
+/// Registers a locale facet with the runtime and increments the facet ID counter.
+void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(std::locale::facet* facet) {
+    if (facet == nullptr) {
+        return;
+    }
+    ++_ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
 
 /// Obtains current global locale reference.
