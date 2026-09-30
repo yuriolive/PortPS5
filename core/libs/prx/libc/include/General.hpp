@@ -1,3 +1,7 @@
+// core/libs/prx/libc/include/General.hpp
+// General runtime utilities, path aliasing, common dialog tracking, and unhandled stub helpers.
+// Enforces System V ABI invariants and provides libc runtime primitives.
+
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_HPP
 
@@ -20,6 +24,12 @@ extern "C" void NotImplemented_nid_no_patch(const char* funcName);
 // Unchecked resolver. For mounted paths a traversal out of the mount is clamped to
 // the mount's host root; use ResolveGuestPathChecked where the error must surface.
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
+extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* hostPath);
+extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix);
+extern "C" void RegisterCommonDialogActive_nid_no_patch(bool active);
+extern "C" bool IsAnyCommonDialogActive_nid_no_patch();
+extern "C" void SetSaveDataBaseDirOverride_nid_no_patch(const char* path);
+extern "C" std::string GetSaveDataBaseDirOverride_nid_no_patch();
 
 // Guest mount point of the per-title save container (PRD F2).
 inline constexpr const char* SaveDataMountName = "savedata0";

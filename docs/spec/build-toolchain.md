@@ -8,12 +8,12 @@ This spec covers the root and `core/` CMake graph, compiler and linker flags, th
 
 ## Current state
 
-References are to AnyPS5 `main` (`e06dbff`) unless marked PR #5 (`29b4601`).
+References are to AnyPS5 `main@e06dbff` (the pre-merge baseline) unless marked `main@75a8668` (current AnyPS5 main, includes merged PR #5).
 
 **Root `CMakeLists.txt`:**
 - `cmake_minimum_required(3.20)`, `project(Relinker CXX)` (`:1-2`); `BUILD_TESTING` and `ANYPS5_ENABLE_SPIRV_TOOLS` default OFF (`:4-9`); C++20 required (`:11-12`).
 - `-static -static-libgcc -static-libstdc++` appended to the exe linker flags (`:14`).
-- SDL2 options are forced (`:16-30`), including `SDL_JOYSTICK OFF`, `SDL_HIDAPI OFF` and `SDL_X11 ON`. SDL2 is configured with the exe linker flags cleared, then restored (`:31-34`); PR #5 lacks this isolation.
+- SDL2 options are forced (`:16-30`), including `SDL_JOYSTICK OFF`, `SDL_HIDAPI OFF` and `SDL_X11 ON`. SDL2 is configured with the exe linker flags cleared, then restored (`:31-34`). `main@75a8668` keeps the same isolation (`:33-36`) and turns `SDL_JOYSTICK` ON (`:28`).
 - Subdirectories are added in order: recompiler, libs, relinker (`:36-38`).
 
 **`core/libs/CMakeLists.txt` (prx pipeline):**
@@ -30,10 +30,11 @@ References are to AnyPS5 `main` (`e06dbff`) unless marked PR #5 (`29b4601`).
 - **Unwinder contract.** libc's DWARF unwinder locates `.ehmeta` and `.ehfram` by PE section name (`prx/libc/src/exception/Unwind.cpp:158,179`). PE image section names are 8 bytes, so a 9-byte `.eh_frame` cannot be matched this way. This is an inference about the reason for the rename.
 - **NID naming** (`nid/include/nid/NidPatcherUtils.hpp:15-32`, `nid/src/NidResolver.cpp:23-66`):
   - a `_nid_postfix` suffix is stripped and the NID is computed;
-  - `_nid_no_patch` names and `SDL_*` names are kept verbatim;
+  - `_nid_no_patch` names, `SDL_*` names, and `PortPS5::Config` host exports (`_ZN7PortPS56Config*`) are kept verbatim;
   - `_nid_no_patch_cut` names have the suffix cut;
-  - `_nid_disambig<N>` is removed before hashing;
-  - duplicate exports are an error (`:28-35`).
+   - `_nid_disambig<N>` is removed before hashing;
+   - duplicate exports are an error (`:28-35`).
+   - cross-prx host APIs (called by another prx, never by guest code) must keep a verbatim name, today via a `_nid_no_patch` free function: both sides spell the name with the suffix (e.g. `ResolvePath_nid_no_patch` is exported and imported verbatim). `nid_patcher libc` runs without `--preserve-exports` (`core/libs/CMakeLists.txt:60`), so an undecorated C++ symbol is hashed in the patched DLL while dependents import the verbatim mangled name, and the load fails with `GetLastError` 127. Observed 2026-09-29 on the Dreaming Sarah boot path (`libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx`). (The `_nid_no_patch_cut` form instead exports the name with the suffix cut, for call sites that must stay unsuffixed; new host APIs follow the `_nid_no_patch` neighbour pattern.)
 - **Exports.** `APS5_EXPORT` emits a top-level `__asm__ .globl/.set` alias (`prx/libc/include/general/ExportMacros.hpp:4-7`). `APS5_VABI` is `__attribute__((sysv_abi))` on `_WIN32` (`general/VabiMacros.hpp:4-8`). `specifics/gcc/SymbolAlias.hpp:4-12` defines its aliases only for `__linux__` and expands to nothing on Windows. The Windows ABI-boundary asm is therefore in `ExportMacros.hpp`, not at `SymbolAlias.hpp:7` as the decision table in [README.md](README.md#subsystem-specs) cites.
 - **Recompiler** (`core/shader/recompiler/CMakeLists.txt`):
   - it is a CMake function `add_shader_recompiler(target runtime)` instantiated once, from libSceAgcDriver (`prx/libSceAgcDriver/CMakeLists.txt:99`);
@@ -41,7 +42,7 @@ References are to AnyPS5 `main` (`e06dbff`) unless marked PR #5 (`29b4601`).
   - glslang is always added (`:16-31`) and **linked into the recompiler library** (`:158-161`). The only glslang user is `tests/DummyShaders.cpp`, compiled into the library (`:136`). `RecompileDummy` has no caller outside that file (grep).
 - **Submodules:** SDL2, Vulkan-Headers, SPIRV-Headers, SPIRV-Tools, glslang, VulkanMemoryAllocator and LibAtrac9 (`.gitmodules`). VulkanMemoryAllocator has no reference under `core/` on main (grep). LibAtrac9 is referenced from `libSceAjm.native` only.
 
-**Tests.** Registered with `add_test` on main:
+**Tests.** Registered with `add_test` on `main@e06dbff`:
 - libc and libkernel `guest_*` tests and `mspace` (`core/libs/CMakeLists.txt:111-358`);
 - `agc_driver`, `agc_shader_memory`, `agc_driver_flip` and `agc_driver_pm4` (`prx/libSceAgcDriver/CMakeLists.txt:260-270`);
 - relinker `strict_nid_filter`, plus three Python tests that are skipped silently when Python is absent (`core/relinker/CMakeLists.txt:82-117`);
@@ -55,10 +56,10 @@ Built but **not registered**:
 - `video_out_flip_tests` (`prx/libSceVideoOut/CMakeLists.txt:25`);
 - `core/libs/tests/run_exception_tests.py`, which has no CMake reference.
 
-PR #5:
-- drops main's whole `core/libs` `BUILD_TESTING` block (diff), since it is 103 commits behind;
-- adds `amd64_only_converter` and `amd64_only_windows` relinker tests;
-- adds an `agc_shader_replay` tool (`prx/libSceAgcDriver/CMakeLists.txt:393-401`), linked to SPIRV-Tools when that is enabled.
+`main@75a8668`, relative to `main@e06dbff`:
+- keeps the `core/libs` `BUILD_TESTING` blocks (`core/libs/CMakeLists.txt:124`, `:507`);
+- adds `amd64_only_windows` and `amd64_only_converter` relinker tests (`core/relinker/CMakeLists.txt:83-103`, `:122-146`);
+- adds an `agc_shader_replay` tool (`prx/libSceAgcDriver/CMakeLists.txt:408-415`), linked to SPIRV-Tools when that is enabled.
 
 **Docs:**
 - `docs/CONVENTIONS.md` allows code comments only for human-added technical-debt markers and `#endif`/namespace ends.
@@ -100,7 +101,7 @@ Build presets name the `relinker` and `libs` targets explicitly, so that patched
 
 | Label | Runs in | Members |
 |---|---|---|
-| `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, PR #5 `amd64_only_*`, ported Kyty kernel/sync/event suites |
+| `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, AnyPS5 main's (merged PR #5) `amd64_only_*`, ported Kyty kernel/sync/event suites |
 | `golden` | hosted `recompiler-golden` | `recompiler_golden_tests` (coverage gate + wave32/64 replay) and `agc_shader_replay --golden` over `core/shader/recompiler/tests/golden/corpus/` (M1) |
 | `lavapipe` | hosted `driver-lavapipe` | driver tests that need a Vulkan device (M1) |
 | `stress` | local / nightly CI | multithreaded futex/umtx concurrency perturbation tests |
@@ -162,8 +163,8 @@ Tests are progressively consolidated from standalone single-function executables
 ## Milestones
 
 - [x] **M0:** C++23; CMakePresets; the pinned toolchain file and CI download with checksum; every existing test in `ctest` with labels; runtime DLL copy; CONVENTIONS rewrite; TechnicalDebt clean-up; `build`, `unit` and `policy` jobs. `DummyShaders` extraction also lands in M0 because it touches licence posture.
-- [ ] **M1:** `lavapipe` label and job (`driver-lavapipe`), the PR #5 relinker tests, and the `APS5_EXPORT_FN` migration. The toml++ and xxHash pins.
-- [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from PR #5 (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
+- [ ] **M1:** `lavapipe` label and job (`driver-lavapipe`), the AnyPS5 main (merged PR #5) relinker tests, and the `APS5_EXPORT_FN` migration. The toml++ and xxHash pins.
+- [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from AnyPS5 main (merged PR #5) (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
 - [ ] **M2:** `tools/regress` build target and its `local` label. SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled.
 - [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
 - [ ] **M6:** release preset used for the release commit, with the R1 status recorded.

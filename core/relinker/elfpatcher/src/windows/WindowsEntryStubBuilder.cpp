@@ -1,3 +1,7 @@
+// Windows entry and loader stub builder for ELF-to-PE converted executables.
+// Emits .startup data and .entry code that performs dynamic dependency loading.
+// Subsystem: relinker. Emitted code runs under native Windows host execution.
+
 #include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsDependencyStubBuilder.hpp>
@@ -112,11 +116,15 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
 
     const auto call = [&](const std::string& name) { code.Rip({0xff, 0x15}, nativeImports.Functions.at(name)); };
 
+    // Why ExitProcess, not RaiseException: after a FAIL diagnostic the process
+    // must exit with the status, not depend on exception dispatch. Raising
+    // through the hand-emitted stub faulted with 0xC0000005 on the
+    // prx-dependency path instead of exiting, hiding the real status
+    // (docs/spec/relinker.md Failure modes).
     const auto raise = [&](const std::uint32_t status) {
         code.Emit({0xb9});
         code.U32(status);
-        code.Emit({0xba, 1, 0, 0, 0, 0x45, 0x31, 0xc0, 0x45, 0x31, 0xc9});
-        call("RaiseException");
+        call("ExitProcess");
         code.Emit({0x0f, 0x0b});
     };
 

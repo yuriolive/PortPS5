@@ -327,6 +327,29 @@ void TestWorkarounds() {
     ClearEnv("PORTPS5_DEBUG");
 }
 
+void TestLoaderVerbatimWrappers() {
+    ClearEnv("PORTPS5_DEBUG");
+    // Uninitialized: the wrapper agrees with Loader (false) without aborting.
+    // (The Get wrapper's uninitialized path aborts exactly like Loader::Get;
+    // that abort is covered by a GTest death test, since aborting here would
+    // kill this runner.)
+    Loader::ResetForTesting();
+    REQUIRE(!Loader::IsInitialized());
+    REQUIRE(!PortPS5_Config_Loader_IsInitialized_nid_no_patch());
+    // Initialized: the wrappers delegate to the same Loader instance.
+    InitOk("schema = 1\n", "schema = 1\ntitle_id = \"PPSA01342\"\n", "", "PPSA01342");
+    REQUIRE(Loader::IsInitialized());
+    REQUIRE(PortPS5_Config_Loader_IsInitialized_nid_no_patch());
+    REQUIRE(&PortPS5_Config_Loader_Get_nid_no_patch() == &Loader::Get());
+    REQUIRE(PortPS5_Config_Loader_Get_nid_no_patch().titleId == "PPSA01342");
+    REQUIRE(PortPS5_Config_Loader_Get_nid_no_patch().installDir == "C:/game");
+    // Reset returns both to uninitialized.
+    Loader::ResetForTesting();
+    REQUIRE(!Loader::IsInitialized());
+    REQUIRE(!PortPS5_Config_Loader_IsInitialized_nid_no_patch());
+    ClearEnv("PORTPS5_DEBUG");
+}
+
 void TestStaleAps5Warning() {
     ClearEnv("PORTPS5_DEBUG");
     // Built without naming the stale prefix as a literal so the policy job
@@ -357,6 +380,7 @@ int main() {
     TestThreeLayerPrecedence();
     TestRejectCases();
     TestWorkarounds();
+    TestLoaderVerbatimWrappers();
     TestStaleAps5Warning();
     return 0;
 }

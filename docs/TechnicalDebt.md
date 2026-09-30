@@ -18,12 +18,12 @@ Throughout the project, every function at every stage either **does exactly what
 
 ### Unknown function info
 
-- [M3] [zARR5aCmkoY](../core/libs/prx/libSceAgc/DcbFlow/src/Control.cpp) (libSceAgc) - unknown name, signature
-- [M3] [qj7QZpgr9Uw](../core/libs/prx/libSceAgc/DcbState/src/ContextState.cpp) (libSceAgc) - unknown name
-- [M3] [fd5Bp5tGTgo](../core/libs/prx/libSceAgc/Misc/src/ShaderFusion.cpp) (libSceAgc) - unknown name
-- [M3] [dolOmWH+huQ](../core/libs/prx/libSceAgc/Misc/src/ShaderFusion.cpp) (libSceAgc) - unknown name
-- [M3] [V++UgBtQhn0](../core/libs/prx/libSceAgc/Misc/src/PacketInfo.cpp) (libSceAgc) - unknown name
-- [M3] [gQkqkLttcpw](../core/libs/prx/libSceAgc/Acb/src/Control.cpp) (libSceAgc) - unknown name, signature
+- [M3] [zARR5aCmkoY](../core/libs/prx/libSceAgc/DcbFlow/src/Control.cpp) (libSceAgc) - link-level: exported by libSceAgc.prx (verified 2026-09-29 by export-table inspection); PortPS5 working name `sceAgcDcbA_zARR5aCmkoY`, Sony ABI name and signature unconfirmed
+- [M3] [qj7QZpgr9Uw](../core/libs/prx/libSceAgc/DcbState/src/ContextState.cpp) (libSceAgc) - link-level: exported by libSceAgc.prx (verified 2026-09-29); PortPS5 working name `sceAgcDcbContextStateAnotherOp`, Sony ABI name unconfirmed
+- [M3] [fd5Bp5tGTgo](../core/libs/prx/libSceAgc/Misc/src/ShaderFusion.cpp) (libSceAgc) - link-level: exported by libSceAgc.prx (verified 2026-09-29); PortPS5 working name `sceAgcUnknownFuseShaderHalves`, Sony ABI name unconfirmed
+- [M3] [dolOmWH+huQ](../core/libs/prx/libSceAgc/Misc/src/ShaderFusion.cpp) (libSceAgc) - link-level: exported by libSceAgc.prx (verified 2026-09-29); PortPS5 working name `sceAgcUnknownGetFusedShaderSize`, Sony ABI name unconfirmed
+- [M3] [V++UgBtQhn0](../core/libs/prx/libSceAgc/Misc/src/PacketInfo.cpp) (libSceAgc) - link-level: exported by libSceAgc.prx (verified 2026-09-29); PortPS5 working name `sceAgcGetDataPacketPayloadAddressUnk`, Sony ABI name unconfirmed
+- [M3] [gQkqkLttcpw](../core/libs/prx/libSceAgc/Acb/src/Control.cpp) (libSceAgc) - link-level: exported by libSceAgc.prx (verified 2026-09-29); PortPS5 working name `sceAgcAcb_gQkqkLttcpw`, Sony ABI name and signature unconfirmed
 - [M1] [sceKernelInternalMemoryGetModuleSegmentInfo](../core/libs/prx/libkernel/Module/src/Module.cpp) (libkernel) - unknown signature
 - [M1] [sceLibcInternalBacktraceForGame](../core/libs/prx/libc/src/HeapDiagnostics.cpp) (libSceLibcInternal, implemented in libc) - unknown signature
 - [M1] [sceLibcInternalHeapErrorReportForGame](../core/libs/prx/libc/src/HeapDiagnostics.cpp) (libSceLibcInternal, implemented in libc) - unknown signature

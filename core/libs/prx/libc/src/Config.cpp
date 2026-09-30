@@ -1406,9 +1406,25 @@ const ResolvedConfig& Loader::Get() {
     return *Instance();
 }
 
+// Why a verbatim free function (not Loader::Get itself): nid_patcher hashes
+// the mangled method name in the patched libc.prx (NidResolver.cpp:54-62;
+// `nid_patcher libc` has no --preserve-exports), while cross-prx callers
+// import it verbatim, failing the prx load with GetLastError 127. The
+// _nid_no_patch name below is kept verbatim, so every prx resolves it.
+extern "C" const ResolvedConfig& PortPS5_Config_Loader_Get_nid_no_patch() {
+    return PortPS5::Config::Loader::Get();
+}
+
 bool Loader::IsInitialized() {
     std::shared_lock lock(InitMutex());
     return Instance().has_value();
+}
+
+// Why a verbatim free function: same NID-hashing trap as the Get wrapper
+// above; observed on the Dreaming Sarah boot path as libSceVideoOut importing
+// the mangled IsInitialized name (GetLastError 127, then 0xC0000005).
+extern "C" bool PortPS5_Config_Loader_IsInitialized_nid_no_patch() {
+    return PortPS5::Config::Loader::IsInitialized();
 }
 
 void Loader::ResetForTesting() {

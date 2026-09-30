@@ -1,3 +1,7 @@
+// Decodes the PM4 context/shader register file into a State (AGC graphics subsystem).
+// Translates blend, raster, viewport, colour target and depth/stencil registers to Vulkan
+// values and rejects unsupported combinations with logged errors (never silently drawn).
+// Pure functions over QueueState; no guest memory is touched except CheckGpuRange validation.
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
@@ -60,6 +64,88 @@ VkBlendOp blendOp(std::uint32_t value) {
         case 4: return VK_BLEND_OP_REVERSE_SUBTRACT;
         default: throw std::runtime_error("AGC graphics: unsupported blend operation " + std::to_string(value));
     }
+}
+
+std::uint32_t readOr(const Registers& registers, std::uint32_t offset, std::uint32_t fallback) {
+    const auto it = registers.find(offset);
+    return it == registers.end() ? fallback : it->second;
+}
+
+/**
+ * Decodes one stencil face. Shared by front and back: opShift selects the
+ * three 4-bit ops in DB_STENCIL_CONTROL and refMask is the face's
+ * DB_STENCILREFMASK word (test value 0-7, mask 8-15, write mask 16-23,
+ * op value 24-31). REPLACE_TEST (3) writes the test value and REPLACE_OP (4)
+ * the op value; Vulkan has one reference, so a REPLACE_OP whose op value
+ * differs from the test value is rejected instead of being mistranslated,
+ * unless the write mask is zero and the op therefore has no effect. Enum
+ * values per AMD's gfx10 register database (StencilOp, DB_STENCIL_CONTROL).
+ */
+VkStencilOpState decodeStencilFace(std::uint32_t control, std::uint32_t opShift, std::uint32_t function, std::uint32_t refMask) {
+    VkStencilOpState face{};
+    const auto fail = (control >> opShift) & 0xfu;
+    const auto pass = (control >> (opShift + 4u)) & 0xfu;
+    const auto depthFail = (control >> (opShift + 8u)) & 0xfu;
+    const auto writeMask = (refMask >> 16u) & 0xffu;
+    const auto opValue = (refMask >> 24u) & 0xffu;
+    face.failOp = DecodeStencilOp(fail, writeMask, opValue);
+    face.passOp = DecodeStencilOp(pass, writeMask, opValue);
+    face.depthFailOp = DecodeStencilOp(depthFail, writeMask, opValue);
+    face.compareOp = DecodeCompareOp(function);
+    face.compareMask = (refMask >> 8u) & 0xffu;
+    face.writeMask = writeMask;
+    face.reference = refMask & 0xffu;
+    const bool replaceOp = fail == 4 || pass == 4 || depthFail == 4;
+    Require(writeMask == 0 || !replaceOp || opValue == face.reference,"stencil REPLACE_OP with an op value different from the test value is unsupported");
+    return face;
+}
+
+/**
+ * Decodes DB_DEPTH_CONTROL and its companions. Reset state is all zero, so the
+ * stencil and reference registers fall back to 0 when the title never wrote
+ * them. DB_DEPTH_CONTROL bits 11..19 and 23..29 are reserved and rejected.
+ * Only a bound depth or stencil surface (DB_Z_INFO / DB_STENCIL_INFO format
+ * nonzero) makes enabled tests observable; the host has no depth image yet, so
+ * that combination is rejected rather than silently drawn without the test.
+ * With no bound surface the hardware ignores the tests, which matches Vulkan
+ * ignoring the state for a render pass without a depth attachment. Stencil ops
+ * are only decoded when the stencil test is enabled: a disabled test passes
+ * every pixel, so stale ops left in the registers must not reject a draw.
+ * Conditional colour writes: bit 30 (write on depth fail) only matters when a
+ * depth test can fail, so it is inert here. Bit 31 (disable colour writes on
+ * depth pass) would suppress colour output, which the host pipeline cannot
+ * express yet, so it is rejected unless CB_TARGET_MASK writes no colour at all.
+ */
+DepthStencilState DecodeDepthStencil(const Registers& cx) {
+    const auto control = read(cx, 0x200);
+    Require((control & 0x3f8ff800u) == 0, "reserved DB_DEPTH_CONTROL bits");
+    DepthStencilState result;
+    result.stencilTestEnable = (control & 1u) != 0;
+    result.depthTestEnable = (control & 2u) != 0;
+    // Z_WRITE_ENABLE is inert without Z_ENABLE, so it is cleared here (upstream 52ffef82).
+    result.depthWriteEnable = result.depthTestEnable && (control & 4u) != 0;
+    result.depthBoundsTestEnable = (control & 8u) != 0;
+    result.depthCompareOp = DecodeCompareOp((control >> 4u) & 7u);
+    result.colorWriteOnDepthFail = (control & 0x40000000u) != 0;
+    result.disableColorWriteOnDepthPass = (control & 0x80000000u) != 0;
+    Require(!result.disableColorWriteOnDepthPass || (readOr(cx, 0x8e, 0) & 0xfu) == 0,
+            "DB_DEPTH_CONTROL bit 31 (disable colour writes on depth pass) is unsupported");
+    const bool backface = (control & 0x80u) != 0;
+    const auto stencilControl = readOr(cx, 0x10b, 0);
+    result.front.compareOp = result.back.compareOp = VK_COMPARE_OP_ALWAYS;
+    if (result.stencilTestEnable) {
+        result.front = decodeStencilFace(stencilControl, 0, (control >> 8u) & 7u, readOr(cx, 0x10c, 0));
+        result.back = backface ? decodeStencilFace(stencilControl, 12, (control >> 20u) & 7u, readOr(cx, 0x10d, 0)) : result.front;
+    }
+    if (result.depthBoundsTestEnable) {
+        result.minDepthBounds = readFloat(cx, 0x8);
+        result.maxDepthBounds = readFloat(cx, 0x9);
+        Require(result.minDepthBounds <= result.maxDepthBounds, "inverted depth bounds");
+    }
+    const bool surfaceBound = (readOr(cx, 0x10, 0) & 3u) != 0 || (readOr(cx, 0x11, 0) & 1u) != 0;
+    Require(!surfaceBound || !(result.depthTestEnable || result.stencilTestEnable || result.depthBoundsTestEnable),
+            "depth or stencil test with a bound depth surface is unsupported (no host depth image)");
+    return result;
 }
 
 void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offset, bool screen) {
@@ -149,7 +235,7 @@ State DecodeState(const QueueState& queue) {
     }
     zero(queue.userConfig, 0x24b, ~0u, "primitive restart (GE_MULTI_PRIM_IB_RESET_EN)", "user-config");
     zero(cx, 0x207, ~0u, "clip distances, layer, viewport or auxiliary vertex exports");
-    zero(cx, 0x200, ~0x007007f0u, "depth, stencil or conditional color writes");
+    result.depthStencil = DecodeDepthStencil(cx);
     zero(cx, 0x203, ~0x00009870u, "depth export, shader coverage or ordered fragment execution");
     zero(cx, 0x2dc, ~0x0001ff00u, "alpha-to-coverage");
     zero(cx, 0x2f8, ~0u, "multisampling or coverage conversion");
@@ -255,6 +341,51 @@ State DecodeState(const QueueState& queue) {
         }
     }
     return result;
+}
+
+VkCompareOp DecodeCompareOp(std::uint32_t value) {
+    Require(value <= 7, "unsupported compare function " + std::to_string(value));
+    // AGC NEVER..ALWAYS (0..7) is numerically identical to VK_COMPARE_OP_NEVER..ALWAYS.
+    return static_cast<VkCompareOp>(value);
+}
+
+VkStencilOp DecodeStencilOp(std::uint32_t value, std::uint32_t writeMask, std::uint32_t opValue) {
+    // A zero write mask turns every operation into a keep, whatever its encoding.
+    if (writeMask == 0) return VK_STENCIL_OP_KEEP;
+    switch (value) {
+        case 0: return VK_STENCIL_OP_KEEP;
+        case 1: return VK_STENCIL_OP_ZERO;
+        case 3:  // STENCIL_REPLACE_TEST
+        case 4:  // STENCIL_REPLACE_OP (value checked against the test value by the caller)
+            return VK_STENCIL_OP_REPLACE;
+        // ADD/SUB add or subtract STENCILOPVAL; Vulkan steps by exactly one.
+        case 5:
+        case 6:
+        case 8:
+        case 9:
+            Require(opValue == 1, "stencil add/subtract with an op value other than 1 is unsupported");
+            return value == 5 ? VK_STENCIL_OP_INCREMENT_AND_CLAMP : value == 6 ? VK_STENCIL_OP_DECREMENT_AND_CLAMP : value == 8 ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
+        case 7: return VK_STENCIL_OP_INVERT;
+        case 12:  // STENCIL_XOR: flips the written bits that are set in STENCILOPVAL
+            if ((writeMask & opValue) == 0) return VK_STENCIL_OP_KEEP;
+            Require((writeMask & ~opValue) == 0, "stencil XOR that flips only some of the written bits is unsupported");
+            return VK_STENCIL_OP_INVERT;
+        default: throw std::runtime_error("AGC graphics: unsupported stencil operation " + std::to_string(value));
+    }
+}
+
+VkPipelineDepthStencilStateCreateInfo ToVulkan(const DepthStencilState& state) {
+    VkPipelineDepthStencilStateCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    info.depthTestEnable = state.depthTestEnable;
+    info.depthWriteEnable = state.depthWriteEnable;
+    info.depthCompareOp = state.depthCompareOp;
+    info.depthBoundsTestEnable = state.depthBoundsTestEnable;
+    info.stencilTestEnable = state.stencilTestEnable;
+    info.front = state.front;
+    info.back = state.back;
+    info.minDepthBounds = state.minDepthBounds;
+    info.maxDepthBounds = state.maxDepthBounds;
+    return info;
 }
 
 }

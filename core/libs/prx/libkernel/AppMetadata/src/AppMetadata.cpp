@@ -39,7 +39,13 @@ void ensureTitleLoaded() {
     // Mount the per-title save container as /savedata0 (docs/spec/save-data.md).
     // A title id that is unsafe as a path component leaves /savedata0 unmounted,
     // so save opens fail with ENOENT rather than landing somewhere unintended.
-    if (!MountSaveData(parsed.titleId, DefaultSaveDataRoot()))
+    // Keep /savedata0 on the same directory libSceSaveData uses (GetSaveDataBaseDir in
+    // SaveData.hpp): the test/config override is the full per-title directory.
+    const std::string overrideDir = GetSaveDataBaseDirOverride_nid_no_patch();
+    const bool mounted = overrideDir.empty()
+        ? MountSaveData(parsed.titleId, DefaultSaveDataRoot())
+        : MountGuestDirectory(SaveDataMountName, overrideDir);
+    if (!mounted)
         APS5_LOG_ERR("savedata: could not mount /savedata0 for titleId '%s'", parsed.titleId.c_str());
 }
 

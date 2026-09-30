@@ -1,4 +1,4 @@
-goal: Port the general mechanisms from AnyPS5 PR #5 onto the fork with no title-specific code, delivering the M1 runtime core so Demon's Souls reaches the in-engine intro cinematic with the policy job green.
+goal: Port the general mechanisms of the merged AnyPS5 PR #5 (now in AnyPS5 main) onto the fork with no title-specific code, delivering the M1 runtime core so Demon's Souls reaches the in-engine intro cinematic with the policy job green.
 
 constraints:
   - No Sony keys, firmware, SDK headers, decryption code, or game assets (dumps, saves, shader bytecode, footage) in repository, CI, or issues (.agents/rules/legal-boundary.md).
@@ -12,7 +12,7 @@ constraints:
 
 acceptance_criteria:
   - name: demons_souls_intro_without_title_code
-    description: With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic (the stage PR #5 reached); its fill and copy kernels run as the title's own compiled shaders with no replacement; the policy CI job is green.
+    description: With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic (the stage AnyPS5 PR #5 reached); its fill and copy kernels run as the title's own compiled shaders with no replacement; the policy CI job is green.
     verify: NONE
     results_json_field: 'title.id == "PPSA01342" && furthest_stage >= "intro_cinematic" && result == "pass"'
   - name: sync_microbenchmark_and_pthread_tests
@@ -44,5 +44,5 @@ context_references:
   - .agents/rules/testing.md
   - .agents/rules/docs-and-specs.md
   - .agents/rules/git-workflow.md
-  - Upstream AnyPS5 PR #5 (29b4601): general mechanisms only (Recorder, host import with staging fallback, GPU detile, GuestArena/GuestHeap, --to-intel SSE4a lowering, AudioOut2, ATRAC9, saveexec/atomic-zero/LDS fixes, agc_shader_replay, RequestSerializer); title-specific code rejected
+  - Upstream AnyPS5 main (merged PR #5, merge commit 7656458; the spec snapshot of the PR is commit 29b4601): general mechanisms only (Recorder, host import with staging fallback, GPU detile, GuestArena/GuestHeap, --to-intel SSE4a lowering, AudioOut2, ATRAC9, saveexec/atomic-zero/LDS fixes, agc_shader_replay, RequestSerializer); title-specific code rejected
   - Code paths: core/relinker, core/shader/recompiler, core/libs/prx/libc, core/libs/prx/libkernel, core/libs/prx/libSceAgc, core/libs/prx/libSceAgcDriver, core/libs/prx/libSceAudioOut, core/libs/prx/libSceAjm.native, config/, tools/
