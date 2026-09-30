@@ -371,6 +371,7 @@ TEST(AudioOut2Tests, AudioOutV1) {
 TEST(AudioOut2Tests, V1BatchSubmitsEveryPort) {
     auto& mixer = AudioMixer::Get();
     mixer.Shutdown();
+    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
     ASSERT_TRUE(mixer.Initialize());
     mixer.ForceWallClockForTesting();
     // Freeze retirement so staged grains survive verbatim until observed.
@@ -409,6 +410,7 @@ TEST(AudioOut2Tests, V1BatchSubmitsEveryPort) {
 TEST(AudioOut2Tests, V1S16StereoConversionAndVolume) {
     auto& mixer = AudioMixer::Get();
     mixer.Shutdown();
+    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
     ASSERT_TRUE(mixer.Initialize());
     mixer.ForceWallClockForTesting();
     mixer.PauseWallClockForTesting(true);

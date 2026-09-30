@@ -147,8 +147,10 @@ TEST(AudioOut2KytyPortTests, TableGrowth) {
 }
 
 // Verifies concurrent port creation from multiple threads keeps each port's
-// channel decoding and state intact. Ported from KytyPS5 TestConcurrentCreates
-// (device-open gates have no equivalent: opens never block here).
+// channel decoding and state intact, then proves every port decodes 8 channels
+// by mixing: a port that lost its channel count would change the summed fold.
+// Ported from KytyPS5 TestConcurrentCreates (device-open gates have no
+// equivalent: opens never block here).
 TEST(AudioOut2KytyPortTests, ConcurrentCreate) {
     constexpr int kThreads = 8;
     AudioOut2ContextHandle ctx = MakeWallClockContext(16, 256);
@@ -166,6 +168,7 @@ TEST(AudioOut2KytyPortTests, ConcurrentCreate) {
     for (auto& thread : threads) {
         thread.join();
     }
+    std::vector<float> pcm(256 * 8, 0.1f);
     for (int i = 0; i < kThreads; i++) {
         EXPECT_EQ(results[i], 0);
         EXPECT_NE(ports[i], 0u);
@@ -173,6 +176,18 @@ TEST(AudioOut2KytyPortTests, ConcurrentCreate) {
         EXPECT_EQ(sceAudioOut2PortGetState(ports[i], &state), 0);
         EXPECT_EQ(state.output, 1u);
         EXPECT_EQ(state.num_channels, 2u);
+        SetPortData(ports[i], pcm.data());
+    }
+    // All eight ports decoded 8 channels: each folds 0.1f per channel into
+    // front-left at unity gain (FL + (C + RL + SL) at -3 dB + LFE at -10 dB).
+    auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
+    std::vector<float> out(256 * 2, 0.0f);
+    EXPECT_EQ(AudioOut2MixPorts(*context, out.data(), 256), 8u);
+    const float perPortLeft = 0.1f * (1.0f + 3.0f * AUDIO_OUT2_DOWNMIX_GAIN + AUDIO_OUT2_LFE_GAIN);
+    for (float sample : out) {
+        EXPECT_NEAR(sample, 8.0f * perPortLeft, 1e-3f);
+    }
+    for (int i = 0; i < kThreads; i++) {
         EXPECT_EQ(sceAudioOut2PortDestroy(ports[i]), 0);
     }
     EXPECT_EQ(sceAudioOut2ContextDestroy(ctx), 0);
