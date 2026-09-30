@@ -43,6 +43,8 @@ References are relative to `core/libs/prx/`. PR #5 line numbers are given unless
 | Trophy2 | Fixed-constant game, group and trophy info (`libSceNpTrophy2/src/GameInfo.cpp:11-37`). Icon getters throw "icon file not found" (`GameInfo.cpp:39-47`, `GroupInfo.cpp:73-81`, `TrophyInfo.cpp:70-78`). | Same |
 | UniversalDataSystem | `PostEvent` accepts the event and drops it (`src/Event.cpp:36-37`) | Same |
 
+**`/savedata0` mount (PortPS5, M2).** `libc/src/General.cpp` owns a guest mount table (`MountGuestDirectory`, `ResolveGuestPathChecked`). `MountSaveData(titleId, DefaultSaveDataRoot())` creates `<root>/<titleId>/` and mounts it at `/savedata0`; `AppMetadata.cpp` calls it when `param.json` is first read, and a file API that touches `/savedata0` before that triggers the load. `sceKernelOpen/Read/Write/Lseek/Close/Stat/Unlink/Mkdir/Fsync` return SCE error codes (`0x80020000 | errno`) instead of throwing. `..` is resolved on raw components, so a path that leaves `/savedata0` returns `EACCES`; `:` in a component (NTFS streams) is also `EACCES`; an unmounted `/savedata0` returns `ENOENT` and never falls through to the working directory. Title ids accept only `[A-Za-z0-9_-]`, at most 32 characters. Tests: `tests/filesystem/SaveDataMountTests.cpp`.
+
 ## Decision
 
 This follows the decision table in [README.md](README.md#subsystem-specs) §Save data: adopt PR #5's `libSceSaveData.native`, replace the silent dialog stubs with scripted and logged results, store saves under `%LOCALAPPDATA%/PortPS5/saves/<titleId>/`, and make a save round-trip per gate title part of local regression.
@@ -123,7 +125,7 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 | Milestone | Work |
 |---|---|
 | M1 | - [x] Offline NP, trophies, user service and system dialogs non-blocking at boot for all five titles. NP, dialog and trophy import inventory. `MsgDialog` stops throwing. |
-| M2 | - [ ] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration. Round-trip in `tools/regress`. Dreaming Sarah and TMNT pass. |
+| M2 | - [x] Per-title `/savedata0` container, sandboxed file I/O (portps5-12). - [ ] Crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration. Round-trip in `tools/regress`. Dreaming Sarah and TMNT pass. |
 | M3 | - [ ] Tomb Raider save/load (the PRD gate for save/load), including the multi-slot list dialog. |
 | M4–M5 | - [ ] Bugsnax and Demon's Souls saves, including any backup events or memory-blob paths they use. |
 | M6 | - [ ] The user guide documents the save location and migration. |

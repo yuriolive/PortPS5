@@ -36,6 +36,11 @@ void ensureTitleLoaded() {
     copyToFixedBuffer(g_title, sizeof(g_title), parsed.title);
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
     g_titleLoaded = true;
+    // Mount the per-title save container as /savedata0 (docs/spec/save-data.md).
+    // A title id that is unsafe as a path component leaves /savedata0 unmounted,
+    // so save opens fail with ENOENT rather than landing somewhere unintended.
+    if (!MountSaveData(parsed.titleId, DefaultSaveDataRoot()))
+        APS5_LOG_ERR("savedata: could not mount /savedata0 for titleId '%s'", parsed.titleId.c_str());
 }
 
 void ensureIconLoaded() {

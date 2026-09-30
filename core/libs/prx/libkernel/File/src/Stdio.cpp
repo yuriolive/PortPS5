@@ -169,7 +169,8 @@ int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
     if (path == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    auto native = ResolvePath_nid_no_patch(path);
+    std::filesystem::path native;
+    if (const int error = ResolveKernelPath(path, native)) { errno = error; return -1; }
     if (NativeMkdir(native, mode) != 0) {
         throw std::runtime_error(std::string(__func__) + ": mkdir failed for " + native.string() + ", errno=" + std::to_string(errno));
     }
@@ -267,9 +268,13 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
 }
 
 int APS5_VABI sceKernelFsync(int fd) {
- (void)fd;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    // Flush to stable storage; save files rely on this for crash-safe writes.
+#ifdef _WIN32
+    if (::_commit(fd) != 0) return HostErrnoToSce(errno);
+#else
+    if (::fsync(fd) != 0) return HostErrnoToSce(errno);
+#endif
+    return 0;
 }
 
 int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
@@ -290,10 +295,12 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
 }
 
 int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
- (void)path;
- (void)mode;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (path == nullptr) return SceKernelErrno(EFAULT);
+    std::filesystem::path native;
+    if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
+    // Single-level mkdir like POSIX: a missing parent is ENOENT, an existing entry EEXIST.
+    if (NativeMkdir(native, mode) != 0) return HostErrnoToSce(errno);
+    return 0;
 }
 
 int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset) {
