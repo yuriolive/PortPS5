@@ -6,7 +6,8 @@
   - Always iterate and verify changes locally (clean compile and test run) before creating a commit or pushing to remote. Do not rely on hosted CI as a syntax/link checker.
   - Local worktrees share `ccache` at `%LOCALAPPDATA%\ccache` across the machine, keeping rebuilds across branches and worktrees down to seconds.
 - **PRs and Tasks:**
-  - Structure PR descriptions, task plans, and issue tracking (including beads/`bd` issues and tasks) with: Context, Higher Goal, Acceptance Criteria (`- [ ]` / `- [x]`), Out of Scope, and Summary of Changes.
+  - Structure PR descriptions, task plans, and issue tracking (including beans issues and tasks) with: Context, Higher Goal, Acceptance Criteria (`- [ ]` / `- [x]`), Out of Scope, and Summary of Changes.
+  - **Bean hygiene:** every PR must check off and archive the bean(s) it solves, in the same PR, so `main` reflects reality after merge: tick acceptance checkboxes, add `## Summary of Changes`, `beans update <id> -s completed`, `beans archive`. List the bean IDs in the PR description. A PR that solves a task but leaves its bean open is not ready to merge.
   - Say which ROADMAP milestone and which spec files the PR touches, and mark finished checkboxes as done (`- [x]`).
   - List the tests you added and how you verified the change.
   - Never attach game footage, logs containing game data, or dumps.
