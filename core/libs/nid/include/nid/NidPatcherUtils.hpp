@@ -29,6 +29,15 @@ constexpr char kSDLPrefix[] = "SDL_";
 constexpr std::size_t kSDLPrefixLen = sizeof(kSDLPrefix) - 1u;
 
 
+/**
+ * @brief Check whether an export name must be preserved verbatim instead of hashed.
+ * @param name Export name before NID processing.
+ * @return True for names ending in `_nid_no_patch`, names beginning with `SDL_`,
+ *         or mangled host configuration names beginning with `_ZN7PortPS56Config`.
+ *
+ * Configuration exports retain their C++ names so dependent PRX modules can
+ * resolve them. Only reads name; safe for concurrent calls without mutation.
+ */
 inline bool IsNidNoPatch(const std::string& name) {
     return (
         name.size() >= kNidNoPatchLen &&
@@ -37,6 +46,14 @@ inline bool IsNidNoPatch(const std::string& name) {
       || name.starts_with("_ZN7PortPS56Config");
 }
 
+/**
+ * @brief Check whether an export requests removal of its no-patch marker.
+ * @param name Export name before NID processing.
+ * @return True if name ends in `_nid_no_patch_cut`; false otherwise.
+ *
+ * Only classifies the name; suffix removal is handled by StripNidNoPatchCut.
+ * Only reads name; safe for concurrent calls without mutation.
+ */
 inline bool IsNidNoPatchCut(const std::string& name) {
     return name.size() >= kNidNoPatchCutLen &&
         name.compare(name.size() - kNidNoPatchCutLen, kNidNoPatchCutLen, kNidNoPatchCut) == 0;
