@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include "prx/libkernel/Pthread/include/GuestTid.hpp"
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -188,6 +189,43 @@ TEST(PthreadSelf, AdoptedHandleSpawnExitStress) {
     }
 #endif
     EXPECT_EQ(g_stressBad.load(), 0);
+}
+
+// Regression (CodeRabbit on PR #61): when the compact tid allocator is
+// exhausted (Ensure() returns 0) the adopted path must keep the old null answer
+// instead of publishing a handle whose guestTid is 0, and must not cache it, so
+// a later call succeeds once a tid is recycled. Exhaustion is reached cheaply by
+// allocating all 2^24-1 tids (no threads needed; ~64 MB of ids), then a fresh
+// host thread calls scePthreadSelf. Runs in its own process under ctest.
+TEST(PthreadSelf, AdoptedHandleNullWhenTidsExhaustedThenRetries) {
+    std::vector<std::uint32_t> held;
+    held.reserve(1u << 24);
+    for (;;) {
+        const std::uint32_t tid = GuestTid::AllocateForThread();
+        if (tid == 0) {
+            break;
+        }
+        held.push_back(tid);
+    }
+    ASSERT_FALSE(held.empty());
+
+    Pthread first = reinterpret_cast<Pthread>(1);
+    Pthread second = reinterpret_cast<Pthread>(1);
+    Pthread afterRecycle = nullptr;
+    std::thread host([&] {
+        first = scePthreadSelf();
+        second = scePthreadSelf();  // must retry, not return a cached bad handle.
+        GuestTid::Recycle(held.back());
+        held.pop_back();
+        afterRecycle = scePthreadSelf();
+    });
+    host.join();
+    EXPECT_TRUE(first == nullptr);
+    EXPECT_TRUE(second == nullptr);
+    EXPECT_TRUE(afterRecycle != nullptr);
+    // Remaining tids are deliberately not recycled: Recycle() scans the free
+    // list for duplicates (O(n)), so returning 16M ids would be quadratic, and
+    // the process exits right after this single-test run.
 }
 
 }  // namespace

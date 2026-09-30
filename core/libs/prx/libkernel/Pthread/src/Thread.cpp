@@ -474,6 +474,13 @@ Pthread APS5_VABI scePthreadSelf() noexcept {
     handle->_detached.store(true, std::memory_order_release);  // join/detach -> EINVAL.
     handle->threadId = std::this_thread::get_id();
     handle->guestTid = GuestTid::Ensure();
+    // Ensure() returns 0 when the compact tid allocator is exhausted (>2^24
+    // live threads), the same condition scePthreadCreate reports as EAGAIN. A
+    // handle with tid 0 would own no futex word, so keep the old null answer
+    // and do NOT publish it as currentThread: the next call retries once a tid
+    // has been recycled.
+    if (handle->guestTid == 0)
+        return nullptr;
     currentThread = handle;
     return currentThread;
 }
