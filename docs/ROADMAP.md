@@ -70,7 +70,8 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title, with crash-safe snapshots and a one-time copy of the old `_sd` layout ([spec/save-data.md](spec/save-data.md)).
 - [ ] Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
 - [ ] The disk pipeline cache.
-- [ ] Driver: depth/stencil and conditional colour-write state, because 2D engines also set them. They are currently rejected at `State.cpp:152` on AnyPS5 `main@e06dbff` and `State.cpp:318-322` on `main@75a8668` (merged PR #5).
+- [x] Driver: depth/stencil and conditional colour-write state decode, `VkPipelineDepthStencilStateCreateInfo` emission and pipeline-cache keying (`Graphics/src/State.cpp`). No host depth image yet.
+- [ ] Driver: host depth/stencil surface (`DB_Z_INFO` decode, attachment, clears, retile). A bound surface with an enabled test is rejected until then.
 - [ ] `tools/regress` local regression plus results JSON upload, with the config hash and the "FMV played" rule.
 
 **Exit criteria**
