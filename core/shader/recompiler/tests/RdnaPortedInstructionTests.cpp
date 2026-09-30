@@ -99,6 +99,9 @@ struct Machine {
     bool execHiWritten = false;
     std::array<bool, 128> sgprWritten{};
     std::array<bool, 64> vgprWritten{};
+    // Writes of unknown (uninterpretable) values are test failures unless a test opts out because it checks only
+    // other outputs (e.g. the carry-out mask write, which needs a ballot the interpreter does not model).
+    bool allowUnknownWrites = false;
     std::map<const IrValue*, Value> memo;
 
     Value Eval(const IrValue* raw) {
@@ -130,38 +133,48 @@ struct Machine {
     }
 
 private:
+    void Unknown(const char* what, std::uint32_t index, bool known) {
+        if (!allowUnknownWrites) ADD_FAILURE() << (known ? "out-of-range " : "uninterpretable value written to ") << what << ' ' << index;
+    }
+
     void Step(const IrValue* inst) {
         switch (inst->Opcode()) {
         case IrOpcode::SetScalarRegister: {
             const auto value = Eval(inst->Argument(1));
             const auto index = inst->Argument(0)->Register().index;
-            if (value && index < sgpr.size()) { sgpr[index] = static_cast<std::uint32_t>(*value); sgprWritten[index] = true; }
+            if (!value || index >= sgpr.size()) { Unknown("SGPR", index, value.has_value()); return; }
+            sgpr[index] = static_cast<std::uint32_t>(*value); sgprWritten[index] = true;
             return;
         }
         case IrOpcode::SetVectorRegister: {
             const auto value = Eval(inst->Argument(1));
             const auto index = inst->Argument(0)->Register().index;
-            if (value && index < vgpr.size()) { vgpr[index] = static_cast<std::uint32_t>(*value); vgprWritten[index] = true; }
+            if (!value || index >= vgpr.size()) { Unknown("VGPR", index, value.has_value()); return; }
+            vgpr[index] = static_cast<std::uint32_t>(*value); vgprWritten[index] = true;
             return;
         }
         case IrOpcode::SetScc: {
             const auto value = Eval(inst->Argument(0));
-            if (value) { scc = *value != 0u; sccWritten = true; }
+            if (!value) { Unknown("SCC", 0u, false); return; }
+            scc = *value != 0u; sccWritten = true;
             return;
         }
         case IrOpcode::SetExec: {
             const auto value = Eval(inst->Argument(0));
-            if (value) { execBit = *value != 0u; execBitWritten = true; }
+            if (!value) { Unknown("EXEC bit", 0u, false); return; }
+            execBit = *value != 0u; execBitWritten = true;
             return;
         }
         case IrOpcode::SetExecLo: {
             const auto value = Eval(inst->Argument(0));
-            if (value) { execLo = static_cast<std::uint32_t>(*value); execLoWritten = true; }
+            if (!value) { Unknown("EXEC_LO", 0u, false); return; }
+            execLo = static_cast<std::uint32_t>(*value); execLoWritten = true;
             return;
         }
         case IrOpcode::SetExecHi: {
             const auto value = Eval(inst->Argument(0));
-            if (value) { execHi = static_cast<std::uint32_t>(*value); execHiWritten = true; }
+            if (!value) { Unknown("EXEC_HI", 0u, false); return; }
+            execHi = static_cast<std::uint32_t>(*value); execHiWritten = true;
             return;
         }
         default:
@@ -203,9 +216,11 @@ private:
         case IrOpcode::BitwiseOr32: return u32(arg(0)) | u32(arg(1));
         case IrOpcode::BitwiseXor32: return u32(arg(0)) ^ u32(arg(1));
         case IrOpcode::BitwiseNot32: return ~u32(arg(0));
-        case IrOpcode::ShiftLeftLogical32: return u32(arg(0)) << (u32(arg(1)) & 31u);
-        case IrOpcode::ShiftRightLogical32: return u32(arg(0)) >> (u32(arg(1)) & 31u);
-        case IrOpcode::ShiftRightArithmetic32: return static_cast<std::uint32_t>(static_cast<std::int32_t>(u32(arg(0))) >> (u32(arg(1)) & 31u));
+        // The backend emits SPIR-V shifts for the 32-bit ops directly (undefined for count >= 32), so the translator must
+        // mask ISA counts itself; the interpreter therefore refuses out-of-range counts instead of masking them.
+        case IrOpcode::ShiftLeftLogical32: if (u32(arg(1)) >= 32u) return std::nullopt; return u32(arg(0)) << u32(arg(1));
+        case IrOpcode::ShiftRightLogical32: if (u32(arg(1)) >= 32u) return std::nullopt; return u32(arg(0)) >> u32(arg(1));
+        case IrOpcode::ShiftRightArithmetic32: if (u32(arg(1)) >= 32u) return std::nullopt; return static_cast<std::uint32_t>(static_cast<std::int32_t>(u32(arg(0))) >> u32(arg(1)));
         case IrOpcode::ULessThan32: return u32(arg(0)) < u32(arg(1)) ? 1u : 0u;
         case IrOpcode::UGreaterThan32: return u32(arg(0)) > u32(arg(1)) ? 1u : 0u;
         case IrOpcode::IEqual32: return u32(arg(0)) == u32(arg(1)) ? 1u : 0u;
@@ -237,7 +252,11 @@ private:
         case IrOpcode::ConvertU32U16: return *arg(0) & 0xffffu;
         case IrOpcode::CompositeConstructU64: return static_cast<std::uint64_t>(u32(arg(0))) | (static_cast<std::uint64_t>(u32(arg(1))) << 32u);
         case IrOpcode::CompositeExtractU64: return *arg(1) == 0u ? (*arg(0) & 0xffffffffull) : (*arg(0) >> 32u);
-        case IrOpcode::ShiftRightLogical64: return *arg(0) >> (u32(arg(1)) & 63u);
+        // Strict: the translator (s_bitcmp_b64, alignbyte) masks the count before this op, so a missing mask is caught.
+        case IrOpcode::ShiftRightLogical64: if (u32(arg(1)) >= 64u) return std::nullopt; return *arg(0) >> u32(arg(1));
+        // 64-bit left and arithmetic shifts are masked to 6 bits by the SPIR-V backend itself (EmitShift64 and
+        // EmitConstantShift64 in SpirvAluEmitterMath.cpp), so the IR op is defined for any count and s_ashr_i64
+        // intentionally passes S1 through; the interpreter models that contract.
         case IrOpcode::ShiftLeftLogical64: return *arg(0) << (u32(arg(1)) & 63u);
         case IrOpcode::ShiftRightArithmetic64: return static_cast<std::uint64_t>(static_cast<std::int64_t>(*arg(0)) >> (u32(arg(1)) & 63u));
         case IrOpcode::BitwiseAnd64: return *arg(0) & *arg(1);
@@ -718,6 +737,7 @@ TEST(RdnaPortedInstructionTests, Vop3AddCoCiReadsCarryInFromThirdSource) {
     for (std::uint32_t lane = 0u; lane < 64u; ++lane) {
         const bool carry = ((carryMask >> lane) & 1ull) != 0u;
         Machine m;
+        m.allowUnknownWrites = true;  // carry-out mask write needs a ballot; only v0 is checked here
         m.lane = lane;
         m.vccBit = !carry;  // the wrong source would give the opposite answer
         m.vgpr[1] = 100u;
@@ -741,6 +761,7 @@ TEST(RdnaPortedInstructionTests, Vop3SubCoCiReadsBorrowInFromThirdSource) {
     for (std::uint32_t lane = 0u; lane < 64u; ++lane) {
         const std::uint32_t borrow = ((borrowMask >> lane) & 1ull) != 0u ? 1u : 0u;
         Machine a;
+        a.allowUnknownWrites = true;  // carry-out mask write needs a ballot; only v0 is checked here
         a.lane = lane;
         a.vccBit = borrow == 0u;  // opposite of the mask bit: a VCC-based borrow would be wrong
         a.vgpr[1] = 100u; a.vgpr[2] = 23u;
