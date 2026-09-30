@@ -1,3 +1,7 @@
+// IByteReader implementation: bounds-checked little-endian reads.
+// Subsystem: relinker io. Offsets can be attacker-controlled ELF values, so the
+// checks are wrap-free and throw std::out_of_range. Stateless; thread-safe.
+
 #include <io/ByteReader.hpp>
 #include <cstring>
 #include <stdexcept>

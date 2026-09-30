@@ -1,3 +1,8 @@
+// IFileWriter implementation: writes relinker output files.
+// Subsystem: relinker io. Output is buffered by the stream, so write errors
+// (disk full) only appear at flush; each overload therefore close()s before
+// testing the stream. Throws Domain::RelinkerException. No shared state.
+
 #include <io/FileWriter.hpp>
 #include <domain/Types.hpp>
 #include <fstream>

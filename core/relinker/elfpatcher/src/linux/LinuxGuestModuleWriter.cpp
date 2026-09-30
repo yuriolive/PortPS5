@@ -1,3 +1,10 @@
+// Emits a Linux-loadable ELF shared object from a parsed guest (prx) image.
+// Subsystem: relinker elfpatcher, guest-module path (`sce_module`).
+// Appends one extra PT_LOAD holding rebuilt dynstr/dynsym/hash/rela/dynamic
+// data after the original segments (0x4000-aligned) and rewrites the ELF
+// header to point at a new program-header table. Pure function of its inputs:
+// no shared state, single-threaded per call.
+
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>

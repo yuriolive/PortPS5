@@ -1,3 +1,8 @@
+// Bounds-checked little-endian read/write/append helpers over byte vectors.
+// Subsystem: relinker io. All offsets may originate from untrusted ELF fields,
+// so checks are wrap-free (`offset > size || size - offset < N`) and failures
+// throw std::out_of_range without touching the buffer. No shared state.
+
 #include <io/BufferUtils.hpp>
 #include <cstring>
 #include <stdexcept>

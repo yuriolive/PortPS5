@@ -1,3 +1,10 @@
+// x86-64 instruction length decoder and control-flow classifier.
+// Subsystem: relinker codegen. Owns Decode (length only) and DecodeInstruction
+// (length, ModRM/RIP-relative info, branch kind). Both paths must agree on
+// which opcodes carry a ModRM byte, or linear/recursive sweeps desynchronise.
+// Stateless and const: safe to call concurrently. Input bytes are untrusted
+// guest code; every read is bounded by the `available` argument.
+
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>

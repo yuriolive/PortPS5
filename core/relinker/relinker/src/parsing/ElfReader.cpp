@@ -1,3 +1,9 @@
+// ElfReader: bounds-checked parser for ELF64 headers, segments and sections.
+// Subsystem: relinker parsing. Owns a copy of the input file bytes for its
+// lifetime; all fields are untrusted, so every access is range-checked without
+// integer wrap and failures throw Relinker::RelinkerException. Const after
+// construction, so concurrent reads are safe.
+
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/domain/Types.hpp>
 #include <cstring>

@@ -24,7 +24,9 @@ using Bytes = std::vector<std::uint8_t>;
 Bytes MakeHeader(std::size_t size) {
     Bytes b(size, 0);
     const std::uint8_t ident[] = {0x7f, 'E', 'L', 'F', 2, 1, 1};
-    std::memcpy(b.data(), ident, std::min(sizeof(ident), size));
+    // An empty vector's data() may be null, and memcpy with a null pointer is UB
+    // even for length 0 (C11 7.24.1p2), so only copy into a non-empty buffer.
+    if (!b.empty()) std::memcpy(b.data(), ident, std::min(sizeof(ident), size));
     return b;
 }
 
