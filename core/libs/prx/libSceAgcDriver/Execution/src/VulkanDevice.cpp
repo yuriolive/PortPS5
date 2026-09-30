@@ -727,9 +727,12 @@ void VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
 
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     const auto& limits = state->properties.limits;
-    // Vulkan 1.3 accepts SPIR-V up to 1.6 (also the ceiling for 1.4), so mesh shaders (which need >= 1.4) no longer
-    // select a different version: every stage is emitted as 1.6.
-    ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_3, 0x00010600u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
+    // A Vulkan 1.3 device accepts SPIR-V up to 1.6, but modules at 1.6 or later let the driver pick the subgroup size
+    // per dispatch (implicit ALLOW_VARYING_SUBGROUP_SIZE). The recompiler bakes target.subgroupSize into its lane math
+    // (wave64 masks, DS swizzles, ballot/readlane), and no pipeline path pins the size yet (no
+    // VkPipelineShaderStageRequiredSubgroupSizeCreateInfo / REQUIRE_FULL_SUBGROUPS). Keep emitting 1.3 (1.4 for mesh
+    // shaders) until that pinning lands; see docs/spec/gpu-driver.md Open questions.
+    ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_3, state->meshShader ? 0x00010400u : 0x00010300u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
     if (state->meshShader) {
         const auto& mesh = state->meshLimits;
         target.mesh = ShaderRecompiler::MeshTargetLimits{{mesh.maxMeshWorkGroupSize[0], mesh.maxMeshWorkGroupSize[1], mesh.maxMeshWorkGroupSize[2]}, mesh.maxMeshWorkGroupInvocations, std::min(mesh.maxMeshSharedMemorySize, mesh.maxMeshPayloadAndSharedMemorySize), mesh.maxMeshOutputVertices, mesh.maxMeshOutputPrimitives, mesh.maxMeshOutputComponents, std::min(mesh.maxMeshOutputMemorySize, mesh.maxMeshPayloadAndOutputMemorySize), mesh.meshOutputPerVertexGranularity, mesh.meshOutputPerPrimitiveGranularity};
