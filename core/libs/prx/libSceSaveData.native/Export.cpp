@@ -114,7 +114,7 @@ bool dir_name_match(const char* str, const char* pattern) {
     return *str == '\0' && *pattern == '\0';
 }
 
-static void restore_snapshots_and_migrate_if_needed() {
+static bool restore_snapshots_and_migrate_if_needed() {
     std::error_code ec;
     const std::filesystem::path root = GetSaveDataBaseDir();
 
@@ -153,19 +153,38 @@ static void restore_snapshots_and_migrate_if_needed() {
 
                     APS5_LOG_INFO("Crash recovery: restoring save snapshot %s -> %s",
                                   snapshotPath.string().c_str(), originalPath.string().c_str());
+
+                    // Stage copy in a temporary directory; retain snapshot if recovery fails
+                    std::filesystem::path stagePath = root / ("." + originalName + ".restore.tmp");
+                    std::filesystem::remove_all(stagePath, ec);
+                    ec.clear();
+                    std::filesystem::copy(snapshotPath, stagePath,
+                                          std::filesystem::copy_options::recursive, ec);
+                    if (ec) {
+                        APS5_LOG_ERR("Crash recovery: failed to stage snapshot %s: %s",
+                                     snapshotPath.string().c_str(), ec.message().c_str());
+                        std::filesystem::remove_all(stagePath, ec);
+                        return false;
+                    }
+
+                    // Remove existing destination and publish staged snapshot
                     std::filesystem::remove_all(originalPath, ec);
                     ec.clear();
-                    std::filesystem::rename(snapshotPath, originalPath, ec);
+                    std::filesystem::rename(stagePath, originalPath, ec);
                     if (ec) {
-                        // If rename fails across volumes or permissions, copy and remove
-                        std::filesystem::copy(snapshotPath, originalPath,
-                                              std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
-                        std::filesystem::remove_all(snapshotPath, ec);
+                        APS5_LOG_ERR("Crash recovery: failed to publish restored save %s: %s",
+                                     originalPath.string().c_str(), ec.message().c_str());
+                        std::filesystem::remove_all(stagePath, ec);
+                        return false;
                     }
+
+                    // Only delete snapshot after restore has fully succeeded
+                    std::filesystem::remove_all(snapshotPath, ec);
                 }
             }
         }
     }
+    return true;
 }
 
 static bool atomic_write_file(const std::filesystem::path& path, const void* data, std::size_t size) {
@@ -182,7 +201,10 @@ static bool atomic_write_file(const std::filesystem::path& path, const void* dat
             f.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
         }
         f.flush();
-        if (!f) return false;
+        if (!f) {
+            std::filesystem::remove(tmpPath, ec);
+            return false;
+        }
     }
 
 #ifdef _WIN32
@@ -197,16 +219,17 @@ static bool atomic_write_file(const std::filesystem::path& path, const void* dat
             return true;
         }
     }
-#endif
-
+    std::filesystem::remove(tmpPath, ec);
+    return false;
+#else
     ec.clear();
     std::filesystem::rename(tmpPath, path, ec);
     if (ec) {
-        std::filesystem::remove(path, ec);
-        ec.clear();
-        std::filesystem::rename(tmpPath, path, ec);
+        std::filesystem::remove(tmpPath, ec);
+        return false;
     }
-    return !ec;
+    return true;
+#endif
 }
 
 static bool file_size_of(const std::filesystem::path& path, std::size_t* out) {
@@ -300,6 +323,19 @@ int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) noexcept {
         name.find_first_of("/\\:") != std::string_view::npos) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    constexpr std::string_view kSnap = ".portps5-prev";
+    if (name.size() >= kSnap.size() && name.substr(name.size() - kSnap.size()) == kSnap) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+
+    std::lock_guard lock(g_save_mutex);
+    const auto target = (GetSaveDataBaseDir() / name).string();
+    for (const auto& s : g_slots) {
+        if (s.used && s.real_path == target) {
+            return SAVE_DATA_ERROR_BUSY;
+        }
+    }
+
     try {
         const std::filesystem::path path = GetSaveDataBaseDir() / name;
         std::error_code ec;
@@ -541,12 +577,14 @@ int APS5_VABI sceSaveDataInitialize3(const void* init) noexcept {
     if (g_initialized) {
         return SAVE_DATA_ERROR_ALREADY_INITIALIZED;
     }
-    g_initialized = true;
     try {
-        restore_snapshots_and_migrate_if_needed();
+        if (!restore_snapshots_and_migrate_if_needed()) {
+            return SAVE_DATA_ERROR_INTERNAL;
+        }
     } catch (...) {
-        // Logged or ignored, do not throw
+        return SAVE_DATA_ERROR_INTERNAL;
     }
+    g_initialized = true;
     return SAVE_DATA_OK;
 }
 

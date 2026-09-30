@@ -24,6 +24,13 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 extern "C" {
 int APS5_VABI sceSaveDataInitialize3(const void* init) noexcept;
 int APS5_VABI sceSaveDataTerminate(void) noexcept;
@@ -62,6 +69,35 @@ void ResetSaveDataDialogStateForTesting();
 namespace {
 
 using namespace PortPS5::Testing;
+
+/**
+ * Sets directory last write time portably.
+ * On Windows, std::filesystem::last_write_time on a directory throws
+ * Permission denied because MinGW-w64 libstdc++ opens directories without
+ * FILE_FLAG_BACKUP_SEMANTICS; Win32 SetFileTime works as documented.
+ */
+static void SetDirectoryWriteTime(const std::filesystem::path& path,
+                                  std::filesystem::file_time_type time) {
+#ifdef _WIN32
+    HANDLE h = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        auto sys_time = std::chrono::file_clock::to_sys(time);
+        auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(sys_time.time_since_epoch()).count();
+        ULARGE_INTEGER ull;
+        ull.QuadPart = (static_cast<ULONGLONG>(millis) * 10000ULL) + 116444736000000000ULL;
+        FILETIME ft;
+        ft.dwLowDateTime = ull.LowPart;
+        ft.dwHighDateTime = ull.HighPart;
+        SetFileTime(h, nullptr, nullptr, &ft);
+        CloseHandle(h);
+        return;
+    }
+#endif
+    std::error_code ec;
+    std::filesystem::last_write_time(path, time, ec);
+}
 
 class SaveDataFidelityTest : public TempDirectoryFixture {
 protected:
@@ -473,9 +509,11 @@ TEST_F(SaveDataFidelityTest, DialogStateTransitionsAndCommonDialogUsed) {
 
     // 3. Create a save directory and verify list-load selects newest
     std::error_code ec;
+    const auto now = std::filesystem::file_time_type::clock::now();
     std::filesystem::create_directories(TempDir() / "SAVE_OLD", ec);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    SetDirectoryWriteTime(TempDir() / "SAVE_OLD", now - std::chrono::hours(1));
     std::filesystem::create_directories(TempDir() / "SAVE_NEWEST", ec);
+    SetDirectoryWriteTime(TempDir() / "SAVE_NEWEST", now);
 
     SaveDataDirName outDirName{};
     result = SaveDataDialogResult{};
@@ -525,7 +563,7 @@ TEST_F(SaveDataFidelityTest, DeleteRejectsInvalidNames) {
     SaveDataDelete del{};
     EXPECT_EQ(sceSaveDataDelete(nullptr), SAVE_DATA_ERROR_PARAMETER);
     EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_PARAMETER);
-    for (const char* name : {"", ".", "..", "_memory", "../outside", "a/b", "a\\b", "C:save"}) {
+    for (const char* name : {"", ".", "..", "_memory", "../outside", "a/b", "a\\b", "C:save", "VALID.portps5-prev"}) {
         auto dir = MakeDirName(name);
         del.dir_name = &dir;
         EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_PARAMETER) << name;
@@ -535,6 +573,18 @@ TEST_F(SaveDataFidelityTest, DeleteRejectsInvalidNames) {
     std::memset(unterminated.data, 'x', sizeof(unterminated.data));
     del.dir_name = &unterminated;
     EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_PARAMETER);
+
+    // Active mounts cannot be deleted (returns BUSY per spec)
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+    auto mountedDir = MakeDirName("MOUNTED_DIR");
+    SaveDataMount3 mount{};
+    mount.dir_name = &mountedDir;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE2;
+    SaveDataMountResult mountResult{};
+    ASSERT_EQ(sceSaveDataMount3(&mount, &mountResult), SAVE_DATA_OK);
+    del.dir_name = &mountedDir;
+    EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_BUSY);
+    EXPECT_EQ(sceSaveDataUmount2(0, &mountResult.mount_point), SAVE_DATA_OK);
 
     auto valid = MakeDirName("VALID");
     del.dir_name = &valid;
