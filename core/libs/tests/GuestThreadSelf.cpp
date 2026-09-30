@@ -22,7 +22,12 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <atomic>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 // Creates a guest thread. Returns SCE_OK on success.
@@ -144,6 +149,45 @@ TEST(PthreadSelf, WorkerIdentityExitValueAndForeignUnlock) {
 
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), ::PortPS5::Testing::SCE_OK);
     EXPECT_EQ(scePthreadMutexDestroy(&mutex), ::PortPS5::Testing::SCE_OK);
+}
+
+// Stress for the adopted-handle lifetime: hundreds of short-lived host threads
+// each adopt a handle (scePthreadSelf) and exit, in concurrent batches, via
+// both std::thread and raw Win32 threads. The handle lives in FLS storage freed
+// at thread exit; a thread_local unique_ptr version of this crashed
+// intermittently at exit (libc.prx's __cxa_thread_atexit override), so run this
+// under `ctest --repeat until-fail:N`. Invariants: the handle is non-null,
+// stable within the thread, and distinct from every other live thread's.
+std::atomic<int> g_stressBad{0};
+
+void StressBody() {
+    const Pthread first = scePthreadSelf();
+    if (first == nullptr || scePthreadSelf() != first) {
+        g_stressBad.fetch_add(1);
+    }
+}
+
+TEST(PthreadSelf, AdoptedHandleSpawnExitStress) {
+    g_stressBad.store(0);
+    for (int batch = 0; batch < 40; ++batch) {
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 16; ++i) {
+            threads.emplace_back(StressBody);
+        }
+        for (auto& t : threads) {
+            t.join();
+        }
+    }
+#ifdef _WIN32
+    for (int i = 0; i < 100; ++i) {
+        HANDLE h = CreateThread(nullptr, 0, +[](void*) -> DWORD { StressBody(); return 0; },
+                                nullptr, 0, nullptr);
+        ASSERT_NE(h, nullptr);
+        ASSERT_EQ(WaitForSingleObject(h, 5000), WAIT_OBJECT_0);
+        CloseHandle(h);
+    }
+#endif
+    EXPECT_EQ(g_stressBad.load(), 0);
 }
 
 }  // namespace

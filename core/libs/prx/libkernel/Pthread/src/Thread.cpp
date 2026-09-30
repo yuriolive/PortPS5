@@ -6,6 +6,7 @@
 #include "prx/libkernel/Pthread/include/GuestTid.hpp"
 #include "prx/libkernel/Pthread/include/SyncWords.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -452,18 +453,23 @@ Pthread APS5_VABI scePthreadSelf() noexcept {
     // and scePthreadRename(scePthreadSelf(), ...) are routine on the main
     // thread). AnyPS5 76b7f998. Allocation failure keeps the old null answer.
     //
-    // Ownership: the handle is deliberately NOT freed at thread exit. A
-    // thread_local unique_ptr owning the handle was tried first and the
-    // adopted-handle unit test then segfaulted intermittently (within ~40
-    // ctest repeats; 0 of 100 after switching to a plain leaked pointer). The
-    // exact mechanism was not pinned down (suspect: DLL thread-detach
-    // destructor ordering against the FLS tid cleanup). The guest may also keep the pointer a little past
-    // the thread's death (as it may for any handle). The cost is one small
-    // object per distinct host thread that ever calls scePthreadSelf (the main
-    // thread plus a handful of driver workers), which is bounded.
-    auto* handle = new (std::nothrow) PthreadPrivate();
-    if (!handle)
-        return nullptr;
+    // Ownership: the handle lives in HostThreadLocal storage (an FLS slot whose
+    // callback deletes it when the host thread exits). A C++ thread_local with
+    // a non-trivial destructor (the first attempt used a unique_ptr) registers
+    // through __cxa_thread_atexit, which libc.prx overrides
+    // (CxxAbiSupport.cpp); that hook has the destruction-order/concurrency
+    // hazard GuestTid.cpp already documents, and the adopted-handle test
+    // segfaulted intermittently (~1 in 40 ctest repeats). FLS callbacks are
+    // the project's established answer (HostThreadLocal, GuestTid). The
+    // handle is only ever dereferenced by its own thread or via a guest that
+    // kept it, and is invalid once the thread is gone, like any pthread_t.
+    struct AdoptedTag {};
+    PthreadPrivate* handle = nullptr;
+    try {
+        handle = &HostThreadLocal<PthreadPrivate, AdoptedTag>();
+    } catch (...) {
+        return nullptr;  // slot exhaustion / OOM keeps the old null answer.
+    }
     handle->adopted = true;
     handle->_detached.store(true, std::memory_order_release);  // join/detach -> EINVAL.
     handle->threadId = std::this_thread::get_id();

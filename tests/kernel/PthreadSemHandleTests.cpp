@@ -228,4 +228,37 @@ TEST(PthreadSemHandle, TokenConservationUnderContention) {
     EXPECT_EQ(scePthreadSemDestroy(&sem), SCE_OK);
 }
 
+// Open POSIX sem_post assertion 1/2 and FreeBSD libc sem_new.c: each post
+// releases exactly one waiter. With three parked waiters, one post must let at
+// most one through (upper bound is deterministic), and three posts release all
+// three and leave the count at 0 (no token leaks or is duplicated).
+TEST(PthreadSemHandle, EachPostReleasesExactlyOneWaiter) {
+    PthreadSem sem = nullptr;
+    ASSERT_EQ(scePthreadSemInit(&sem, 0, 0, "one_each"), SCE_OK);
+    std::atomic<int> released{0};
+    std::vector<std::thread> waiters;
+    for (int i = 0; i < 3; ++i) {
+        waiters.emplace_back([&] {
+            EXPECT_EQ(scePthreadSemWait(&sem), SCE_OK);
+            released.fetch_add(1);
+        });
+    }
+    while (sem->waiters.load(std::memory_order_acquire) < 3) {
+        std::this_thread::yield();
+    }
+    ASSERT_EQ(scePthreadSemPost(&sem), SCE_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_LE(released.load(), 1);
+    ASSERT_EQ(scePthreadSemPost(&sem), SCE_OK);
+    ASSERT_EQ(scePthreadSemPost(&sem), SCE_OK);
+    for (auto& t : waiters) {
+        t.join();
+    }
+    EXPECT_EQ(released.load(), 3);
+    int value = -1;
+    ASSERT_EQ(scePthreadSemGetvalue(&sem, &value), SCE_OK);
+    EXPECT_EQ(value, 0);
+    EXPECT_EQ(scePthreadSemDestroy(&sem), SCE_OK);
+}
+
 }  // namespace
