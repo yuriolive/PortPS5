@@ -248,7 +248,12 @@ static void queueAudio(const Port& port, const void* data) {
     while (true) {
         const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - pushStart).count();
-        if (elapsedMs >= PUSH_TIMEOUT_MS) break;
+        if (elapsedMs >= PUSH_TIMEOUT_MS) {
+            // Stuck device: the 200 ms bound expired. Record it as a stall input
+            // (docs/spec/audio.md failure modes), not just a dropped grain.
+            AudioMixer::Get().RecordStall();
+            break;
+        }
         source->WaitUntilQueuedAtMost(roomTarget,
             static_cast<std::uint32_t>(PUSH_TIMEOUT_MS - elapsedMs));
         if (source->PushStereo48k(staged.data(), stagedFrames)) break;

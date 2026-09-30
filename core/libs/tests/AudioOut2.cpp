@@ -15,6 +15,7 @@
 #define SDL_MAIN_HANDLED
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -136,6 +137,48 @@ void SetPortData(AudioOut2PortHandle port, const float* pcm) {
     attr.value_size = sizeof(pcm);
     EXPECT_EQ(sceAudioOut2PortSetAttributes(port, &attr, 1), 0);
 }
+
+
+/**
+ * RAII fixture for v1 mixer tests: brings up a dummy-driver mixer with frozen
+ * wall-clock retirement, tracks opened handles, and on every exit path (including
+ * early ASSERT_* returns) closes them, shuts the mixer down and unfreezes the
+ * clock so a failing test cannot leak sources or pause state into later tests.
+ */
+class V1MixerGuard {
+public:
+    V1MixerGuard() {
+        auto& mixer = AudioMixer::Get();
+        mixer.Shutdown();
+        SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+        initialized = mixer.Initialize();
+        mixer.ForceWallClockForTesting();
+        mixer.PauseWallClockForTesting(true);
+    }
+    ~V1MixerGuard() {
+        for (int handle : handles) sceAudioOutClose(handle);
+        auto& mixer = AudioMixer::Get();
+        mixer.Shutdown();
+        mixer.PauseWallClockForTesting(false);
+    }
+    V1MixerGuard(const V1MixerGuard&) = delete;
+    V1MixerGuard& operator=(const V1MixerGuard&) = delete;
+
+    /** Opens a v1 port and tracks it for cleanup. @return handle (<=0 on failure). */
+    int Open(std::uint32_t len, std::uint32_t param) {
+        const int handle = sceAudioOutOpen(0, 0, 0, len, 48000, param);
+        if (handle > 0) handles.push_back(handle);
+        return handle;
+    }
+    /** Closes a tracked handle now and stops tracking it. @return close result. */
+    int Close(int handle) {
+        handles.erase(std::remove(handles.begin(), handles.end(), handle), handles.end());
+        return sceAudioOutClose(handle);
+    }
+
+    bool initialized = false;
+    std::vector<int> handles;
+};
 
 }  // namespace
 
@@ -369,15 +412,11 @@ TEST(AudioOut2Tests, AudioOutV1) {
 // used under GPL-2.0 terms; guest-memory fault isolation from the original
 // has no equivalent here and is not ported).
 TEST(AudioOut2Tests, V1BatchSubmitsEveryPort) {
+    V1MixerGuard guard;
     auto& mixer = AudioMixer::Get();
-    mixer.Shutdown();
-    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
-    ASSERT_TRUE(mixer.Initialize());
-    mixer.ForceWallClockForTesting();
-    // Freeze retirement so staged grains survive verbatim until observed.
-    mixer.PauseWallClockForTesting(true);
-    const int first = sceAudioOutOpen(0, 0, 0, 256, 48000, 4);
-    const int second = sceAudioOutOpen(0, 0, 0, 256, 48000, 4);
+    ASSERT_TRUE(guard.initialized);
+    const int first = guard.Open(256, 4);
+    const int second = guard.Open(256, 4);
     ASSERT_GT(first, 0);
     ASSERT_GT(second, 0);
     ASSERT_NE(first, second);
@@ -395,10 +434,6 @@ TEST(AudioOut2Tests, V1BatchSubmitsEveryPort) {
         // Both grains submitted: 0.25 + 0.25 sums to exactly 0.5.
         EXPECT_FLOAT_EQ(sample, 0.5f);
     }
-    EXPECT_EQ(sceAudioOutClose(first), 0);
-    EXPECT_EQ(sceAudioOutClose(second), 0);
-    mixer.Shutdown();
-    mixer.PauseWallClockForTesting(false);
 }
 
 // Verifies S16 stereo guest PCM converts to mixer float with exact half-scale
@@ -408,13 +443,10 @@ TEST(AudioOut2Tests, V1BatchSubmitsEveryPort) {
 // up to F32 for the mixer). NaN sanitization from the original is not ported:
 // it would need new mixer behavior, which is out of scope.
 TEST(AudioOut2Tests, V1S16StereoConversionAndVolume) {
+    V1MixerGuard guard;
     auto& mixer = AudioMixer::Get();
-    mixer.Shutdown();
-    SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
-    ASSERT_TRUE(mixer.Initialize());
-    mixer.ForceWallClockForTesting();
-    mixer.PauseWallClockForTesting(true);
-    const int handle = sceAudioOutOpen(0, 0, 0, 256, 48000, 1);
+    ASSERT_TRUE(guard.initialized);
+    const int handle = guard.Open(256, 1);
     ASSERT_GT(handle, 0);
     // Half scale maps exactly: 16384 / 32768 = 0.5.
     std::vector<std::int16_t> block(256 * 2, 0);
@@ -457,9 +489,6 @@ TEST(AudioOut2Tests, V1S16StereoConversionAndVolume) {
     for (float sample : out) {
         EXPECT_FLOAT_EQ(sample, 0.25f);
     }
-    EXPECT_EQ(sceAudioOutClose(handle), 0);
-    mixer.Shutdown();
-    mixer.PauseWallClockForTesting(false);
 }
 
 // The consolidated host device owns queue timing even though the obsolete
@@ -599,4 +628,45 @@ TEST(AudioOut2Tests, V1SingleAndBatchProducersSharePacingLock) {
     EXPECT_EQ(sceAudioOutClose(handle), 0);
     mixer.Shutdown();
     mixer.PauseWallClockForTesting(false);
+}
+
+// Regression for CodeRabbit finding: AudioOut2 Render used to SoftLimit each
+// context before the mixer callback limited the sum again, compressing peaks
+// twice. A guest grain at 1.1 must reach the output limited exactly once.
+TEST(AudioOut2Tests, ContextPeakLimitedOnlyOnce) {
+    V1MixerGuard guard;
+    auto& mixer = AudioMixer::Get();
+    ASSERT_TRUE(guard.initialized);
+    AudioOut2ContextParam cp{};
+    cp.num_grains = 256;
+    cp.queue_depth = 4;
+    AudioOut2ContextHandle ctx{};
+    ASSERT_EQ(sceAudioOut2ContextCreate(&cp, nullptr, 0, &ctx), 0);
+    AudioOut2PortHandle port = MakePort(ctx, 0x200);
+    std::vector<float> pcm(256 * 2, 1.1f);
+    SetPortData(port, pcm.data());
+    ASSERT_EQ(sceAudioOut2ContextPush(ctx, 0), 0);
+    std::vector<float> out(256 * 2, 0.0f);
+    AudioMixerTestAccess::Process(mixer, out.data(), 256);
+    for (float sample : out) EXPECT_FLOAT_EQ(sample, SoftLimit(1.1f));
+    EXPECT_EQ(sceAudioOut2PortDestroy(port), 0);
+    EXPECT_EQ(sceAudioOut2ContextDestroy(ctx), 0);
+}
+
+// Regression for CodeRabbit finding: a blocking v1 push that times out against
+// a stuck (never-draining) ring must be recorded as a stall, not only dropped.
+// Wall-clock retirement is frozen, so the ring never drains: the second 4096-frame
+// grain cannot fit under the 100 ms ceiling and must exhaust the 200 ms bound.
+TEST(AudioOut2Tests, V1PushTimeoutRecordsStall) {
+    V1MixerGuard guard;
+    auto& mixer = AudioMixer::Get();
+    ASSERT_TRUE(guard.initialized);
+    mixer.ResetTelemetryForTesting();
+    const int handle = guard.Open(4096, 4);
+    ASSERT_GT(handle, 0);
+    std::vector<float> pcm(4096 * 2, 0.1f);
+    EXPECT_EQ(sceAudioOutOutput(handle, pcm.data()), 4096);
+    EXPECT_EQ(mixer.GetStalls(), 0u);
+    EXPECT_EQ(sceAudioOutOutput(handle, pcm.data()), 4096);
+    EXPECT_EQ(mixer.GetStalls(), 1u);
 }

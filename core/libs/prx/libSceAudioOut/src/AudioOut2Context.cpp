@@ -168,7 +168,8 @@ static std::uint32_t Render(AudioOut2Context& context) {
     std::fill(context.mix.begin(), context.mix.end(), 0.0f);
     const auto mixed = AudioOut2MixPorts(context, context.mix.data(), context.grain);
     for (float& sample : context.mix) {
-        sample = SoftLimit(sample);
+        // No SoftLimit here: AudioMixer::ProcessCallback limits the summed output
+        // exactly once; limiting per source as well would compress peaks twice.
         if (AudioOut2TraceEnabled()) context.summaryPeak = std::max(context.summaryPeak, std::abs(sample));
     }
     if (!context.source) return mixed;

@@ -73,7 +73,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 | Guest pushes faster than real time | Ring above 100 ms | Drop the grain and count it. This was the cause of the earlier 4-5× over-speed. |
 | Unsupported codec or port format | `InstanceCreate` / `PortCreate` | Log once, return a codec error or skip the port. Never produce fabricated PCM. |
 | Unknown AudioOut2 attribute | `SetAttributes` | Log once per id, then ignore. |
-| Blocking push on a stuck device | 200 ms timeout | Return, and count it as a stall input to the watchdog. |
+| Blocking push on a stuck device | 200 ms timeout | Return, and count it as a stall input to the watchdog (`audio.stall`, `AudioMixer::GetStalls`, distinct from `audio.overrun_drop`). |
 
 ## Tests
 

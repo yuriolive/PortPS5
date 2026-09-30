@@ -29,50 +29,50 @@
 #include "prx/libSceAjm.native/src/AjmInternal.hpp"
 
 extern "C" {
-// Initializes AJM subsystem. Returns 0 on success.
+/** Initializes AJM subsystem. Returns 0 on success. */
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) noexcept;
 
-// Finalizes AJM context. Returns 0 on success.
+/** Finalizes AJM context. Returns 0 on success. */
 int APS5_VABI sceAjmFinalize(uint32_t context) noexcept;
 
-// Creates a decoder instance. Returns 0 on success.
+/** Creates a decoder instance. Returns 0 on success. */
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) noexcept;
 
-// Destroys an instance. Returns 0 on success.
+/** Destroys an instance. Returns 0 on success. */
 int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) noexcept;
 
-// Parses ATRAC9 configuration header. Returns 0 on success.
+/** Parses ATRAC9 configuration header. Returns 0 on success. */
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) noexcept;
 
-// Initializes an AJM batch descriptor. Returns 0 on success.
+/** Initializes an AJM batch descriptor. Returns 0 on success. */
 int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* info) noexcept;
 
-// Appends an initialize job to a batch. Returns 0 on success.
+/** Appends an initialize job to a batch. Returns 0 on success. */
 int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo* info, uint32_t instance, const void* codec_parameters, size_t codec_parameters_size, void* result) noexcept;
 
-// Appends a clear-context job to a batch. Returns 0 on success.
+/** Appends a clear-context job to a batch. Returns 0 on success. */
 int APS5_VABI sceAjmBatchJobClearContext(AjmBatchInfo* info, uint32_t instance, void* result) noexcept;
 
-// Appends a gapless decode job to a batch. Returns 0 on success.
+/** Appends a gapless decode job to a batch. Returns 0 on success. */
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instance, const void* gapless_decode, int reset, void* result) noexcept;
 
-// Appends a split run decode job to a batch. Returns 0 on success.
+/** Appends a split run decode job to a batch. Returns 0 on success. */
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) noexcept;
 
-// Appends a statistics query job to a batch. Returns 0 on success.
+/** Appends a statistics query job to a batch. Returns 0 on success. */
 int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, void* result) noexcept;
 
-// Starts execution of an AJM batch. Returns 0 on success.
+/** Starts execution of an AJM batch. Returns 0 on success. */
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) noexcept;
 
-// Waits for batch completion. Returns 0 on success.
+/** Waits for batch completion. Returns 0 on success. */
 int APS5_VABI sceAjmBatchWait(uint32_t context, uint32_t batch, uint32_t timeout, AjmBatchError* error) noexcept;
 
-// Dumps error information for a batch. Returns 0 on success.
+/** Dumps error information for a batch. Returns 0 on success. */
 int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) noexcept;
 }
 
-// Verifies speaker bitmasks, RIFF container header parsing, and batch append invariants.
+/** Verifies speaker bitmasks, RIFF container header parsing, and batch append invariants. */
 TEST(AudioAjmTests, PureHelpers) {
     EXPECT_EQ(AjmChannelMask(1), 0x4u);
     EXPECT_EQ(AjmChannelMask(2), 0x3u);
@@ -115,7 +115,7 @@ TEST(AudioAjmTests, PureHelpers) {
     EXPECT_EQ(info.offset, sizeof(AjmJobHeader));
 }
 
-// Verifies context and decoder instance creation, ATRAC9 configuration parsing, and destruction.
+/** Verifies context and decoder instance creation, ATRAC9 configuration parsing, and destruction. */
 TEST(AudioAjmTests, Lifecycle) {
     EXPECT_EQ(sceAjmInitialize(0, nullptr), SCE_AJM_ERROR_INVALID_PARAMETER);
     std::uint32_t context = 0;
@@ -142,7 +142,7 @@ TEST(AudioAjmTests, Lifecycle) {
     EXPECT_EQ(sceAjmDecAt9ParseConfigData(nullptr, &parsed), SCE_AJM_ERROR_INVALID_PARAMETER);
 }
 
-// Verifies synthetic command batch execution, job result sidebands, and batch completion.
+/** Verifies synthetic command batch execution, job result sidebands, and batch completion. */
 TEST(AudioAjmTests, SyntheticBatch) {
     std::uint32_t context = 0;
     ASSERT_EQ(sceAjmInitialize(0, &context), 0);
@@ -199,7 +199,7 @@ TEST(AudioAjmTests, SyntheticBatch) {
     EXPECT_EQ(sceAjmFinalize(context), 0);
 }
 
-// Verifies unknown codec handling returns codec error without producing fabricated PCM.
+/** Verifies unknown codec handling returns codec error without producing fabricated PCM. */
 TEST(AudioAjmTests, UnknownCodec) {
     std::uint32_t context = 0;
     ASSERT_EQ(sceAjmInitialize(0, &context), 0);
@@ -230,7 +230,7 @@ TEST(AudioAjmTests, UnknownCodec) {
     EXPECT_EQ(sceAjmFinalize(context), 0);
 }
 
-// Verifies that a malformed batch layout aborts via Unsupported() rather than corrupting memory.
+/** Verifies that a malformed batch layout aborts via Unsupported() rather than corrupting memory. */
 TEST(AudioAjmTests, MalformedBatchAborts) {
     std::uint32_t context = 0;
     ASSERT_EQ(sceAjmInitialize(0, &context), 0);
@@ -266,10 +266,12 @@ TEST(AudioAjmTests, MalformedBatchAborts) {
     EXPECT_EQ(sceAjmFinalize(context), 0);
 }
 
-// Verifies concurrent decoder-instance creation hands out unique live ids.
-// Ported from SharpEMU Audio/AjmExportsTests.ConcurrentInstanceCreates_ProduceUniqueLiveIds
-// (GPL-2.0-or-later, used under GPL-2.0 terms; registry-shape and generation
-// specifics from the original have no equivalent here and are not ported).
+/**
+ * Verifies concurrent decoder-instance creation hands out unique live ids.
+ * Ported from SharpEMU Audio/AjmExportsTests.ConcurrentInstanceCreates_ProduceUniqueLiveIds
+ * (GPL-2.0-or-later, used under GPL-2.0 terms; registry-shape and generation
+ * specifics from the original have no equivalent here and are not ported).
+ */
 TEST(AudioAjmTests, ConcurrentInstanceCreates) {
     std::uint32_t context = 0;
     ASSERT_EQ(sceAjmInitialize(0, &context), 0);

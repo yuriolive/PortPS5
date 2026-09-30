@@ -358,7 +358,19 @@ void AudioMixer::RecordOverrunDrop() noexcept {
     }
 }
 
+std::uint64_t AudioMixer::GetStalls() const noexcept {
+    return m_stalls.load(std::memory_order_relaxed);
+}
+
+void AudioMixer::RecordStall() noexcept {
+    m_stalls.fetch_add(1, std::memory_order_relaxed);
+    if (AudioOut2TraceEnabled()) {
+        std::fprintf(stderr, "[audio.stall] t=%.3f blocking push timed out\n", AudioOut2TraceSeconds());
+    }
+}
+
 void AudioMixer::ResetTelemetryForTesting() noexcept {
+    m_stalls.store(0, std::memory_order_relaxed);
     m_underruns.store(0, std::memory_order_relaxed);
     m_overrunDrops.store(0, std::memory_order_relaxed);
     m_framesConsumed.store(0, std::memory_order_relaxed);

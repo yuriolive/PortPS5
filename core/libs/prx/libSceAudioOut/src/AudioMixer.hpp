@@ -273,9 +273,13 @@ public:
     double GetLatencyMs() const noexcept;
     std::uint64_t GetUnderruns() const noexcept;
     std::uint64_t GetOverrunDrops() const noexcept;
+    /** @brief Count of blocking pushes that hit the 200 ms timeout (stuck-device stall input). */
+    std::uint64_t GetStalls() const noexcept;
 
     bool HasDevice() const noexcept { return m_device != 0; }
     void RecordOverrunDrop() noexcept;
+    /** @brief Records one blocking-push timeout (audio.stall). Thread-safe, lock-free. */
+    void RecordStall() noexcept;
 
     /**
      * @brief Retires wall-clock elapsed frames when no device is open.
@@ -336,6 +340,7 @@ private:
     std::atomic<std::uint64_t> m_framesConsumed{0};
     std::atomic<std::uint64_t> m_underruns{0};
     std::atomic<std::uint64_t> m_overrunDrops{0};
+    std::atomic<std::uint64_t> m_stalls{0};
 
     std::chrono::steady_clock::time_point m_lastWallClockTime;
     std::mutex m_wallClockMutex;
