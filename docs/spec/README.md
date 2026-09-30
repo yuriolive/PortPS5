@@ -33,6 +33,7 @@ The guest's x86-64 code is not recompiled. The relinker rewrites the decrypted E
 |---|---|---|
 | [relinker.md](relinker.md) | ELF→PE relinker, NIDs, `--to-intel` | Keep. Adopt the SSE4a lowering from AnyPS5 `main` (merged PR #5). Replace linear-sweep scanning. |
 | [guest-memory.md](guest-memory.md) | Guest address space, heap, write tracking | Adopt GuestArena/GuestHeap behind an `IWriteTracker` interface. |
+| [libc.md](libc.md) | libc replacement: mspace, heap front-ends, strings, formatting, lifecycle | Port AnyPS5's general libc additions; codes instead of throws, guest errno, System V callbacks. |
 | [threading.md](threading.md) | pthread, umtx, sync, time | Replace with futex words on `WaitOnAddress`. |
 | [gpu-driver.md](gpu-driver.md) | AGC / PM4 / Vulkan | Adopt Recorder, host import and GPU detile. Redesign capture. Split into modules. |
 | [shader-recompiler.md](shader-recompiler.md) | RDNA2 → SSA IR → SPIR-V | Keep. Add a structurizer fallback, a subgroup-size path and tests. |
