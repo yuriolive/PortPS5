@@ -59,6 +59,39 @@ bool isValidFormat(std::uint8_t bitDepth, std::uint8_t colorType) {
     }
 }
 
+// CRC-32 (ISO 3309, reflected 0xEDB88320) as used by PNG chunks. Bitwise: the
+// verification pass touches every critical byte once, so speed is secondary to
+// having no table or global state.
+std::uint32_t crc32(const std::uint8_t* bytes, std::size_t size) {
+    std::uint32_t crc = 0xFFFFFFFFu;
+    for (std::size_t i = 0; i < size; ++i) {
+        crc ^= bytes[i];
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return ~crc;
+}
+
+// stb_image never verifies chunk CRCs (PngSuite xcs*/xhd* decode "fine"), so
+// Decode pre-walks the chunk list itself. Every critical chunk (type byte 0
+// uppercase: IHDR, PLTE, IDAT, IEND) must have an in-bounds length and a
+// matching CRC, and the stream must reach IEND. Ancillary chunk CRC errors are
+// ignored, which the PNG specification permits. The walk is bounds-checked
+// with subtraction only, so a forged length cannot wrap.
+bool hasValidCriticalChunks(std::span<const std::uint8_t> png) {
+    if (png.size() < SIGNATURE.size() || !std::equal(SIGNATURE.begin(), SIGNATURE.end(), png.begin())) return false;
+    std::size_t offset = SIGNATURE.size();
+    while (png.size() - offset >= CHUNK_OVERHEAD) {
+        const std::uint32_t length = readBigEndian32(&png[offset]);
+        if (length > png.size() - offset - CHUNK_OVERHEAD) return false;
+        const std::uint8_t* type = &png[offset + 4];
+        const bool critical = (type[0] & 0x20) == 0;
+        if (critical && crc32(type, 4 + static_cast<std::size_t>(length)) != readBigEndian32(type + 4 + length)) return false;
+        if (isChunkType(type, "IEND")) return true;
+        offset += CHUNK_OVERHEAD + length;
+    }
+    return false;  // ran out of data before IEND
+}
+
 // Output sink for stb's streaming writer; see Jpeg.cpp for why the
 // allocation failure is latched instead of propagated.
 struct Sink {
@@ -112,6 +145,7 @@ std::optional<Header> ParseHeader(std::span<const std::uint8_t> png) {
 
 std::optional<Image> Decode(std::span<const std::uint8_t> png) {
     if (png.empty() || png.size() > INT_MAX) return std::nullopt;
+    if (!hasValidCriticalChunks(png)) return std::nullopt;
 
     int width = 0;
     int height = 0;

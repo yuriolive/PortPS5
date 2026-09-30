@@ -128,3 +128,47 @@ TEST(DecoderJpeg, DecodeRejectsMalformedInput) {
     // Only the SOI marker survives: no frame header, so nothing to decode.
     EXPECT_FALSE(Decoder::Jpeg::Decode({jpeg->data(), 2}));
 }
+
+// Invariant (robustness, libjpeg-turbo fuzz-corpus classes: truncated and
+// bit-flipped streams): decoding every truncation length and a deterministic
+// set of corruptions must return normally (value or nullopt) and never crash
+// or hang. Truncation before the frame header must always be nullopt.
+TEST(DecoderJpeg, TruncatedAndCorruptedStreamsNeverCrash) {
+    const auto rgb = MakeGradient(48, 40, 3);
+    const auto jpeg = Decoder::Jpeg::Encode(rgb, 48, 40, 3, 80);
+    ASSERT_TRUE(jpeg.has_value());
+    for (std::size_t n = 0; n < jpeg->size(); ++n) {
+        const auto result = Decoder::Jpeg::Decode({jpeg->data(), n});
+        if (n < 20) EXPECT_FALSE(result.has_value()) << "length " << n;
+    }
+    std::uint32_t state = 12345;  // xorshift: deterministic, no <random> dependency
+    for (int round = 0; round < 300; ++round) {
+        auto copy = *jpeg;
+        for (int flip = 0; flip < 6; ++flip) {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            copy[state % copy.size()] = static_cast<std::uint8_t>(state >> 8);
+        }
+        (void)Decoder::Jpeg::Decode(copy);
+    }
+}
+
+// Invariant (alloc bomb, stb_image edge case): an SOF0 that claims 65535 x
+// 65535 (or zero) samples over a few bytes of data is rejected, not decoded
+// into a multi-GiB buffer.
+TEST(DecoderJpeg, ForgedFrameDimensionsAreRejected) {
+    const auto rgb = MakeGradient(16, 16, 3);
+    auto jpeg = *Decoder::Jpeg::Encode(rgb, 16, 16, 3, 80);
+    std::size_t sof = 0;
+    for (std::size_t i = 0; i + 9 < jpeg.size(); ++i) {
+        if (jpeg[i] == 0xFF && jpeg[i + 1] == 0xC0) { sof = i; break; }
+    }
+    ASSERT_NE(sof, 0u);
+    auto huge = jpeg;  // SOF0 layout: marker(2) length(2) precision(1) height(2) width(2)
+    huge[sof + 5] = huge[sof + 6] = huge[sof + 7] = huge[sof + 8] = 0xFF;
+    EXPECT_FALSE(Decoder::Jpeg::Decode(huge));
+    auto zero = jpeg;
+    zero[sof + 5] = zero[sof + 6] = zero[sof + 7] = zero[sof + 8] = 0;
+    EXPECT_FALSE(Decoder::Jpeg::Decode(zero));
+}
