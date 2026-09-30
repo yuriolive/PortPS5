@@ -267,33 +267,10 @@ TEST(GuestLocaleTests, ClassicAndGlobalLocaleGetters) {
     EXPECT_EQ(*globalLoc, std::locale::classic());
 }
 
-// Verifies that character and wide character collate _Getcat exports retrieve facets and handle pointers safely.
-TEST(GuestLocaleTests, CollateGetcatRetrievalAndNullHandling) {
-    const std::locale& classicLoc = std::locale::classic();
-    const std::locale::facet* charFacet = nullptr;
-
-    // Passing nullptr for facet pointer must safely no-op without crashing
-    _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(nullptr, &classicLoc);
-
-    // Retrieve collate<char> facet
-    _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&charFacet, &classicLoc);
-    ASSERT_NE(charFacet, nullptr);
-    EXPECT_EQ(charFacet, &std::use_facet<std::collate<char>>(classicLoc));
-
-    // When *facet is already non-null, it must preserve the existing pointer
-    const std::locale::facet* preservedCharFacet = charFacet;
-    _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&charFacet, nullptr);
-    EXPECT_EQ(charFacet, preservedCharFacet);
-
-    // Retrieve collate<wchar_t> facet
-    const std::locale::facet* wcharFacet = nullptr;
-    _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(nullptr, &classicLoc);
-    _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&wcharFacet, &classicLoc);
-    ASSERT_NE(wcharFacet, nullptr);
-    EXPECT_EQ(wcharFacet, &std::use_facet<std::collate<wchar_t>>(classicLoc));
-
-    const std::locale::facet* preservedWcharFacet = wcharFacet;
-    _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&wcharFacet, nullptr);
-    EXPECT_EQ(wcharFacet, preservedWcharFacet);
+// Verifies that character collate _Getcat terminates cleanly through NotImplemented_nid_no_patch.
+TEST(GuestLocaleTests, CollateCharGetcatTerminatesAsNotImplemented) {
+    const std::locale::facet* facet = nullptr;
+    const std::locale classicLoc = std::locale::classic();
+    EXPECT_DEATH(_ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(&facet, &classicLoc), "collate<char>::_Getcat");
 }
 

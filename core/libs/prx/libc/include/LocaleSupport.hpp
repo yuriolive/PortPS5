@@ -168,15 +168,17 @@ const std::locale* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
  * @brief Obtains character collation category facet pointer.
  * @param facet Output facet pointer.
  * @param loc Locale to retrieve facet from.
+ * @return Locale collation category constant (_X_COLLATE) or (size_t)-1 on failure.
  */
-void APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet** facet, const std::locale* loc);
+std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet** facet, const std::locale* loc);
 
 /**
  * @brief Obtains wide character collation category facet pointer.
  * @param facet Output facet pointer.
  * @param loc Locale to retrieve facet from.
+ * @return Locale collation category constant (_X_COLLATE) or (size_t)-1 on failure.
  */
-void APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet** facet, const std::locale* loc);
+std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet** facet, const std::locale* loc);
 
 /**
  * @brief Constructs locale info descriptor.

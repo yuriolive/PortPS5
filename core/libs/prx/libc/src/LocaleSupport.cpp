@@ -162,25 +162,15 @@ const std::locale* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {
 }
 
 /// Obtains character collation category facet pointer.
-void APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet** facet, const std::locale* loc) {
-    if (facet == nullptr) {
-        return;
-    }
-    if (*facet == nullptr) {
-        const std::locale& effectiveLocale = (loc != nullptr) ? *loc : std::locale::classic();
-        *facet = &std::use_facet<std::collate<char>>(effectiveLocale);
-    }
+std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet**, const std::locale*) {
+    NotImplemented_nid_no_patch("collate<char>::_Getcat");
+    return static_cast<std::size_t>(-1);
 }
 
 /// Obtains wide collation category facet pointer.
-void APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet** facet, const std::locale* loc) {
-    if (facet == nullptr) {
-        return;
-    }
-    if (*facet == nullptr) {
-        const std::locale& effectiveLocale = (loc != nullptr) ? *loc : std::locale::classic();
-        *facet = &std::use_facet<std::collate<wchar_t>>(effectiveLocale);
-    }
+std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet**, const std::locale*) {
+    NotImplemented_nid_no_patch("collate<wchar_t>::_Getcat");
+    return static_cast<std::size_t>(-1);
 }
 
 /// Constructs locale info descriptor.
