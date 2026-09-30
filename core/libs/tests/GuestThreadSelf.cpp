@@ -1,8 +1,8 @@
 // Unit tests for pthread identity and lifecycle — threading subsystem scope.
 //
 // Covers the return-code contract mandated by docs/spec/threading.md:
-//   - scePthreadSelf is stable and non-null on the main thread
-//   - joining/detaching the main thread is rejected with EINVAL
+//   - scePthreadSelf is stable and non-null on the main thread (adopted handle)
+//   - joining/detaching an adopted handle is rejected with EINVAL
 //   - a worker observes its own handle via scePthreadSelf, exits with a value
 //   - unlocking another thread's held mutex is rejected with EPERM
 //
@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <thread>
 
 extern "C" {
 // Creates a guest thread. Returns SCE_OK on success.
@@ -80,14 +81,37 @@ static void* APS5_VABI Worker(void* arg) {
     return nullptr;
 }
 
-// The host main thread is not a guest thread: scePthreadSelf() returns null
-// (Thread.cpp:440 returns thread-local currentThread, never registered for
-// the host main). Joining or detaching a null handle fails with EINVAL
-// (Thread.cpp:340-341,381-382), which is what this test pins.
-TEST(PthreadSelf, MainThreadHasNoGuestHandleAndNullJoinRejected) {
-    EXPECT_EQ(scePthreadSelf(), nullptr);
+// A host thread that never went through scePthreadCreate (the gtest main
+// thread standing in for the guest main thread) gets a lazily adopted handle
+// instead of null (AnyPS5 76b7f998): the guest routinely passes
+// scePthreadSelf() to scePthreadRename/Getprio/Setaffinity. The handle is
+// stable across calls, detached (join/detach are EINVAL like a null handle),
+// and distinct per thread. Null handles remain EINVAL.
+TEST(PthreadSelf, HostThreadGetsStableAdoptedHandle) {
+    const Pthread mainSelf = scePthreadSelf();
+    ASSERT_NE(mainSelf, nullptr);
+    EXPECT_EQ(scePthreadSelf(), mainSelf);
+    EXPECT_EQ(scePthreadJoin(mainSelf, nullptr), SCE_KERNEL_ERROR_EINVAL);
+    EXPECT_EQ(scePthreadDetach(mainSelf), SCE_KERNEL_ERROR_EINVAL);
     EXPECT_EQ(scePthreadJoin(nullptr, nullptr), SCE_KERNEL_ERROR_EINVAL);
     EXPECT_EQ(scePthreadDetach(nullptr), SCE_KERNEL_ERROR_EINVAL);
+}
+
+// Two different host threads get distinct adopted handles, each stable within
+// its own thread, and the handle stays usable through the public API (the
+// adopted handle carries a real guest tid so mutex ownership keeps working).
+TEST(PthreadSelf, AdoptedHandlesAreDistinctPerHostThread) {
+    const Pthread mainSelf = scePthreadSelf();
+    Pthread first = nullptr;
+    Pthread again = nullptr;
+    std::thread host([&] {
+        first = scePthreadSelf();
+        again = scePthreadSelf();
+    });
+    host.join();
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first, again);
+    EXPECT_NE(first, mainSelf);
 }
 
 // A worker sees its own handle (equal to the created handle, distinct from

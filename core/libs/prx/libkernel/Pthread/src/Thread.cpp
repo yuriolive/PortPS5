@@ -11,6 +11,7 @@
 #include <cstring>
 #include <future>
 #include <memory>
+#include <new>
 #include <thread>
 
 #ifndef _WIN32
@@ -139,6 +140,11 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) noexcept {
 
 #ifdef _WIN32
 static void ReleaseThread(PthreadPrivate* thread) noexcept {
+    // An adopted handle is never reference-counted: it has no native handle to
+    // close and must not be freed here (e.g. when an adopted host thread calls
+    // scePthreadExit).
+    if (thread->adopted)
+        return;
     if (thread->references.fetch_sub(1, std::memory_order_acq_rel) != 1)
         return;
     CloseHandle(thread->nativeHandle);
@@ -438,6 +444,31 @@ void APS5_VABI scePthreadExit(void* retval) noexcept {
  * @return Status or error code.
  */
 Pthread APS5_VABI scePthreadSelf() noexcept {
+    if (currentThread)
+        return currentThread;
+    // Host thread that never went through scePthreadCreate (the guest main
+    // thread, driver workers): adopt a lazily created, detached handle so the
+    // guest never sees a null "self" (scePthreadGetprio(scePthreadSelf(), ...)
+    // and scePthreadRename(scePthreadSelf(), ...) are routine on the main
+    // thread). AnyPS5 76b7f998. Allocation failure keeps the old null answer.
+    //
+    // Ownership: the handle is deliberately NOT freed at thread exit. A
+    // thread_local unique_ptr owning the handle was tried first and the
+    // adopted-handle unit test then segfaulted intermittently (within ~40
+    // ctest repeats; 0 of 100 after switching to a plain leaked pointer). The
+    // exact mechanism was not pinned down (suspect: DLL thread-detach
+    // destructor ordering against the FLS tid cleanup). The guest may also keep the pointer a little past
+    // the thread's death (as it may for any handle). The cost is one small
+    // object per distinct host thread that ever calls scePthreadSelf (the main
+    // thread plus a handful of driver workers), which is bounded.
+    auto* handle = new (std::nothrow) PthreadPrivate();
+    if (!handle)
+        return nullptr;
+    handle->adopted = true;
+    handle->_detached.store(true, std::memory_order_release);  // join/detach -> EINVAL.
+    handle->threadId = std::this_thread::get_id();
+    handle->guestTid = GuestTid::Ensure();
+    currentThread = handle;
     return currentThread;
 }
 
