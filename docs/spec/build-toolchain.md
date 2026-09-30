@@ -30,7 +30,7 @@ References are to AnyPS5 `main` (`e06dbff`) unless marked PR #5 (`29b4601`).
 - **Unwinder contract.** libc's DWARF unwinder locates `.ehmeta` and `.ehfram` by PE section name (`prx/libc/src/exception/Unwind.cpp:158,179`). PE image section names are 8 bytes, so a 9-byte `.eh_frame` cannot be matched this way. This is an inference about the reason for the rename.
 - **NID naming** (`nid/include/nid/NidPatcherUtils.hpp:15-32`, `nid/src/NidResolver.cpp:23-66`):
   - a `_nid_postfix` suffix is stripped and the NID is computed;
-  - `_nid_no_patch` names and `SDL_*` names are kept verbatim;
+  - `_nid_no_patch` names, `SDL_*` names, and `PortPS5::Config` host exports (`_ZN7PortPS56Config*`) are kept verbatim;
   - `_nid_no_patch_cut` names have the suffix cut;
    - `_nid_disambig<N>` is removed before hashing;
    - duplicate exports are an error (`:28-35`).

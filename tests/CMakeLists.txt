@@ -164,7 +164,23 @@ portps5_add_gtest(savedata_fidelity_tests
         unit
 )
 
-
+# Cross-PRX verbatim symbol resolution and Config::Loader export stability
+portps5_add_gtest(config_cross_prx_tests
+    SOURCES
+        config/ConfigCrossPrxTests.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/Sha1.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/NidCompute.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/NidResolver.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/ExportExclusions.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/include
+    LABELS
+        unit
+)
 # Python unit tests for tools/check_comments.py — verifies the comment
 # policy linter logic (Rules 1-3) in isolation with no game data required.
 portps5_add_test(check_comments_unit_tests
