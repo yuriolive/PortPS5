@@ -1,6 +1,8 @@
-// tests/libc/GuestLocaleTests.cpp
-// Verification test suite for libc locale facets, iostream data symbols, and _Id_cnt semantics.
-// Subsystem: libc. Exercises System V ABI exports, std::locale facets, and stream formatting.
+/**
+ * Verification test suite for libc locale facets, iostream data symbols, and _Id_cnt semantics.
+ *
+ * Subsystem: libc. Exercises System V ABI exports, std::locale facets, and stream formatting.
+ */
 
 #include <gtest/gtest.h>
 
@@ -17,12 +19,20 @@
 
 namespace {
 
-// Verifies one NID hash by recomputing from the unadorned symbol name.
+/**
+ * Verifies one NID hash by recomputing from the unadorned symbol name.
+ *
+ * Passes an empty library name and compares the computed NID with the expected hash.
+ */
 void ExpectNid(const char* stripped, const char* expected) {
     EXPECT_EQ(::Nid::ComputeNid(stripped, ""), std::string(expected));
 }
 
-// Test fixture facet to verify facet registration through the exported runtime symbol.
+/**
+ * Test fixture facet to verify facet registration through the exported runtime symbol.
+ *
+ * Provides a std::locale::facet instance for the System V ABI registration call.
+ */
 struct TestFacet : std::locale::facet {
     static inline std::locale::id id;
 };
