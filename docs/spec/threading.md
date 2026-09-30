@@ -58,9 +58,9 @@ Canonical user pointers never set bit 63, so INIT words cannot collide with the 
 bit 63 INIT | 62 DESTROYED | 61 CLOCK_MONOTONIC | 47..32 waiters | 31..0 seq
 ```
 
-- **Wait:** read `seq`, increment `waiters`, unlock the mutex, then wait while `seq` is unchanged. A wait returns when `seq` changes; if some other bit changed, it waits again with the new value. Then it relocks the mutex *in CONTENDED state*, so the next unlock hands off.
-- **Signal:** does nothing when `waiters == 0`. Otherwise it increments `seq`, decrements `waiters` and wakes one.
-- **Broadcast:** increments `seq`, sets `waiters = 0` and wakes all. There is no requeue in v1.
+- **Wait:** read `seq`, increment `waiters`, unlock the mutex, then wait while `seq` is unchanged. A wait returns when `seq` changes; if some other bit changed, it waits again with the new value. The unblocking waiter decrements `waiters` (ensuring exact 1:1 pairing with entry across spurious wakeups and timeouts). Then it relocks the mutex *in CONTENDED state*, so the next unlock hands off.
+- **Signal:** does nothing when `waiters == 0`. Otherwise it increments `seq` and wakes one (unblocking waiter decrements `waiters`).
+- **Broadcast:** increments `seq` and wakes all (unblocking waiters decrement `waiters`). There is no requeue in v1.
 - `Signalto` stays a broadcast, which POSIX permits as a spurious wakeup.
 
 **Rwlock word:**

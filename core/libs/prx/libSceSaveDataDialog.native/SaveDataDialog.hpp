@@ -1,3 +1,7 @@
+// core/libs/prx/libSceSaveDataDialog.native/SaveDataDialog.hpp
+// Declarations, structs, and constants for scripted SaveDataDialog operations.
+// Supports asynchronous state machine (RUNNING -> FINISHED) and structured logging.
+
 #ifndef CORE_LIBS_PRX_LIBSCESAVEDATADIALOGNATIVE_SAVEDATADIALOG_HPP
 #define CORE_LIBS_PRX_LIBSCESAVEDATADIALOGNATIVE_SAVEDATADIALOG_HPP
 
@@ -61,4 +65,7 @@ struct SaveDataDialogResult {
     std::uint8_t reserved[32];
 };
 
+extern "C" void ResetSaveDataDialogStateForTesting();
+
 #endif
+

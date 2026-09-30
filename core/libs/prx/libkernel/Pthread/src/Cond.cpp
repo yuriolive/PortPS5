@@ -217,10 +217,6 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
             waitRc = kSceTimedOut;
             break;
         }
-        // Decrement our waiter slot on timeout/invalid before relocking, so
-        // Signal's waiters==0 fast path stays accurate. On success the
-        // signal/broadcast already dequeued us (signal decrements, broadcast
-        // zeroes), so only adjust when we leave without a seq change.
         const bool woken = FutexCore::WaitU64(CondPtr(cond), cur, deadline);
         if (!woken) {
             waitRc = kSceTimedOut;
@@ -228,27 +224,22 @@ int WaitInternal(PthreadCond* cond, PthreadMutex* mutex, std::uint64_t deadline,
         }
     }
 
-    if (waitRc == kSceTimedOut || waitRc == kSceEinval) {
-        // Dequeue this timed out/invalid waiter only if a signal hasn't already dequeued us.
-        // If CW::Seq(cur) != seq, scePthreadCondSignal or scePthreadCondBroadcast already
-        // accounted for us when waking.
-        while (true) {
-            const std::uint64_t cur = cref.load(std::memory_order_acquire);
-            if (!CW::IsInit(cur))
-                break;
-            if (CW::Seq(cur) != seq)
-                break;
-            const std::uint32_t w = CW::Waiters(cur);
-            if (w == 0)
-                break;
-            const std::uint64_t want = CW::kInit | (CW::IsMono(cur) ? CW::kClockMono : 0ULL) |
-                                       (static_cast<std::uint64_t>(w - 1) << CW::kWaitersShift) |
-                                       CW::Seq(cur);
-            std::uint64_t expected = cur;
-            if (cref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
-                                             std::memory_order_acquire))
-                break;
-        }
+    // Dequeue this waiter unconditionally upon leaving the wait loop,
+    // ensuring exact 1:1 pairing with the increment on entry.
+    while (true) {
+        const std::uint64_t cur = cref.load(std::memory_order_acquire);
+        if (!CW::IsInit(cur))
+            break;
+        const std::uint32_t w = CW::Waiters(cur);
+        if (w == 0)
+            break;
+        const std::uint64_t want = CW::kInit | (CW::IsMono(cur) ? CW::kClockMono : 0ULL) |
+                                   (static_cast<std::uint64_t>(w - 1) << CW::kWaitersShift) |
+                                   CW::Seq(cur);
+        std::uint64_t expected = cur;
+        if (cref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
+                                         std::memory_order_acquire))
+            break;
     }
 
     // POSIX requires the mutex held on return (even after timeout). Re-acquiring
@@ -395,7 +386,7 @@ int APS5_VABI scePthreadCondSignal(PthreadCond* cond) noexcept {
             return kSceOk;  // fast path: nothing to wake.
         }
         const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
-                                   (static_cast<std::uint64_t>(waiters - 1) << CW::kWaitersShift) |
+                                   (static_cast<std::uint64_t>(waiters) << CW::kWaitersShift) |
                                    ((CW::Seq(w) + 1) & CW::kSeqMask);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
@@ -428,7 +419,8 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
         w = ref.load(std::memory_order_acquire);
         if (!CW::IsInit(w) || CW::IsDestroyed(w))
             return kSceEinval;
-        if (CW::Waiters(w) == 0) {
+        const std::uint32_t waiters = CW::Waiters(w);
+        if (waiters == 0) {
             // Still bump seq so a waiter between check and sleep cannot miss
             // us (its seq read predates our bump, so it sleeps and our wake
             // arrives after; with zero waiters the wake is harmless).
@@ -442,6 +434,7 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
             continue;
         }
         const std::uint64_t want = CW::kInit | (CW::IsMono(w) ? CW::kClockMono : 0ULL) |
+                                   (static_cast<std::uint64_t>(waiters) << CW::kWaitersShift) |
                                    ((CW::Seq(w) + 1) & CW::kSeqMask);
         std::uint64_t expected = w;
         if (ref.compare_exchange_strong(expected, want, std::memory_order_acq_rel,
