@@ -1,3 +1,6 @@
+// core/shader/recompiler/Translation/src/VectorInstructions.cpp
+// Dispatch of decoded RDNA2 vector ALU opcodes to their TranslationContext lowering routines (emitVector).
+// An opcode that is decodable but has no case here is a translator gap and must fail loudly, not be skipped.
 #include "Translation/VectorInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
@@ -673,6 +676,8 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return vLshlAddU32(inst);
     case RdnaOpcode::VAddLshlU32:
         return vAddLshlU32(inst);
+    case RdnaOpcode::VPermB32:
+        return vPermB32(inst);
     case RdnaOpcode::VXadU32:
         return vXadU32(inst);
     case RdnaOpcode::VLshlOrB32:

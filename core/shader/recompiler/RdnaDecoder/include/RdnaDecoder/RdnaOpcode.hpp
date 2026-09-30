@@ -1,3 +1,8 @@
+// core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp
+// RdnaOpcode: the decoder's opcode enumeration for RDNA2 scalar, vector, memory, image and export instructions,
+// plus the classification helpers. The numeric values are an in-process detail (never serialized or shared with
+// guest code), so entries may be inserted anywhere above the Count sentinel; every entry needs a decode rule
+// and a translation (or an explicit no-op) before it can reach the backend.
 #ifndef CORE_SHADER_RECOMPILIER_RDNADECODER_INCLUDE_RDNADECODER_RDNAOPCODE_HPP
 #define CORE_SHADER_RECOMPILIER_RDNADECODER_INCLUDE_RDNADECODER_RDNAOPCODE_HPP
 
@@ -21,6 +26,7 @@ enum class RdnaOpcode : std::uint16_t {
     SLshlB32,
     SLshrB32,
     SAshrI32,
+    SAshrI64,
     SBfeU32,
     SBfeI32,
     SCmpEqI32,
@@ -114,12 +120,18 @@ enum class RdnaOpcode : std::uint16_t {
     ExpParam,
     Unknown,
     Unsupported,
+    SCmovB32,
     SCmovB64,
     SAbsI32,
     SAbsdiffI32,
     SBrevB32,
+    SBrevB64,
+    SSextI32I8,
+    SSextI32I16,
+    SBcnt0I32B32,
     SBcnt1I32B32,
     SBcnt1I32B64,
+    SFf0I32B32,
     SFf1I32B32,
     SFf1I32B64,
     SFlbitI32B32,
@@ -133,6 +145,9 @@ enum class RdnaOpcode : std::uint16_t {
     SOrn2SaveexecB32,
     SAndn1SaveexecB32,
     SAndSaveexecB64,
+    SOrSaveexecB64,
+    SXorSaveexecB64,
+    SAndn2SaveexecB64,
     SOrn2SaveexecB64,
     SAndn1SaveexecB64,
     SNotB32,
@@ -143,6 +158,8 @@ enum class RdnaOpcode : std::uint16_t {
     SSubbU32,
     SBitcmp0B32,
     SBitcmp1B32,
+    SBitcmp0B64,
+    SBitcmp1B64,
     SBitset0B32,
     SBitset1B32,
     SBitset0B64,
@@ -276,6 +293,7 @@ enum class RdnaOpcode : std::uint16_t {
     VAdd3U32,
     VLshlAddU32,
     VAddLshlU32,
+    VPermB32,
     VXadU32,
     VLshlOrB32,
     VAndOrB32,
@@ -564,6 +582,8 @@ enum class RdnaOpcode : std::uint16_t {
     STrap,
     STtracedata,
     SInstPrefetch,
+    SClause,
+    SCbranchCdbg,
     Exp,
     Count
 };

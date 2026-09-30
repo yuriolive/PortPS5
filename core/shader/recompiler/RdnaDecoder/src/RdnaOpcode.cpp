@@ -1,3 +1,7 @@
+// core/shader/recompiler/RdnaDecoder/src/RdnaOpcode.cpp
+// Classification predicates over RdnaOpcode (scalar ALU, vector ALU, ...). They are pure switch tables with no
+// state: a new opcode added to RdnaOpcode.hpp belongs in the matching list here. Sentinels (Invalid, Count)
+// are rejected with std::invalid_argument. Thread-safe.
 #include "RdnaDecoder/RdnaOpcode.hpp"
 #include <stdexcept>
 
@@ -30,16 +34,23 @@ bool IsScalarAluOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::SLshlB32:
         case RdnaOpcode::SLshrB32:
         case RdnaOpcode::SAshrI32:
+        case RdnaOpcode::SAshrI64:
         case RdnaOpcode::SBfeU32:
         case RdnaOpcode::SBfeI32:
         case RdnaOpcode::SCmpEqI32:
         case RdnaOpcode::SCmpLtI32:
         case RdnaOpcode::SCmpGtI32:
         case RdnaOpcode::SCmpEqU32:
+        case RdnaOpcode::SCmovB32:
         case RdnaOpcode::SCmovB64:
         case RdnaOpcode::SAbsI32:
         case RdnaOpcode::SAbsdiffI32:
         case RdnaOpcode::SBrevB32:
+        case RdnaOpcode::SBrevB64:
+        case RdnaOpcode::SSextI32I8:
+        case RdnaOpcode::SSextI32I16:
+        case RdnaOpcode::SBcnt0I32B32:
+        case RdnaOpcode::SFf0I32B32:
         case RdnaOpcode::SBcnt1I32B32:
         case RdnaOpcode::SBcnt1I32B64:
         case RdnaOpcode::SFf1I32B32:
@@ -52,6 +63,9 @@ bool IsScalarAluOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::SOrn2SaveexecB32:
         case RdnaOpcode::SAndn1SaveexecB32:
         case RdnaOpcode::SAndSaveexecB64:
+        case RdnaOpcode::SOrSaveexecB64:
+        case RdnaOpcode::SXorSaveexecB64:
+        case RdnaOpcode::SAndn2SaveexecB64:
         case RdnaOpcode::SOrn2SaveexecB64:
         case RdnaOpcode::SAndn1SaveexecB64:
         case RdnaOpcode::SNotB32:
@@ -62,6 +76,8 @@ bool IsScalarAluOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::SSubbU32:
         case RdnaOpcode::SBitcmp0B32:
         case RdnaOpcode::SBitcmp1B32:
+        case RdnaOpcode::SBitcmp0B64:
+        case RdnaOpcode::SBitcmp1B64:
         case RdnaOpcode::SBitset0B32:
         case RdnaOpcode::SBitset1B32:
         case RdnaOpcode::SBitset0B64:
@@ -249,6 +265,7 @@ bool IsVectorAluOpcode(RdnaOpcode opcode) {
         case RdnaOpcode::VAdd3U32:
         case RdnaOpcode::VLshlAddU32:
         case RdnaOpcode::VAddLshlU32:
+        case RdnaOpcode::VPermB32:
         case RdnaOpcode::VXadU32:
         case RdnaOpcode::VLshlOrB32:
         case RdnaOpcode::VAndOrB32:
