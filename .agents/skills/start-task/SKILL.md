@@ -25,7 +25,7 @@ When starting any new task, bugfix, or roadmap deliverable on PortPS5, execute t
 ## 2. Check Roadmap & Subsystem Spec
 1. Consult `docs/ROADMAP.md` to confirm the milestone scope and exit criteria.
 2. Read the subsystem spec in `docs/spec/<subsystem>.md` (Target design, Decisions, Interfaces, Failure modes).
-3. Check `bd list` (or `bd --no-db list`) for existing task tracking.
+3. Run `beans list` (or `beans list --json --ready`) to find an existing bean for this work; create one with `beans create` if none exists (see AGENTS.md "Task tracking (beans)").
 
 ## 3. Create Worktree & Branch
 1. Ensure the base is up to date with `origin/main`:
