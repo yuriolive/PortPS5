@@ -1,5 +1,11 @@
+// Application heap front-end: routes libc malloc/free/calloc/realloc/memalign/posix_memalign to the title's
+// allocator replacement table (from the process parameters), and to the built-in guest heap when the title
+// supplies a replacement table that leaves every allocator slot empty ("SDK startup without allocator
+// replacements", AnyPS5 67fce999).
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -27,6 +33,53 @@ std::exception_ptr heapFailure;
 Initialize heapFinalize = nullptr;
 bool heapFinalized = false;
 thread_local bool heapCallbackActive = false;
+
+// Built-in allocator used when the replacement table is present but entirely empty. Entry points use the
+// same System V signatures as a title-supplied allocator so both go through one callback path. The guest
+// heap reports exhaustion by throwing, so these never return null (which lets calloc skip a null check).
+// The guest heap reports an impossible request size with std::length_error / std::overflow_error. Callers
+// (nothrow new, aligned_alloc, strndup) treat only std::bad_alloc as "heap exhausted", so map size overflow
+// to exhaustion here; otherwise a huge nothrow request would abort instead of returning null.
+template<typename TAction>
+decltype(auto) AsBadAlloc(TAction action) {
+    try {
+        return action();
+    } catch (const std::length_error&) {
+        throw std::bad_alloc();
+    } catch (const std::overflow_error&) {
+        throw std::bad_alloc();
+    }
+}
+
+/// Built-in malloc: guest-heap allocation; throws std::bad_alloc on exhaustion or size overflow, never returns null.
+void* APS5_VABI defaultAllocate(std::size_t bytes) { return AsBadAlloc([&] { return GuestHeap::GuestHeapAllocate_nid_postfix(bytes); }); }
+/// Built-in free; null is a no-op.
+void APS5_VABI defaultFree(void* pointer) { GuestHeap::GuestHeapFree_nid_postfix(pointer); }
+/// Built-in realloc with guest-heap semantics (null pointer allocates, size 0 frees and returns null).
+void* APS5_VABI defaultReallocate(void* pointer, std::size_t bytes) { return AsBadAlloc([&] { return GuestHeap::GuestHeapReallocate_nid_postfix(pointer, bytes); }); }
+/// Built-in calloc: throws std::bad_alloc on count*bytes overflow, otherwise returns zeroed memory.
+void* APS5_VABI defaultCalloc(std::size_t count, std::size_t bytes) {
+    if (bytes != 0 && count > std::numeric_limits<std::size_t>::max() / bytes) throw std::bad_alloc();
+    auto* pointer = defaultAllocate(count * bytes);
+    std::memset(pointer, 0, count * bytes);
+    return pointer;
+}
+/// Built-in memalign: power-of-two alignment required (the guest heap throws std::invalid_argument otherwise).
+void* APS5_VABI defaultAlign(std::size_t alignment, std::size_t bytes) { return AsBadAlloc([&] { return GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes); }); }
+/// Built-in posix_memalign: returns 0, EINVAL (22) for bad alignment/null output, ENOMEM (12) on exhaustion.
+int APS5_VABI defaultPosixAlign(void** pointer, std::size_t alignment, std::size_t bytes) {
+    if (pointer == nullptr || alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) return 22;
+    try { *pointer = defaultAlign(alignment, bytes); return 0; }
+    catch (const std::bad_alloc&) { return 12; }
+}
+
+// Slot order matches the replacement table: malloc, free, calloc, realloc, memalign, reallocalign (unused,
+// null), posix_memalign; the remaining slots stay null.
+std::array<void*, 10> defaultApi() {
+    return {reinterpret_cast<void*>(defaultAllocate), reinterpret_cast<void*>(defaultFree),
+        reinterpret_cast<void*>(defaultCalloc), reinterpret_cast<void*>(defaultReallocate),
+        reinterpret_cast<void*>(defaultAlign), nullptr, reinterpret_cast<void*>(defaultPosixAlign)};
+}
 
 class CallbackScope {
 public:
@@ -87,8 +140,13 @@ void ApplicationHeapRegister_nid_no_patch(void* const* api) {
     if (api == nullptr) throw std::invalid_argument("application heap: null allocator API");
     std::array<void*, 10> replacement;
     std::memcpy(replacement.data(), api, sizeof(replacement));
-    for (std::size_t index = 0; index < 7; ++index) {
-        if (replacement[index] == nullptr) throw std::invalid_argument("application heap: incomplete allocator API");
+    if (std::all_of(replacement.begin(), replacement.end(), [](const void* entry) { return entry == nullptr; })) {
+        // No replacement at all: use the built-in heap. A partially filled table is still rejected below.
+        replacement = defaultApi();
+    } else {
+        for (std::size_t index = 0; index < 7; ++index) {
+            if (replacement[index] == nullptr) throw std::invalid_argument("application heap: incomplete allocator API");
+        }
     }
     std::lock_guard lock(heapMutex);
     if (heapFailure) std::rethrow_exception(heapFailure);
