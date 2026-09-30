@@ -32,8 +32,9 @@ References are to AnyPS5 `main` (`e06dbff`) unless marked PR #5 (`29b4601`).
   - a `_nid_postfix` suffix is stripped and the NID is computed;
   - `_nid_no_patch` names, `SDL_*` names, and `PortPS5::Config` host exports (`_ZN7PortPS56Config*`) are kept verbatim;
   - `_nid_no_patch_cut` names have the suffix cut;
-  - `_nid_disambig<N>` is removed before hashing;
-  - duplicate exports are an error (`:28-35`).
+   - `_nid_disambig<N>` is removed before hashing;
+   - duplicate exports are an error (`:28-35`).
+   - cross-prx host APIs (called by another prx, never by guest code) must keep a verbatim name, today via a `_nid_no_patch` free function: both sides spell the name with the suffix (e.g. `ResolvePath_nid_no_patch` is exported and imported verbatim). `nid_patcher libc` runs without `--preserve-exports` (`core/libs/CMakeLists.txt:60`), so an undecorated C++ symbol is hashed in the patched DLL while dependents import the verbatim mangled name, and the load fails with `GetLastError` 127. Observed 2026-09-29 on the Dreaming Sarah boot path (`libSceVideoOut` importing the mangled `Config::Loader::IsInitialized` from `libc.prx`). (The `_nid_no_patch_cut` form instead exports the name with the suffix cut, for call sites that must stay unsuffixed; new host APIs follow the `_nid_no_patch` neighbour pattern.)
 - **Exports.** `APS5_EXPORT` emits a top-level `__asm__ .globl/.set` alias (`prx/libc/include/general/ExportMacros.hpp:4-7`). `APS5_VABI` is `__attribute__((sysv_abi))` on `_WIN32` (`general/VabiMacros.hpp:4-8`). `specifics/gcc/SymbolAlias.hpp:4-12` defines its aliases only for `__linux__` and expands to nothing on Windows. The Windows ABI-boundary asm is therefore in `ExportMacros.hpp`, not at `SymbolAlias.hpp:7` as the decision table in [README.md](README.md#subsystem-specs) cites.
 - **Recompiler** (`core/shader/recompiler/CMakeLists.txt`):
   - it is a CMake function `add_shader_recompiler(target runtime)` instantiated once, from libSceAgcDriver (`prx/libSceAgcDriver/CMakeLists.txt:99`);

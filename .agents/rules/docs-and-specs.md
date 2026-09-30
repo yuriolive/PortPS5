@@ -7,4 +7,7 @@
 - Hardware is described only as the generic reference tier (PRD §4.4). Never name a specific personal machine, CPU or GPU model owned by a contributor.
 - The scope decisions in the PRD are settled. Don't re-open them in specs; propose changes in an issue instead.
 - Track deliverables with task checkboxes (`- [ ]` / `- [x]`) in `docs/ROADMAP.md` and `docs/spec/*.md`. When a milestone or spec task is completed, mark its checkbox as finished (`- [x]`) in the same PR.
+- **Docstring and Doxygen separation:**
+  - Header files (`.hpp` / `.h`): Provide formal public API documentation with `@brief`, `@param`, and `@return` tags.
+  - Implementation files (`.cpp`): Provide rich multi-line Javadoc comments (`/** ... */`) describing internal mechanisms, invariants, and ABI conventions (`APS5_VABI`) without duplicating `@param` tags (avoiding Doxygen `WARN_IF_DOC_ERROR` merge collisions).
 - Write directly: no filler, and tables where they help.

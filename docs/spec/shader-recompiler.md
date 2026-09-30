@@ -180,6 +180,10 @@ Other facts:
     outermost uniform headers (`DivergentRegionLdsReadOrdersPriorWritesAtUniformHeader`,
     `DivergentWriteThenReadInSameBlockGetsHeaderAndMergeBarriers`), and the cyclic-header skip
     (`DivergentReadWithCyclicHeaderSkipsPreReadBarrier`).
+  - [x] `s_getpc_b64` names the shader's absolute address (`GetShaderBase` + next-PC offset, ported
+    from upstream `d9ac21c`): PC-relative data behind the shader's own code resolves to the real
+    data instead of near-zero, and relocated copies keep sharing one variant
+    (`SGetpcB64AddsShaderBaseToNextPc`).
   - [x] Stage gate: `SharedMemoryBarrierInserter` inserts barriers only for compute, mesh, and
     tessellation-control stages (Workgroup execution scope is invalid elsewhere), covered by
     `Wave64VertexStageSkipsBarrierInsertion` and `TessellationControlStageInsertsBarrier`.
@@ -229,10 +233,17 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
 
 1. Can a despecialised generic variant stand in once a source hits the variant cap?
 2. Does any wave32 program run on a host whose subgroup is fixed wider than 32?
-3. Does the M1 intro-cinematic stage require bindless tables? PR #5's `29b4601` message says so *(unverified)*.
-4. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
-5. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
-6. Intra-divergent-region cross-lane LDS ordering: `SharedMemoryBarrierInserter` orders divergent writes
+3. Follow-up to PR #36 (beads portps5-52): `EmitGetShaderBase`
+   (`SpirvBackend/src/SpirvModuleEmitter.cpp:1052`) still emits constant zero, so
+   SPIR-V consumers of an `s_getpc_b64` value see offset-only while the
+   SRT/resource-tracker path (via `MakeRuntime` with `request.shader.codeAddress`)
+   names the real base — same limitation as upstream. The fix is dispatch-time
+   delivery of the code address (per-dispatch shader data or push constants), never
+   baked into the shared variant.
+4. Does the M1 intro-cinematic stage require bindless tables? PR #5's `29b4601` message says so *(unverified)*.
+5. Should tier 2 run eagerly in CI for every corpus shader, to find divergence bugs before games do?
+6. Choice of XXH3: vendoring it (BSD-2) versus an in-tree hash.
+7. Intra-divergent-region cross-lane LDS ordering: `SharedMemoryBarrierInserter` orders divergent writes
    at reconvergence merges and divergent reads at outermost uniform headers (skipped when the header
    lies on a control-flow cycle, where per-iteration execution under divergent loop control would break
    barrier uniformity). A divergent write followed by a divergent read in the SAME region with no

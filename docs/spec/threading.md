@@ -58,9 +58,9 @@ Canonical user pointers never set bit 63, so INIT words cannot collide with the 
 bit 63 INIT | 62 DESTROYED | 61 CLOCK_MONOTONIC | 47..32 waiters | 31..0 seq
 ```
 
-- **Wait:** read `seq`, increment `waiters`, unlock the mutex, then wait while `seq` is unchanged. A wait returns when `seq` changes; if some other bit changed, it waits again with the new value. Then it relocks the mutex *in CONTENDED state*, so the next unlock hands off.
-- **Signal:** does nothing when `waiters == 0`. Otherwise it increments `seq`, decrements `waiters` and wakes one.
-- **Broadcast:** increments `seq`, sets `waiters = 0` and wakes all. There is no requeue in v1.
+- **Wait:** read `seq`, increment `waiters`, unlock the mutex, then wait while `seq` is unchanged. A wait returns when `seq` changes; if some other bit changed, it waits again with the new value. The unblocking waiter decrements `waiters` (ensuring exact 1:1 pairing with entry across spurious wakeups and timeouts). Then it relocks the mutex *in CONTENDED state*, so the next unlock hands off.
+- **Signal:** does nothing when `waiters == 0`. Otherwise it increments `seq` and wakes one (unblocking waiter decrements `waiters`).
+- **Broadcast:** increments `seq` and wakes all (unblocking waiters decrement `waiters`). There is no requeue in v1.
 - `Signalto` stays a broadcast, which POSIX permits as a spurious wakeup.
 
 **Rwlock word:**
@@ -157,7 +157,7 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 
 | Milestone | Delivers |
 |---|---|
-| M1 | - [ ] The futex rewrite of mutex, condition variable, rwlock and `_umtx_op`, with no global mutex. Correct errno and SCE returns. `Unsupported()` in place of throws. Compact tids. Removal of the job-affinity and time-scale switches. The sync microbenchmark. (ROADMAP M1) |
+| M1 | - [x] The futex rewrite of mutex, condition variable, rwlock and `_umtx_op`, with no global mutex. Correct errno and SCE returns. `Unsupported()` in place of throws. Compact tids. Removal of the job-affinity and time-scale switches. The sync microbenchmark. (ROADMAP M1) |
 | M4 | - [ ] Event flags, semaphores and fibers on the shared primitive, for UE4 job-system coverage. (ROADMAP M4) |
 | M5 | - [ ] The perf pass over contention and sleep telemetry. (ROADMAP M5) |
 

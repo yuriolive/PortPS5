@@ -1,3 +1,7 @@
+// core/libs/prx/libSceMsgDialog/Export.cpp
+// Scripted user-message and progress dialog emulation for offline runtime execution.
+// Implements asynchronous RUNNING -> FINISHED transition model and common dialog tracking.
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -27,15 +31,22 @@ static void* g_userData = nullptr;
 
 extern "C" {
 
+// Closes active message dialog and clears active tracking state.
+// Returns MSG_DIALOG_OK on success or error code on failure.
 int APS5_VABI sceMsgDialogClose(void) noexcept {
     std::lock_guard lock(g_dialogMutex);
     if (!g_initialized) {
         return MSG_DIALOG_ERROR_NOT_INITIALIZED;
     }
+    if (g_status == MSG_DIALOG_STATUS_RUNNING) {
+        RegisterCommonDialogActive_nid_no_patch(false);
+    }
     g_status = MSG_DIALOG_STATUS_FINISHED;
     return MSG_DIALOG_OK;
 }
 
+// Retrieves message dialog result button ID (1 = Yes/OK).
+// Returns MSG_DIALOG_OK on success or error code on failure.
 int APS5_VABI sceMsgDialogGetResult(void* result) noexcept {
     std::lock_guard lock(g_dialogMutex);
     if (!g_initialized) {
@@ -54,11 +65,15 @@ int APS5_VABI sceMsgDialogGetResult(void* result) noexcept {
     return MSG_DIALOG_OK;
 }
 
+// Queries current status of message dialog (NONE, INITIALIZED, RUNNING, FINISHED).
+// Returns status integer value.
 int APS5_VABI sceMsgDialogGetStatus(void) noexcept {
     std::lock_guard lock(g_dialogMutex);
     return g_status;
 }
 
+// Initializes message dialog subsystem.
+// Returns MSG_DIALOG_OK on success or MSG_DIALOG_ERROR_ALREADY_INITIALIZED if initialized.
 int APS5_VABI sceMsgDialogInitialize(void) noexcept {
     std::lock_guard lock(g_dialogMutex);
     if (g_initialized) {
@@ -71,6 +86,8 @@ int APS5_VABI sceMsgDialogInitialize(void) noexcept {
     return MSG_DIALOG_OK;
 }
 
+// Opens message dialog with specified configuration parameters.
+// Returns MSG_DIALOG_OK on success or error code on failure.
 int APS5_VABI sceMsgDialogOpen(const void* param) noexcept {
     std::lock_guard lock(g_dialogMutex);
     if (!g_initialized) {
@@ -85,29 +102,41 @@ int APS5_VABI sceMsgDialogOpen(const void* param) noexcept {
     // param base layout starts with mode / user_data pointer
     g_mode = *static_cast<const int*>(param);
     g_status = MSG_DIALOG_STATUS_RUNNING;
+    RegisterCommonDialogActive_nid_no_patch(true);
     return MSG_DIALOG_OK;
 }
 
+// Increments progress bar delta for message dialog progress bars.
+// Returns MSG_DIALOG_OK on success.
 int APS5_VABI sceMsgDialogProgressBarInc(int target, uint32_t delta) noexcept {
     (void)target;
     (void)delta;
     return MSG_DIALOG_OK;
 }
 
+// Sets progress bar message text for message dialog.
+// Returns MSG_DIALOG_OK on success.
 int APS5_VABI sceMsgDialogProgressBarSetMsg(int target, const char* msg) noexcept {
     (void)target;
     (void)msg;
     return MSG_DIALOG_OK;
 }
 
+// Sets progress bar rate value for message dialog.
+// Returns MSG_DIALOG_OK on success.
 int APS5_VABI sceMsgDialogProgressBarSetValue(int target, uint32_t rate) noexcept {
     (void)target;
     (void)rate;
     return MSG_DIALOG_OK;
 }
 
+// Terminates message dialog subsystem and resets internal state.
+// Returns MSG_DIALOG_OK on success.
 int APS5_VABI sceMsgDialogTerminate(void) noexcept {
     std::lock_guard lock(g_dialogMutex);
+    if (g_status == MSG_DIALOG_STATUS_RUNNING) {
+        RegisterCommonDialogActive_nid_no_patch(false);
+    }
     g_initialized = false;
     g_status = MSG_DIALOG_STATUS_NONE;
     g_mode = 0;
@@ -115,6 +144,8 @@ int APS5_VABI sceMsgDialogTerminate(void) noexcept {
     return MSG_DIALOG_OK;
 }
 
+// Advances message dialog state machine (transitions RUNNING to FINISHED).
+// Returns updated status integer value or MSG_DIALOG_ERROR_NOT_INITIALIZED.
 int APS5_VABI sceMsgDialogUpdateStatus(void) noexcept {
     std::lock_guard lock(g_dialogMutex);
     if (!g_initialized) {
@@ -122,6 +153,7 @@ int APS5_VABI sceMsgDialogUpdateStatus(void) noexcept {
     }
     if (g_status == MSG_DIALOG_STATUS_RUNNING) {
         g_status = MSG_DIALOG_STATUS_FINISHED;
+        RegisterCommonDialogActive_nid_no_patch(false);
     }
     return g_status;
 }

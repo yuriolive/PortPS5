@@ -141,7 +141,7 @@ Any `APS5_*` variable in the environment triggers one warning that lists the nam
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] `Config`, schema, validation and `[debug]` landed with unit tests and `policy` enforcement (done). Still open: startup call with the `param.json` title ID, `config/` copy at conversion, `display` key wiring, results-JSON fields. Until then, 0 `APS5_*` reads and per-game TOML (F6) are not closed. |
+| M1 | - [ ] `Config`, schema, validation and `[debug]` landed with unit tests and `policy` enforcement (done); verbatim export of the cross-prx `Loader` API (`IsInitialized`, `Get`) from `libc.prx` landed with unit and death tests. Still open: startup call with the `param.json` title ID, `config/` copy at conversion, `display` key wiring, results-JSON fields. Until then, 0 `APS5_*` reads and per-game TOML (F6) are not closed. |
 | M2 | - [ ] `[input]` bindings (with [input.md](input.md)). The regression tooling records the config hash. |
 | M3 | - [ ] Any `[workarounds]` keys Tomb Raider needs, each with a docs entry. |
 | M4 | - [ ] Exit criterion: every `[workarounds]` key used by a gate title has a `docs/workarounds.md` entry. |

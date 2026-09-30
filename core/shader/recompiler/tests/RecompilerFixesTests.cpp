@@ -888,6 +888,81 @@ TEST(RecompilerFixesTests, TessellationControlStageInsertsBarrier) {
     EXPECT_EQ((*it)->Opcode(), IrOpcode::Barrier);
 }
 
+TEST(RecompilerFixesTests, SGetpcB64AddsShaderBaseToNextPc) {
+    // Behavioral invariant: s_getpc_b64 must name the shader's absolute address
+    // (GetShaderBase + next-PC offset), not the raw next-PC offset. Shaders that
+    // address data stored behind their own code build the V# with
+    // s_getpc_b64 + s_add_u32 + s_addc_u32; a raw offset resolves near zero, so
+    // every vertex/constant load reads zero and the draw never rasterizes.
+    // Preconditions: SOPP s_getpc_b64 at a nonzero PC writing SGPR pair s[4:5].
+    // Expected: exactly one GetShaderBase feeding one IAdd64 whose other operand
+    // is the pc+4 constant, with the add result split across s4 (low) and s5 (high).
+    IrProgram program;
+    IrBlock& entry = program.CreateBlock();
+    program.SetEntryBlock(entry);
+
+    TranslationContext context(program, entry, 256u);
+
+    constexpr std::uint32_t kPc = 0x40u;
+    RdnaInstruction inst{};
+    inst.family = RdnaInstructionFamily::SOPP;
+    inst.op = RdnaOpcode::SGetpcB64;
+    inst.programCounter = kPc;
+    inst.destination.kind = RdnaOperandKind::ScalarRegister;
+    inst.destination.reg = 4u;
+
+    context.TranslateInstruction(inst);
+
+    IrValue* base = nullptr;
+    IrValue* add = nullptr;
+    for (IrValue* val : entry.Instructions()) {
+        if (!val) {
+            continue;
+        }
+        if (val->Opcode() == IrOpcode::GetShaderBase) {
+            EXPECT_EQ(base, nullptr);
+            base = val;
+        }
+        if (val->Opcode() == IrOpcode::IAdd64) {
+            EXPECT_EQ(add, nullptr);
+            add = val;
+        }
+    }
+    ASSERT_NE(base, nullptr);
+    ASSERT_NE(add, nullptr);
+    // The add must combine the shader base with the next-PC constant, not a bare offset.
+    ASSERT_GE(add->ArgumentCount(), 2u);
+    EXPECT_EQ(add->Argument(0), base);
+    EXPECT_EQ(add->Argument(1)->ImmediateU64(), static_cast<std::uint64_t>(kPc) + 4u);
+    // The add result must land in the requested SGPR pair, low word first.
+    bool lowWritten = false;
+    bool highWritten = false;
+    for (IrValue* val : entry.Instructions()) {
+        if (!val || val->Opcode() != IrOpcode::SetScalarRegister || val->ArgumentCount() < 2u) {
+            continue;
+        }
+        const GuestRegister reg = val->Argument(0)->Register();
+        if (reg.bank != RegisterBank::Scalar || (reg.index != 4u && reg.index != 5u)) {
+            continue;
+        }
+        IrValue* stored = val->Argument(1);
+        ASSERT_NE(stored, nullptr);
+        EXPECT_EQ(stored->Opcode(), IrOpcode::CompositeExtractU64);
+        ASSERT_GE(stored->ArgumentCount(), 2u);
+        EXPECT_EQ(stored->Argument(0), add);
+        const std::uint32_t word = stored->Argument(1)->ImmediateU32();
+        if (reg.index == 4u) {
+            EXPECT_EQ(word, 0u);
+            lowWritten = true;
+        } else {
+            EXPECT_EQ(word, 1u);
+            highWritten = true;
+        }
+    }
+    EXPECT_TRUE(lowWritten);
+    EXPECT_TRUE(highWritten);
+}
+
 } // namespace
 } // namespace ShaderRecompiler
 

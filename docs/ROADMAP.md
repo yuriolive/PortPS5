@@ -45,16 +45,17 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Export ABI: the `APS5_EXPORT_FN` export macro, which declares every export `APS5_VABI` and `noexcept` ([spec/build-toolchain.md](spec/build-toolchain.md)).
 - [ ] Guest memory: replace the arena's O(n) first-fit scan with a free-list allocator; add explicit pins, the registry-owned page-state table, and return codes in place of throws ([spec/guest-memory.md](spec/guest-memory.md)).
 - [x] Offline behaviour for network stack (`libSceNet`), AvPlayer playback state machine (`libSceAvPlayer`), NP/PSN, trophies, store, and user-service dialogs, so no gate title blocks on them at boot.
-- [ ] Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
+- [x] Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
 - [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
 - [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`).
 - [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI).
 - [ ] Hosted CI job `driver-lavapipe`.
 - [ ] Inventory each gate title's imports (NIDs, audio and video codecs, dialogs).
+  - Dreaming Sarah (recorded 2026-09-29): 815 relocation refs / 484 unique NIDs, 478 resolve to built prx exports; 6 missing (all libc locale/iostream data); boot blocked at prx load (`libSceVideoOut` importing `Config::Loader` from `libc.prx`, `GetLastError` 127). Detail in [spec/relinker.md](spec/relinker.md) Open questions.
 
 **Exit criteria**
 - [ ] With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic, the stage PR #5 reached. Its fill and copy kernels run as the title's own shaders, without replacement. The `policy` CI job is green.
-- [ ] Sync microbenchmark: uncontended lock/unlock at least 10× faster than the old implementation, and the pthread and `SyncOnAddress` GoogleTest suites pass.
+- [x] Sync microbenchmark: uncontended lock/unlock at least 10× faster than the old implementation, and the pthread and `SyncOnAddress` GoogleTest suites pass.
 - [ ] The hosted golden corpus contains synthetic shaders that cover every decoded instruction class, and it is green in CI. The local-only game-derived corpus replays with 0 validation failures.
 
 ## Milestone 2: 2D gate (titles 1–2)
@@ -63,10 +64,10 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [ ] Input: XInput, DualSense over USB, and keyboard/mouse mapping in TOML. Foundation landed: mouse backend (`libSceMouse`), VideoOut input routing, and `mouse_tests` API pinning. XInput and DualSense are new work: enable SDL joystick/HIDAPI (currently off) and implement the `libScePad` controller paths, with hot-plug and slot assignment ([spec/input.md](spec/input.md)).
 - [ ] Establish filesystem sandbox, input, and audio GoogleTest suites ported from ecosystem references:
   - [x] Filesystem sandbox: port path-traversal containment (`../`), mount sandbox isolation, and default-deny permission tests from SharpEMU (`KernelSandboxEscapeTests`) ([spec/save-data.md](spec/save-data.md));
-  - [ ] Save data: port directory layout, quota enforcement, atomic commit, and crash-safe snapshot restore tests;
+  - [x] Save data: port directory layout, quota enforcement, atomic commit, and crash-safe snapshot restore tests;
   - [x] Input: port DualSense USB report parsing, radial deadzone calculation, rumble motor translation, and hotplug slot assignment tests from KytyPS5 (`PadHapticsTests`) ([spec/input.md](spec/input.md));
   - [ ] Audio: port AudioOut2 port lifecycle, ATRAC9 header decoding, and mixer resampling tests from KytyPS5 (`AudioOut2PortTests`) ([spec/audio.md](spec/audio.md)).
-- [ ] Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title, with crash-safe snapshots and a one-time copy of the old `_sd` layout ([spec/save-data.md](spec/save-data.md)).
+- [x] Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title, with crash-safe snapshots and a one-time copy of the old `_sd` layout ([spec/save-data.md](spec/save-data.md)).
 - [ ] Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
 - [ ] The disk pipeline cache.
 - [ ] Driver: depth/stencil and conditional colour-write state, because 2D engines also set them. They are currently rejected at `State.cpp:152` on `main` and `State.cpp:318-322` in PR #5.
