@@ -1,3 +1,6 @@
+// Resident colour target upload/download and the render-target/depth-surface cache (AGC graphics subsystem).
+// Colour data round-trips through guest memory under tracking; depth surfaces are host-only and keyed
+// by their guest write base. Serialised by the device graphics path.
 #include "prx/libSceAgcDriver/Graphics/include/RenderCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/MemoryAccessScope.hpp"
@@ -93,6 +96,22 @@ std::shared_ptr<ResidentColor> RenderCache::Get(const ColorTarget& color, bool b
     }
     auto entry = std::make_shared<ResidentColor>(context, color);
     entries.emplace(color.address, entry);
+    return entry;
+}
+
+std::shared_ptr<ResidentDepth> RenderCache::GetDepth(const DepthTarget& target) {
+    Require(target.Bound(), "no depth/stencil surface is bound");
+    // The depth base identifies the surface; a stencil-only surface is identified by its own base.
+    const auto key = target.HasDepth() ? target.depthAddress : target.stencilAddress;
+    const auto it = depthEntries.find(key);
+    if (it != depthEntries.end()) {
+        if (it->second->Matches(target)) return it->second;
+        depthEntries.erase(it);
+    }
+    // Host-only surfaces are cheap to rebuild relative to a leak, so cap the cache and drop all.
+    if (depthEntries.size() >= 16) depthEntries.clear();
+    auto entry = std::make_shared<ResidentDepth>(context, target);
+    depthEntries.emplace(key, entry);
     return entry;
 }
 

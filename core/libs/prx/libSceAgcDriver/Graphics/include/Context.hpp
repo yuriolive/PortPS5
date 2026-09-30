@@ -1,3 +1,6 @@
+// Per-device Vulkan handles, limits and optional-feature flags shared by the AGC graphics subsystem.
+// Plain value type copied into every graphics object; the raw pointers it carries are owned by the
+// VulkanDevice and outlive every Context copy. Feature flags mirror what was enabled at device creation.
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_CONTEXT_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_CONTEXT_HPP
 
@@ -49,6 +52,8 @@ struct Context {
     VkPhysicalDeviceMeshShaderPropertiesEXT meshLimits{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT};
     bool depthClipControl = false;
     bool depthRangeUnrestricted = false;
+    /// VkPhysicalDeviceFeatures::depthBounds was enabled at device creation.
+    bool depthBounds = false;
     bool bufferDeviceAddress = false;
     VkPhysicalDeviceSubgroupProperties subgroup{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
     bool fragmentShaderBarycentric = false;

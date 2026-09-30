@@ -387,6 +387,27 @@ if(BUILD_TESTING)
         LABELS   unit
     )
 
+    # Hosted depth-surface tests: format policy, loadOp mapping and ResidentDepth lifetime
+    # against a mock Vulkan device table (no GPU, no guest memory).
+    portps5_add_gtest(agc_driver_depth_surface_tests
+        SOURCES  tests/DepthSurface.cpp
+                 Graphics/src/DepthFormat.cpp
+                 Graphics/src/DepthSurface.cpp
+                 Graphics/src/State.cpp
+                 Graphics/src/ColorTargetLayout.cpp
+                 Execution/src/GuestMemory.cpp
+                 Execution/src/GuestGpuRange.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include
+                 ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+                 ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
+        LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   unit
+    )
+
     portps5_add_gtest(recompiler_fixes_tests
         SOURCES  ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/RecompilerFixesTests.cpp
         INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler

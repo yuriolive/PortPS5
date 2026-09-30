@@ -1,6 +1,10 @@
+// Resident colour targets and host depth surfaces (AGC graphics subsystem).
+// ResidentColor mirrors a guest colour surface with write-back; the depth side hands out host-only
+// ResidentDepth surfaces. Used under the device graphics serialisation plus guest-memory tracking locks.
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RENDERCACHE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RENDERCACHE_HPP
 
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
 #include "prx/libc/include/GuestMemoryTracking.hpp"
 #include <map>
@@ -42,12 +46,22 @@ public:
     ~RenderCache();
     std::shared_ptr<ResidentColor> Get(const ColorTarget& color, bool blending);
     std::shared_ptr<ResidentColor> Find(std::uint64_t address) const;
+    /**
+     * @brief Returns the host depth/stencil surface for @p target, creating it on first use.
+     * @param target Bound guest surface (must be Bound()).
+     * @return Shared surface keyed by its guest write base; a surface whose identity (base,
+     *         extent, format) changed is replaced with a fresh, undefined one. Pipelines that
+     *         still reference the old surface keep it alive through their shared_ptr.
+     * @throws std::runtime_error when the device cannot host the surface.
+     */
+    std::shared_ptr<ResidentDepth> GetDepth(const DepthTarget& target);
     void Resolve(std::uint64_t address, std::size_t bytes, bool writable);
     void Flush();
 
 private:
     Context context;
     std::map<std::uint64_t, std::shared_ptr<ResidentColor>> entries;
+    std::map<std::uint64_t, std::shared_ptr<ResidentDepth>> depthEntries;
 };
 
 }

@@ -1,3 +1,7 @@
+// Vulkan device bring-up and per-device graphics context for the AGC driver (Execution subsystem).
+// Selects the GPU, enables optional features (tessellation, depth bounds, mesh shaders, ...), owns
+// the device-wide caches and hands a Graphics::Context to the graphics subsystem. Not thread-safe
+// beyond the driver worker that owns the device.
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RenderCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"
@@ -81,6 +85,7 @@ struct VulkanDevice::State {
     bool fragmentShaderBarycentric = false;
     bool depthClipControl = false;
     bool depthRangeUnrestricted = false;
+    bool depthBounds = false;
     bool samplerAnisotropy = false;
     bool textureCompressionBC = false;
     std::unique_ptr<Graphics::TextureDetiler> detiler;
@@ -394,6 +399,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     enabled.vertexPipelineStoresAndAtomics = VK_TRUE;
     enabled.fragmentStoresAndAtomics = VK_TRUE;
     enabled.tessellationShader = available.tessellationShader;
+    // Depth-bounds test is optional; draws that need it on a device without it are rejected in the pipeline builder.
+    enabled.depthBounds = available.depthBounds;
+    state->depthBounds = enabled.depthBounds == VK_TRUE;
     state->tessellationShader = enabled.tessellationShader == VK_TRUE;
     if (state->tessellationShader) state->capabilities.push_back(3);
     require(available.samplerAnisotropy && available.textureCompressionBC, "device lacks sampler anisotropy or BC texture compression support required for texture sampling");
@@ -718,6 +726,7 @@ Graphics::Context VulkanDevice::graphicsContext() const {
         state->meshLimits,
         state->depthClipControl,
         state->depthRangeUnrestricted,
+        state->depthBounds,
         true,
         state->subgroup,
         state->fragmentShaderBarycentric,

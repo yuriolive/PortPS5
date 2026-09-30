@@ -43,7 +43,7 @@ endif()
 
 foreach(agcTarget IN ITEMS libSceAgcDriver agc_driver_visual_test agc_driver_graphics_tests)
     if(TARGET ${agcTarget})
-        target_sources(${agcTarget} PRIVATE Graphics/src/RenderCache.cpp Graphics/src/RenderMemoryOwnership.cpp Graphics/src/DrawQueue.cpp Graphics/src/DrawCompletion.cpp Graphics/src/RenderTexture.cpp Graphics/src/DescriptorCache.cpp)
+        target_sources(${agcTarget} PRIVATE Graphics/src/RenderCache.cpp Graphics/src/RenderMemoryOwnership.cpp Graphics/src/DrawQueue.cpp Graphics/src/DrawCompletion.cpp Graphics/src/RenderTexture.cpp Graphics/src/DescriptorCache.cpp Graphics/src/DepthFormat.cpp Graphics/src/DepthSurface.cpp)
     endif()
 endforeach()
 
