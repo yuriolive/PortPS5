@@ -507,7 +507,7 @@ portps5_add_gtest(pad_haptics_tests
              ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
     LIBRARIES libScePad libkernel libc
     LABELS   unit
-)
+)
 # Image codec PRX tests (docs/spec/image-codecs.md). Linking libc is required
 # so the Windows DWARF exception runtime is present for the death tests.
 portps5_add_gtest(guest_jpeg_enc_tests
@@ -522,5 +522,4 @@ portps5_add_gtest(guest_png_dec_tests
     LIBRARIES libScePngDec decoder_png libkernel libc
     LABELS    unit
 )
-
 endif()

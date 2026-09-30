@@ -32,22 +32,31 @@ struct Image {
     std::vector<std::uint8_t> pixels;
 };
 
-// Encodes tightly packed 8-bit pixels (width * channels bytes per row).
-//
-// @param pixels   at least width * height * channels bytes
-// @param channels 1 (grayscale) or 3 (RGB). Note: stb always writes a
-//                 3-component YCbCr stream, so grayscale input decodes as
-//                 neutral RGB (R == G == B), not as a 1-channel image.
-// @param quality  1..100 (stb quality scale, 100 = best)
-// @return the JFIF byte stream, or nullopt when any argument is out of range
-//         (zero or > kMaxDimension size, bad channels/quality, short buffer)
-//         or when allocation/encoding fails.
+/**
+ * @brief Encodes tightly packed 8-bit pixels (width * channels bytes per row) to JFIF.
+ *
+ * Note: stb always writes a 3-component YCbCr stream, so grayscale input
+ * decodes as neutral RGB (R == G == B), not as a 1-channel image.
+ *
+ * @param pixels   At least width * height * channels bytes.
+ * @param width    Image width, 1..kMaxDimension.
+ * @param height   Image height, 1..kMaxDimension.
+ * @param channels 1 (grayscale) or 3 (RGB).
+ * @param quality  1..100 (stb quality scale, 100 = best).
+ * @return The JFIF byte stream, or nullopt when any argument is out of range
+ *         (zero or oversized dimensions, bad channels/quality, short buffer)
+ *         or when allocation/encoding fails.
+ */
 std::optional<std::vector<std::uint8_t>> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width,
                                                 std::uint32_t height, std::uint32_t channels, int quality);
 
-// Decodes a JPEG byte stream keeping its native channel count.
-// @return nullopt for empty, oversized (> INT_MAX bytes), malformed or
-//         unsupported input.
+/**
+ * @brief Decodes a JPEG byte stream keeping its native channel count.
+ *
+ * @param jpeg The complete JPEG file bytes.
+ * @return The decoded image, or nullopt for empty, oversized (> INT_MAX
+ *         bytes), malformed or unsupported (12-bit, arithmetic-coded) input.
+ */
 std::optional<Image> Decode(std::span<const std::uint8_t> jpeg);
 
 }  // namespace Decoder::Jpeg

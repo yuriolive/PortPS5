@@ -44,20 +44,45 @@ struct Image {
     std::vector<std::uint8_t> pixels;
 };
 
-// Validates the signature and IHDR (size limits, legal bit-depth/colour-type
-// pair, compression/filter/interlace fields) and scans the chunks before
-// IDAT for tRNS. Never reads past the span. @return nullopt if malformed.
+/**
+ * @brief Validates the signature and IHDR and scans for a tRNS chunk.
+ *
+ * Checks size limits, the legal bit-depth/colour-type pair and the
+ * compression/filter/interlace fields, then scans the chunks before IDAT for
+ * tRNS. Never reads past the span. Does not verify CRCs (informational only;
+ * Decode is the authority).
+ *
+ * @param png The PNG file bytes (may be truncated).
+ * @return The parsed header, or nullopt if malformed.
+ */
 std::optional<Header> ParseHeader(std::span<const std::uint8_t> png);
 
-// Decodes to 8-bit RGBA (16-bit sources are reduced to 8 bits).
-// @return nullopt for empty, oversized (> INT_MAX bytes), corrupt input, or
-//         an image stb refuses to allocate (dimension cap 1<<24).
+/**
+ * @brief Decodes a PNG to 8-bit RGBA.
+ *
+ * Interlaced (Adam7), palette (with or without tRNS), gray and 16-bit sources
+ * are decoded; 16-bit samples are reduced to 8 bits. A bad CRC in a critical
+ * chunk (IHDR/PLTE/IDAT/IEND) or a missing IEND is rejected; ancillary CRC
+ * errors are ignored.
+ *
+ * @param png The complete PNG file bytes.
+ * @return The decoded image, or nullopt for empty, oversized (> INT_MAX
+ *         bytes) or corrupt input, or an image stb refuses to allocate
+ *         (dimension cap 1<<24).
+ */
 std::optional<Image> Decode(std::span<const std::uint8_t> png);
 
-// Encodes tightly packed 8-bit pixels (width * channels bytes per row).
-// @param channels 1 (gray), 2 (gray+alpha), 3 (RGB) or 4 (RGBA)
-// @return the PNG byte stream, or nullopt for bad channels, zero/overflowing
-//         size, a short pixel buffer, or allocation/encoding failure.
+/**
+ * @brief Encodes tightly packed 8-bit pixels (width * channels bytes per row) to PNG.
+ *
+ * @param pixels   At least width * height * channels bytes.
+ * @param width    Image width (width * channels must fit in int).
+ * @param height   Image height.
+ * @param channels 1 (gray), 2 (gray+alpha), 3 (RGB) or 4 (RGBA).
+ * @return The PNG byte stream, or nullopt for bad channels, zero or
+ *         overflowing size, a short pixel buffer, or allocation/encoding
+ *         failure.
+ */
 std::optional<std::vector<std::uint8_t>> Encode(std::span<const std::uint8_t> pixels, std::uint32_t width,
                                                 std::uint32_t height, std::uint32_t channels);
 
