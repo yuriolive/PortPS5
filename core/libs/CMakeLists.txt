@@ -337,6 +337,13 @@ if(BUILD_TESTING)
         LIBRARIES libc
         LABELS   unit
     )
+    # Lifecycle exports (cxa_atexit/finalize, thread atexit, init_env).
+    portps5_add_gtest(guest_lifecycle_tests
+        SOURCES  tests/GuestLifecycle.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc libSceLibcInternal
+        LABELS   unit
+    )
     add_executable(guest_memory_tests tests/GuestMemory.cpp)
     target_include_directories(guest_memory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_memory_tests PRIVATE libkernel libc)
