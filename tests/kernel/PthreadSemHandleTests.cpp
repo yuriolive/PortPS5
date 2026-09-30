@@ -261,4 +261,67 @@ TEST(PthreadSemHandle, EachPostReleasesExactlyOneWaiter) {
     EXPECT_EQ(scePthreadSemDestroy(&sem), SCE_OK);
 }
 
+std::atomic<bool> g_posterParked{false};
+std::atomic<bool> g_releasePoster{false};
+
+void ParkPoster() {
+    g_posterParked.store(true, std::memory_order_release);
+    while (!g_releasePoster.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+}
+
+// Regression (gitar review on PR #61): scePthreadSemPost touches the object
+// after publishing the token (it reads `waiters` and wakes). A consumer can take
+// that token and call Destroy in that window - the ordinary completion
+// semaphore pattern - and Destroy must not free the object under the poster.
+// The test seam parks the poster inside the window, lets the consumer take the
+// token and start Destroy, and checks Destroy is still blocked until the post
+// finishes. Without the `posting` drain, Destroy returns (and frees) while the
+// poster is parked, and this test fails.
+TEST(PthreadSemHandle, DestroyWaitsForInFlightPost) {
+    PthreadSem sem = nullptr;
+    ASSERT_EQ(scePthreadSemInit(&sem, 0, 0, "post_destroy"), SCE_OK);
+    g_posterParked.store(false);
+    g_releasePoster.store(false);
+    PthreadSemSetPostWindowHook(&ParkPoster);
+
+    std::thread poster([&] { EXPECT_EQ(scePthreadSemPost(&sem), SCE_OK); });
+    while (!g_posterParked.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    // Token is published but the post has not finished: consume it.
+    ASSERT_EQ(scePthreadSemTrywait(&sem), SCE_OK);
+
+    std::atomic<bool> destroyReturned{false};
+    std::atomic<int> destroyResult{-1};
+    std::thread destroyer([&] {
+        destroyResult.store(scePthreadSemDestroy(&sem));
+        destroyReturned.store(true, std::memory_order_release);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(destroyReturned.load(std::memory_order_acquire))
+        << "Destroy freed the semaphore while a post was still in flight";
+
+    g_releasePoster.store(true, std::memory_order_release);
+    poster.join();
+    destroyer.join();
+    PthreadSemSetPostWindowHook(nullptr);
+    EXPECT_EQ(destroyResult.load(), SCE_OK);
+}
+
+// Completion pattern stress: a worker posts, the owner waits and immediately
+// destroys, many times (fresh object each round so freed memory is reused).
+// Must never crash or hang.
+TEST(PthreadSemHandle, PostThenWaitThenDestroyStress) {
+    for (int i = 0; i < 3000; ++i) {
+        PthreadSem sem = nullptr;
+        ASSERT_EQ(scePthreadSemInit(&sem, 0, 0, "completion"), SCE_OK);
+        std::thread worker([&] { scePthreadSemPost(&sem); });
+        ASSERT_EQ(scePthreadSemWait(&sem), SCE_OK);
+        ASSERT_EQ(scePthreadSemDestroy(&sem), SCE_OK);
+        worker.join();
+    }
+}
+
 }  // namespace

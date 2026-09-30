@@ -147,7 +147,7 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
   - Upstream ports (PR #28, adapted to the repo's per-API error families): equeue wait/delete + error-check mutex (`GuestKernelErrors.cpp`), cond timedwait slices (`GuestCondTimedwait.cpp`), thread identity/lifecycle (`GuestThreadSelf.cpp`), host TLS balance incl. Win32 threads (`HostThreadLocal.cpp` + helper TU).
-  - Kernel-sync ports: `PthreadSemHandleTests.cpp` (scePthreadSem return codes, lifecycle, token conservation), `PthreadBarrierOnceTests.cpp` (barrier rounds, serial thread, next-round regression, EBUSY destroy, `pthread_equal`, `sched_yield`, `scePthreadOnce`/`pthread_once`), `KernelSleepSignalTests.cpp` (`sceKernelSleep`, `sigprocmask` incl. invalid `how`, 64-bit `sceKernelLseek`), `GuestKernelErrors.cpp` literal equeue codes, `PthreadSemTests.cpp` `sceKernelDeleteSema`, `GuestThreadSelf.cpp` adopted handles.
+  - Kernel-sync ports: `PthreadSemHandleTests.cpp` (scePthreadSem return codes, lifecycle, token conservation), `PthreadBarrierOnceTests.cpp` (barrier rounds, serial thread, next-round regression, EBUSY destroy, `pthread_equal`, `sched_yield`, `scePthreadOnce`/`pthread_once`), `KernelSleepSignalTests.cpp` (`sceKernelSleep`, `sigprocmask` incl. invalid `how`), `GuestKernelErrors.cpp` literal equeue codes, `PthreadSemTests.cpp` `sceKernelDeleteSema`, `GuestThreadSelf.cpp` adopted handles.
   - Every mutex type (lock, trylock, timedlock, `EDEADLK`, `EPERM`, `EBUSY`, destroy).
   - Lazy initialization with 64 threads racing on a zero slot, with exactly one INIT winner.
   - Condition-variable 10^6-round ping-pong and a broadcast storm with no lost wakeups.

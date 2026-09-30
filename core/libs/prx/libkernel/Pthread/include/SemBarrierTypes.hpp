@@ -17,9 +17,22 @@
 struct PthreadSemPrivate {
     std::atomic<std::uint32_t> count;    // available tokens; the futex word.
     std::atomic<std::uint32_t> waiters;  // threads inside a blocking wait.
-    explicit PthreadSemPrivate(std::uint32_t value) noexcept : count(value), waiters(0) {}
+    // Posts in flight. A post touches the object after publishing the token
+    // (it reads `waiters` and wakes), and a consumer can take that token and
+    // destroy the semaphore in the meantime (the completion-semaphore pattern:
+    // worker posts, owner waits then destroys). Destroy therefore waits for
+    // this to drain before freeing.
+    std::atomic<std::uint32_t> posting;
+    explicit PthreadSemPrivate(std::uint32_t value) noexcept
+        : count(value), waiters(0), posting(0) {}
 };
-static_assert(sizeof(std::atomic<std::uint32_t>) == 4, "WaitOnAddress needs a 4-byte word");
+
+// Test seam (defined in Sem.cpp, exported from libkernel so a test executable
+// and the DLL share ONE hook variable; an inline variable here would be
+// duplicated per module): when a non-null hook is installed, scePthreadSemPost
+// calls it after publishing the token and before it reads `waiters`, i.e.
+// inside the window where the object must stay alive. Production never sets it.
+extern "C" void PthreadSemSetPostWindowHook(void (*hook)());
 
 // Host object behind a pthread_barrier_t slot.
 struct PthreadBarrierPrivate {

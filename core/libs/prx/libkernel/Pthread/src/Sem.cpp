@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cstdint>
 #include <new>
+#include <thread>
 
 namespace {
 
@@ -49,6 +50,9 @@ constexpr std::uint32_t kSemValueMax = 0x7FFFFFFFu;
 }  // namespace
 
 namespace {
+
+// Test seam storage; see PthreadSemSetPostWindowHook in SemBarrierTypes.hpp.
+std::atomic<void (*)()> g_postWindowHook{nullptr};
 
 // Slot value written by Destroy. Real heap pointers are never 2.
 inline PthreadSem DestroyedSem() noexcept {
@@ -106,6 +110,11 @@ int AcquireUntil(PthreadSemPrivate* s, FutexCore::Deadline deadline) noexcept {
 
 extern "C" {
 
+/** Install (or clear with nullptr) the post-window test hook. Test-only; thread-safe. */
+void PthreadSemSetPostWindowHook(void (*hook)()) {
+    g_postWindowHook.store(hook, std::memory_order_release);
+}
+
 /**
  * @brief scePthreadSemInit implementation.
  * Invoked by guest code using System V ABI calling convention.
@@ -147,6 +156,11 @@ int APS5_VABI scePthreadSemDestroy(PthreadSem* sem) noexcept {
     if (!std::atomic_ref<PthreadSem>(*sem).compare_exchange_strong(
             expected, DestroyedSem(), std::memory_order_acq_rel, std::memory_order_acquire))
         return kSceEinval;
+    // A post that published the token a consumer just took may still be reading
+    // `waiters`/waking; wait (bounded, it is a handful of instructions) until
+    // every in-flight post has finished before freeing.
+    while (object->posting.load(std::memory_order_acquire) != 0)
+        std::this_thread::yield();
     delete object;
     return kSceOk;
 }
@@ -160,16 +174,26 @@ int APS5_VABI scePthreadSemPost(PthreadSem* sem) noexcept {
     PthreadSemPrivate* object = Resolve(sem);
     if (!object)
         return kSceEinval;
+    // Keep the object alive for the whole post: a consumer may take the token
+    // the instant it is published and destroy the semaphore (POSIX allows
+    // destroy once nobody is blocked). Destroy drains `posting` before freeing.
+    object->posting.fetch_add(1, std::memory_order_seq_cst);
     std::uint32_t c = object->count.load(std::memory_order_relaxed);
     do {
-        if (c >= kSemValueMax)
+        if (c >= kSemValueMax) {
+            object->posting.fetch_sub(1, std::memory_order_release);
             return kSceEoverflow;
+        }
     } while (!object->count.compare_exchange_weak(c, c + 1, std::memory_order_seq_cst,
                                                   std::memory_order_relaxed));
+    if (auto hook = g_postWindowHook.load(std::memory_order_acquire))
+        hook();
     // Publish-before-wake: the count already changed, so a waiter that is
     // about to sleep fails WaitOnAddress's value check instead of missing us.
     if (object->waiters.load(std::memory_order_seq_cst) != 0)
         FutexCore::WakeSingle(&object->count);
+    // Last touch of the object by this post.
+    object->posting.fetch_sub(1, std::memory_order_release);
     return kSceOk;
 }
 

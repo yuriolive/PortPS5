@@ -1,4 +1,4 @@
-// tests/kernel/KernelSleepSignalLseekTests.cpp
+// tests/kernel/KernelSleepSignalTests.cpp
 // Verification for three small libkernel exports ported from AnyPS5:
 //   - sceKernelSleep           (c6d098d4, previously an aborting stub)
 //   - sigprocmask/_sigprocmask (c6d098d4, stub removed from the Socket TU;
