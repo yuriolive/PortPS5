@@ -101,6 +101,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
   - [x] Button OR-merging and stick displacement arbitration rules (`PadHapticsTests.cpp`).
   - [x] Radial and axial dead-zone mathematics and clamp boundaries (`PadHapticsTests.cpp`).
+  - [x] Controller button/axis/trigger translation, slot merge with keyboard, and per-slot connect/disconnect through `scePadRead` (`tests/input/ControllerInputTests.cpp`, synthetic samples, no device).
   - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
   - [ ] TOML controller binding parsing and rejection of invalid identifiers.
   - [x] Monotonic timestamp advancement invariants on sequential `scePadRead` calls (`PadHapticsTests.cpp`).
@@ -132,3 +133,13 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 - Do any gate titles need a second local player (TMNT supports co-op)? 1.0 gates single-player only. A second slot works in the design but is not gated.
 - Gyro through `SDL_SENSOR`: the PRD puts only haptics and adaptive triggers out of scope. Does any gate title need motion?
 - Should rumble on XInput stay on by default? It adds no DualSense-specific behaviour.
+
+## Controller polling (implemented)
+
+- Attach: `SDL_CONTROLLERDEVICEADDED` -> `SDL_GameControllerOpen` -> lowest free slot; `REMOVED` frees it. A fifth controller is ignored.
+- Buttons: A/B/X/Y = Cross/Circle/Square/Triangle, START = Options, shoulders = L1/R1, stick clicks = L3/R3, D-pad, touchpad click = TouchPad bit.
+- Sticks: -32768..32767 -> 0..255 (centre 128) with a radial dead zone from `[input] deadzone` (default 0.08), rescaled so output starts at 0 at the zone edge.
+- Triggers: 0..32767 -> 0..255 in `analog_buttons_l2/r2`; the digital L2/R2 bit is raised above 30/255.
+- Slot 0 merge: buttons OR, sticks furthest from centre, keyboard R2/L2 still force 255.
+- `debug.ignore_host_input`: controllers are never attached while it is set. On window focus loss every attached controller publishes neutral state.
+- Slots 1..3 can be opened with `scePadOpen` only while a controller occupies them.
