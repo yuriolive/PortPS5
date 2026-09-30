@@ -12,6 +12,7 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libScePad/src/PadInternal.hpp"
 
 #include <gtest/gtest.h>
 
@@ -27,7 +28,7 @@ namespace {
 constexpr std::uint32_t Bit(Pad::PadButton b) { return static_cast<std::uint32_t>(b); }
 
 // PadManager is a process singleton: reset keyboard and every controller slot
-// to neutral/disconnected around each test so cases stay independent.
+// to neutral/disconnected (and connectedCount to its initial value) around each test so cases stay independent.
 class ControllerInputTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -42,6 +43,8 @@ protected:
         for (int s = 0; s < PAD_MAX_SLOTS; ++s) {
             PadSetControllerConnected_nid_postfix(s, false);
             scePadClose_nid_postfix(s + 1);
+            // Also zero connectedCount so count assertions are order-independent.
+            Pad::PadManager::Get().TestResetSlot(s);
         }
     }
 };

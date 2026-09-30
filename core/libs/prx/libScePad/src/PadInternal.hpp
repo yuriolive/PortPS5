@@ -53,6 +53,10 @@ public:
 
     // Test hook: direct manipulation of slots for deterministic unit testing
     void TestSetSlotConnected(int slot, bool connected);
+    // Test hook: return a slot to its freshly-constructed state (closed, no
+    // controller, connectedCount back to its initial value) so singleton state
+    // does not leak between tests.
+    void TestResetSlot(int slot);
 
 private:
     PadManager();

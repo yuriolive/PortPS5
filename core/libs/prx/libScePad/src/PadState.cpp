@@ -329,6 +329,18 @@ void PadManager::TestSetSlotConnected(int slot, bool connected) {
     }
 }
 
+void PadManager::TestResetSlot(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_SLOTS) return;
+    std::lock_guard lock(mutex);
+    auto& s = slots[static_cast<std::size_t>(slot)];
+    s.opened = false;
+    s.controllerPresent = false;
+    s.controllerInput = {};
+    // Slot 0 is the always-present keyboard/mouse pad (count 1); others start at 0.
+    s.connected = (slot == 0);
+    s.connectedCount = static_cast<std::uint8_t>(slot == 0 ? 1 : 0);
+}
+
 void Initialize() {
     PadManager::Get().Initialize();
 }
