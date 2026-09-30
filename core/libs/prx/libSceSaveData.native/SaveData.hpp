@@ -113,11 +113,6 @@ inline std::filesystem::path GetSaveDataBaseDir() {
     }
 #endif
 
-    const char* envLocal = std::getenv("LOCALAPPDATA");
-    if (envLocal != nullptr && envLocal[0] != '\0') {
-        return std::filesystem::path(envLocal) / "PortPS5" / "saves" / GetCurrentAppTitleId();
-    }
-
     return std::filesystem::current_path() / "saves" / GetCurrentAppTitleId();
 }
 
