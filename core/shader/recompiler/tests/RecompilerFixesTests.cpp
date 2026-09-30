@@ -16,9 +16,11 @@
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrOpcode.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrProgram.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrValue.hpp"
+#include "SpirvBackend/include/SpirvBackend/SpirvOptimizer.hpp"
 
 #include <algorithm>
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <vector>
 
 namespace ShaderRecompiler {
@@ -887,6 +889,36 @@ TEST(RecompilerFixesTests, TessellationControlStageInsertsBarrier) {
     ASSERT_NE(it, entry.Instructions().end());
     EXPECT_EQ((*it)->Opcode(), IrOpcode::Barrier);
 }
+
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+// Vulkan 1.3 is the driver floor and SPIR-V 1.6 its ceiling (docs/spec/gpu-driver.md). Invariant: the
+// optimizer accepts exactly the Vulkan/SPIR-V pairings the driver can produce, so a driver that requests
+// {1.3, 1.6} validates, while a Vulkan 1.1/1.2 environment rejects a 1.6 target instead of silently
+// emitting modules the device would refuse. Failure mode guarded: the driver regressing to a 1.1 target.
+TEST(SpirvTargetVersionTests, VulkanThreeAcceptsSpirvOnePointSixAndOlderEnvironmentsReject) {
+    // Minimal valid module: Shader capability, Logical/GLSL450, empty GLCompute main. The header version
+    // word (1.0) is at or below every target tested, so only the target pairing decides pass/fail.
+    const std::vector<std::uint32_t> module{
+        0x07230203u, 0x00010000u, 0u, 6u, 0u,
+        0x00020011u, 1u,
+        0x0003000eu, 0u, 1u,
+        0x0005000fu, 5u, 4u, 0x6e69616du, 0u,
+        0x00060010u, 4u, 17u, 1u, 1u, 1u,
+        0x00020013u, 2u,
+        0x00030021u, 3u, 2u,
+        0x00050036u, 2u, 4u, 0u, 3u,
+        0x000200f8u, 5u,
+        0x000100fdu,
+        0x00010038u};
+    // Id bound (word 3) must exceed the highest id used (5), hence 6. Result id 4 is main, 5 its block.
+    const auto validated = ValidateAndOptimizeSpirv(module, 0x00403000u, 0x00010600u);
+    EXPECT_FALSE(validated.empty());
+    EXPECT_THROW(static_cast<void>(ValidateAndOptimizeSpirv(module, 0x00401000u, 0x00010600u)), std::runtime_error);
+    EXPECT_THROW(static_cast<void>(ValidateAndOptimizeSpirv(module, 0x00402000u, 0x00010600u)), std::runtime_error);
+    // Vulkan 1.4 shares the 1.6 ceiling, so an opt-in 1.4 device keeps the same shader target.
+    EXPECT_FALSE(ValidateAndOptimizeSpirv(module, 0x00404000u, 0x00010600u).empty());
+}
+#endif
 
 } // namespace
 } // namespace ShaderRecompiler

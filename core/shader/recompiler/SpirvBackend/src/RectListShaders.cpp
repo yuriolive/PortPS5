@@ -367,7 +367,7 @@ private:
 
 RectListShaders BuildRectListShaders(const RecompileResult& vertex, const RecompileResult& fragment, const SpirvTarget& target) {
     require(target.tessellation.has_value(), "tessellation shaders are unavailable");
-    require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010400u, "unsupported SPIR-V target version");
+    require(target.spirvVersion >= 0x00010300u && target.spirvVersion <= 0x00010600u, "unsupported SPIR-V target version");
     require(std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), spv::CapabilityTessellation) != target.supportedCapabilities.end(), "tessellation capability is unavailable");
     std::vector<Parameter> parameters;
     std::set<std::uint32_t> locations;

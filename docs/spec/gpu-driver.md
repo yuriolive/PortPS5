@@ -66,6 +66,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §GPU 
 - Size the host-import budget automatically and fall back to staging.
 - Use a GPU-side descriptor heap for bindless.
 - Recognise fill and copy kernels by general IR patterns.
+- Raise the API floor to Vulkan 1.3 and emit SPIR-V 1.6 for every stage. 1.3 is the documented reference tier (PRD §4.4) and the first core version whose SPIR-V ceiling is 1.6, so a 1.1 instance or device would reject the modules. Vulkan 1.4 is not required: it keeps the same SPIR-V ceiling, and its additions (push descriptors, `maintenance5/6`, host image copy, dynamic-rendering local read) are optional optimizations to adopt behind a capability check once a before/after measurement justifies them.
 - Do not adopt: `matchesFillKernel`, `matchesCopyKernel`, the bindless caps, `planFailure`, `tolerate`-skips, or any `APS5_*` behaviour switch.
 
 ## Target design
@@ -147,6 +148,7 @@ The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` on
 
 | Condition | Behaviour |
 |---|---|
+| No Vulkan 1.3 device with graphics, compute and (when presenting) swapchain support. | `VulkanDevice` construction throws `no Vulkan 1.3 ...`. Devices reporting a lower `apiVersion` are skipped during selection. |
 | Register state has no translation. | `Unsupported()` logs the packet and the register dump, then aborts. Nothing is silently skipped. |
 | Recompile or `KernelIdiom` execution plan fails. | Logged once, then abort via `Unsupported()`. No skip, and no `planFailure` memo. |
 | A shape word depends on pending GPU work. | Batch split plus a timeline wait, counted in the `capture_split` telemetry. |

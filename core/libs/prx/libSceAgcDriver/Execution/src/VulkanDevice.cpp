@@ -227,7 +227,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     }
     VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     application.pApplicationName = "AnyPS5 libSceAgcDriver";
-    application.apiVersion = VK_API_VERSION_1_1;
+    // Vulkan 1.3 is the floor (docs/spec/gpu-driver.md): it is the documented reference tier, and it is the
+    // first core version whose SPIR-V ceiling is 1.6. A 1.1 instance/device would reject SPIR-V 1.6 modules.
+    application.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo create{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     create.pApplicationInfo = &application;
     std::vector<const char*> instanceExtensions;
@@ -267,7 +269,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
     for (auto physical : devices) {
         VkPhysicalDeviceProperties properties{};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(physical, &properties);
-        if (properties.apiVersion < VK_API_VERSION_1_1) {
+        if (properties.apiVersion < VK_API_VERSION_1_3) {
             continue;
         }
         if (window != nullptr) {
@@ -303,7 +305,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window) : state(std::make_u
         }
     }
     if (selected == VK_NULL_HANDLE) {
-        throw std::runtime_error(window ? "Vulkan: no Vulkan 1.1 device with graphics, compute and swapchain presentation" : "Vulkan: no Vulkan 1.1 graphics and compute queue");
+        throw std::runtime_error(window ? "Vulkan: no Vulkan 1.3 device with graphics, compute and swapchain presentation" : "Vulkan: no Vulkan 1.3 graphics and compute queue");
     }
     VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
     properties.pNext = &state->subgroup;
@@ -693,7 +695,9 @@ void VulkanDevice::present(std::uint32_t width, std::uint32_t height, bool opaqu
 
 ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     const auto& limits = state->properties.limits;
-    ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_1, state->meshShader ? 0x00010400u : 0x00010300u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
+    // Vulkan 1.3 accepts SPIR-V up to 1.6 (also the ceiling for 1.4), so mesh shaders (which need >= 1.4) no longer
+    // select a different version: every stage is emitted as 1.6.
+    ShaderRecompiler::SpirvTarget target{VK_API_VERSION_1_3, 0x00010600u, state->subgroup.subgroupSize, ShaderRecompiler::BdaAbi::Version, state->capabilities, state->spirvExtensions, false, {limits.maxComputeWorkGroupSize[0], limits.maxComputeWorkGroupSize[1], limits.maxComputeWorkGroupSize[2]}, limits.maxComputeWorkGroupInvocations, limits.maxComputeSharedMemorySize, {}, {}};
     if (state->meshShader) {
         const auto& mesh = state->meshLimits;
         target.mesh = ShaderRecompiler::MeshTargetLimits{{mesh.maxMeshWorkGroupSize[0], mesh.maxMeshWorkGroupSize[1], mesh.maxMeshWorkGroupSize[2]}, mesh.maxMeshWorkGroupInvocations, std::min(mesh.maxMeshSharedMemorySize, mesh.maxMeshPayloadAndSharedMemorySize), mesh.maxMeshOutputVertices, mesh.maxMeshOutputPrimitives, mesh.maxMeshOutputComponents, std::min(mesh.maxMeshOutputMemorySize, mesh.maxMeshPayloadAndOutputMemorySize), mesh.meshOutputPerVertexGranularity, mesh.meshOutputPerPrimitiveGranularity};

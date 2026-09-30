@@ -904,11 +904,11 @@ void rectListTests() {
     fragment.spirv = makeModule({.fragment = true});
     const std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityTessellation};
     SpirvTarget target{};
-    target.vulkanVersion = VK_API_VERSION_1_1;
-    target.spirvVersion = 0x00010300u;
+    target.vulkanVersion = VK_API_VERSION_1_3;
+    target.spirvVersion = 0x00010600u;
     target.supportedCapabilities = capabilities;
     target.tessellation = TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
-    for (const auto version : {0x00010300u, 0x00010400u}) {
+    for (const auto version : {0x00010300u, 0x00010400u, 0x00010600u}) {
         target.spirvVersion = version;
         auto auxiliary = BuildRectListShaders(vertex, fragment, target);
         const std::array<CompiledShader, 4> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::TessellationControl, &auxiliary.control, 0}, {ShaderStage::TessellationEvaluation, &auxiliary.evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};

@@ -102,8 +102,8 @@ int main() {
         request.context.userDataBaseRegister = 8;
         request.context.userData = userData;
         request.context.vertex = ShaderVertexStageInfo{};
-        request.target.vulkanVersion = 0x00401000u;
-        request.target.spirvVersion = 0x00010300u;
+        request.target.vulkanVersion = 0x00403000u;
+        request.target.spirvVersion = 0x00010600u;
         request.target.subgroupSize = 64;
         request.target.fragmentShaderBarycentricEnabled = false;
         request.layout.pushConstantSizeBytes = 128;
