@@ -218,21 +218,35 @@ TEST(PthreadMutex, ZeroTimeoutAndImmediateAcquisition) {
     EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
 }
 
-// Verifies priority-inheritance mutex attribute configuration and acquisition.
+// Verifies priority-inheritance mutex attribute configuration and acquisition
+// (AnyPS5 70bbd700). Guest priorities are recorded but never applied to host
+// scheduling, so PRIO_INHERIT has nothing to lend and must behave exactly like
+// PRIO_NONE: accepted, and the mutex locks/unlocks/reports errors normally.
+// Rejecting it (the old behaviour) stopped titles at their first mutex.
+// PRIO_PROTECT likewise has no ceiling to apply and is accepted (FreeBSD and
+// shadPS4 accept 0..2; upstream AnyPS5 kept throwing for it). Values outside
+// 0..2 and a null attr return SCE EINVAL (a code, never a throw or abort).
 TEST(PthreadMutex, PriorityInheritanceProtocol) {
     PthreadMutexattr attr = nullptr;
     ASSERT_EQ(scePthreadMutexattrInit(&attr), 0);
     ASSERT_NE(attr, nullptr);
 
-    // Protocol 0 = PTHREAD_PRIO_NONE (supported)
-    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 0), 0);
-    // Protocol 1 = PTHREAD_PRIO_INHERIT, 2 = PTHREAD_PRIO_PROTECT (unsupported, return SCE EINVAL)
-    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 1), static_cast<int>(0x80020016u));
-    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 2), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 0), 0);  // PTHREAD_PRIO_NONE
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 1), 0);  // PTHREAD_PRIO_INHERIT
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 2), 0);  // PTHREAD_PRIO_PROTECT
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 3), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 99), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, -1), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(nullptr, 1), static_cast<int>(0x80020016u));
 
+    // The last accepted protocol is INHERIT; a mutex built from it must be
+    // fully functional, including the error-check relock report.
+    ASSERT_EQ(scePthreadMutexattrSetprotocol(&attr, 1), 0);
+    ASSERT_EQ(scePthreadMutexattrSettype(&attr, 1), 0);  // ErrorCheck
     PthreadMutex mutex = nullptr;
-    ASSERT_EQ(scePthreadMutexInit(&mutex, &attr, "none_mutex"), 0);
+    ASSERT_EQ(scePthreadMutexInit(&mutex, &attr, "inherit_mutex"), 0);
     EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+    EXPECT_EQ(scePthreadMutexLock(&mutex), SCE_KERNEL_ERROR_EDEADLK);
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
     EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
     EXPECT_EQ(scePthreadMutexattrDestroy(&attr), 0);
