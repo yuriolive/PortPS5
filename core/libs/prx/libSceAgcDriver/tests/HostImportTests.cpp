@@ -416,6 +416,36 @@ TEST_F(HostImportTest, WriteBindOrdersItsWritesAfterEarlierReads) {
     local.Sync();
 }
 
+// Review finding (PR #49, coderabbit): imports are keyed by window begin, and a bigger window with the
+// SAME begin as a smaller existing one used to collide: the insert failed, the new import leaked and the
+// returned binding covered memory past the old buffer. Invariant: while a batch still uses the smaller
+// window the bigger range stages (no crash, no leak, accounting unchanged); once it finished the smaller
+// window is replaced and the bigger range imports with consistent accounting.
+TEST_F(HostImportTest, LargerWindowWithTheSameBeginReplacesOrRefusesNeverCollides) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    const auto window = Alignment();
+    MakeImports(window * 4);
+    AlignedBlock guest(static_cast<std::size_t>(window) * 4, static_cast<std::size_t>(window));
+    const auto small = imports->Bind(guest.Address(), 64, GuestAccess::Read);  // window [A, A+window)
+    ASSERT_EQ(small.status, BindStatus::Ok);
+    ASSERT_TRUE(small.binding.imported);
+    const auto size = static_cast<std::size_t>(window) + 64;  // needs window [A, A+2*window): same begin
+    const auto busy = imports->Bind(guest.Address(), size, GuestAccess::Read);
+    ASSERT_EQ(busy.status, BindStatus::Ok);
+    EXPECT_FALSE(busy.binding.imported) << "the smaller window is still used by an unfinished batch";
+    EXPECT_EQ(imports->Stats().imports, 1u);
+    EXPECT_EQ(imports->Stats().importedBytes, window);
+    recorder->Sync();  // the batch that used the small window finished
+    const auto large = imports->Bind(guest.Address(), size, GuestAccess::Read);
+    ASSERT_EQ(large.status, BindStatus::Ok);
+    EXPECT_TRUE(large.binding.imported);
+    EXPECT_EQ(large.binding.bytes, size);
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.imports, 2u);
+    EXPECT_EQ(stats.evictions, 1u) << "the smaller window was replaced";
+    EXPECT_EQ(stats.importedBytes, window * 2) << "exactly the larger window is accounted";
+}
+
 // Invariant: a device with VK_EXT_external_memory_host and a budget imports the guest allocation itself
 // (no copy), and GPU stores land in guest memory directly; the tracker learns of them at completion.
 TEST_F(HostImportTest, ImportedWritesLandInGuestMemoryDirectly) {

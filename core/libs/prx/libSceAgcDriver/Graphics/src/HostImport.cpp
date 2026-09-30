@@ -111,7 +111,7 @@ bool HostImport::tryImport(std::uint64_t address, std::size_t bytes, GuestAccess
         const bool ok = state == PortPS5::GuestMemory::PageState::ReadWrite || (access == GuestAccess::Read && state == PortPS5::GuestMemory::PageState::ReadOnly);
         if (!ok) return false;
     }
-    const Import* found = nullptr;
+    Import* found = nullptr;
     for (const auto& [begin, entry] : imports) {
         if (entry->begin <= windowBegin && windowEnd <= entry->end) {
             found = entry.get();
@@ -119,6 +119,17 @@ bool HostImport::tryImport(std::uint64_t address, std::size_t bytes, GuestAccess
         }
     }
     if (found == nullptr) {
+        // `imports` is keyed by window begin. A smaller window with the SAME begin was not found above (it
+        // does not contain the new one): replace it when no unfinished batch uses it, else refuse so the
+        // caller stages. Inserting a second entry under the same key would fail and lose the new import.
+        const auto same = imports.find(windowBegin);
+        if (same != imports.end()) {
+            if (same->second->lastSerial > recorder.CompletedSerial()) return false;
+            stats.importedBytes -= same->second->end - same->second->begin;
+            destroy(*same->second);
+            imports.erase(same);
+            ++stats.evictions;
+        }
         if (!evictFor(windowEnd - windowBegin)) return false;
         auto entry = std::make_unique<Import>();
         entry->begin = windowBegin;
@@ -169,11 +180,12 @@ bool HostImport::tryImport(std::uint64_t address, std::size_t bytes, GuestAccess
         found = entry.get();
         stats.importedBytes += windowEnd - windowBegin;
         ++stats.imports;
+        // The key is free: a same-key entry was replaced or refused above.
         imports.emplace(windowBegin, std::move(entry));
     } else {
         ++stats.importHits;
     }
-    auto* entry = imports.at(found->begin).get();
+    auto* entry = found;
     entry->lastUse = ++useClock;
     // The batch that will record this bind's work is the next one submitted.
     entry->lastSerial = recorder.Submissions() + 1;

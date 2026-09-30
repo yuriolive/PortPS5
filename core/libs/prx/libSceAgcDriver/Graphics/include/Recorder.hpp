@@ -58,10 +58,15 @@ public:
     };
 
     /**
+     * @brief Creates a recorder over a device, queue and command pool.
      * @param context Device handles; the device, queue and pool must outlive the Recorder.
      * @param options See Options. A failed timeline-semaphore creation only disables WaitSerial.
      */
     explicit Recorder(const Context& context, const Options& options);
+    /**
+     * @brief Creates a recorder with default Options.
+     * @param context Device handles; the device, queue and pool must outlive the Recorder.
+     */
     explicit Recorder(const Context& context) : Recorder(context, Options{}) {}
     /** @brief Deactivates, syncs every batch, then frees the pooled command buffers and the timeline. */
     ~Recorder();
@@ -86,8 +91,9 @@ public:
     };
 
     /**
-     * @return The open batch's command buffer, starting a batch when none is open. Throws on Vulkan
-     * failure. The caller must hold a Scope while it records into the returned buffer.
+     * @brief Gives the command buffer of the open batch, starting a batch when none is open.
+     * @return The open batch's command buffer. Throws on Vulkan failure. The caller must hold a Scope while
+     * it records into the returned buffer.
      */
     VkCommandBuffer Commands();
     /**
@@ -111,9 +117,13 @@ public:
      *
      * It is destroyed after the finishing thread released its outermost Recorder hold, so its destructor
      * must need neither the Recorder nor a particular thread.
+     * @param object The object to keep alive.
      */
     void Keep(std::shared_ptr<void> object);
-    /** @brief Runs @p action when the open batch completed, in submission order (CPU write-backs). */
+    /**
+     * @brief Runs an action when the open batch completed, in submission order (CPU write-backs).
+     * @param action Runs under the Recorder lock on the finishing thread; a throw is reported and skipped.
+     */
     void OnComplete(std::function<void()> action);
 
     /**
@@ -145,6 +155,8 @@ public:
      * @brief Finishes (waits for and completes) the newest in-flight batch that writes the range and all
      * before it, WITHOUT submitting the open batch. No-op inside a completion action. Unlike SyncThrough
      * it is safe for a caller that is still recording into the open batch.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is a no-op.
      */
     void SyncInFlightWrites(std::uint64_t address, std::size_t bytes);
     /**
@@ -162,7 +174,11 @@ public:
      */
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
 
-    /** @brief Ends and submits the open batch without waiting (no-op when none is open). */
+    /**
+     * @brief Ends and submits the open batch without waiting (no-op when none is open).
+     *
+     * Takes no parameters and returns nothing; a failing submit undoes the batch's accounting and rethrows.
+     */
     void Submit();
     /**
      * @brief Submits the open batch and reports the newest serial.
@@ -179,11 +195,19 @@ public:
      *
      * Touches only the immutable timeline semaphore; the caller keeps the Recorder alive. Requires
      * HasTimeline(); a no-op otherwise or for serial 0. Throws on device loss.
+     * @param serial The newest batch serial to wait for.
      */
     void WaitSerial(std::uint64_t serial);
-    /** @brief Finishes (completions, release) in-flight batches up to @p serial, front first. */
+    /**
+     * @brief Finishes (completions, release) in-flight batches up to a serial, front first.
+     * @param serial The newest batch serial to finish.
+     */
     void FinishUpTo(std::uint64_t serial);
-    /** @brief Submits and waits for every batch, running completions in order. */
+    /**
+     * @brief Submits and waits for every batch, running completions in order.
+     *
+     * Takes no parameters and returns nothing; throws on device loss.
+     */
     void Sync();
     /**
      * @brief Waits only for the batches up to the newest one that writes the range.
@@ -191,11 +215,16 @@ public:
      * Submits the open batch when it writes the range; later batches stay in flight. Inside a completion
      * action no wait is made: every batch still in flight was recorded after the completing one, so its
      * store is that batch's in-order write.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is a no-op.
      * @param waitUnlocked When the caller's hold is the outermost one and a timeline exists, the GPU wait
      * runs with the Recorder lock released so other threads are not queued behind a CPU read's wait.
      */
     void SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUnlocked = false);
-    /** @brief Completes batches whose fences already signaled. @return Whether nothing is in flight. */
+    /**
+     * @brief Completes batches whose fences already signaled, without waiting.
+     * @return Whether nothing is in flight afterwards.
+     */
     bool Reap();
     /**
      * @brief Reports how many batches were submitted.
