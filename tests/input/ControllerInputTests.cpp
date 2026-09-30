@@ -12,6 +12,7 @@
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "prx/libScePad/src/PadInternal.hpp"
 
 #include <gtest/gtest.h>
 
@@ -27,7 +28,7 @@ namespace {
 constexpr std::uint32_t Bit(Pad::PadButton b) { return static_cast<std::uint32_t>(b); }
 
 // PadManager is a process singleton: reset keyboard and every controller slot
-// to neutral/disconnected around each test so cases stay independent.
+// to neutral/disconnected (and connectedCount to its initial value) around each test so cases stay independent.
 class ControllerInputTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -42,6 +43,8 @@ protected:
         for (int s = 0; s < PAD_MAX_SLOTS; ++s) {
             PadSetControllerConnected_nid_postfix(s, false);
             scePadClose_nid_postfix(s + 1);
+            // Also zero connectedCount so count assertions are order-independent.
+            Pad::PadManager::Get().TestResetSlot(s);
         }
     }
 };
@@ -219,4 +222,22 @@ TEST_F(ControllerInputTest, InvalidSlotIgnored) {
     PadPublishControllerInput_nid_postfix(PAD_MAX_SLOTS, PadInputState{});
     PadSetControllerConnected_nid_postfix(99, true);
     SUCCEED();
+}
+
+// Invariant (review finding): publishing a controller sample to a slot that was
+// never explicitly connected must still connect it and bump connectedCount
+// exactly once, without double-counting on later samples or a later
+// SetControllerConnected(true).
+TEST_F(ControllerInputTest, FirstPublishEstablishesConnection) {
+    PadData d{};
+    PadPublishControllerInput_nid_postfix(1, PadInputState{});
+    ASSERT_EQ(scePadOpen_nid_postfix(0x10000000, PAD_PORT_TYPE_STANDARD, 1, nullptr), 2);
+    ASSERT_EQ(scePadRead_nid_postfix(2, &d, 1), 1);
+    EXPECT_TRUE(d.connected);
+    EXPECT_EQ(d.connected_count, 1);
+
+    PadPublishControllerInput_nid_postfix(1, PadInputState{});
+    PadSetControllerConnected_nid_postfix(1, true);
+    ASSERT_EQ(scePadRead_nid_postfix(2, &d, 1), 1);
+    EXPECT_EQ(d.connected_count, 1);
 }

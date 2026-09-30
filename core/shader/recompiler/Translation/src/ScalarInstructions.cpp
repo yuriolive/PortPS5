@@ -43,6 +43,14 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SCselectB64:
         scalarSelect64(inst, sourceAt(inst, 1u));
         return true;
+    case RdnaOpcode::SCmovB32: {
+        // s_cmov_b32: D = SCC ? S0 : D (destination unchanged when SCC is clear; SCC itself is untouched).
+        const IrU32 source = readU32(sourceAt(inst, 0u));
+        const IrU32 previous = readU32(inst.destination);
+        const IrU32 result(ir.Select(ir.GetScc(), source.Value(), previous.Value()));
+        writeRawU32(inst.destination, result);
+        return true;
+    }
     case RdnaOpcode::SCmovB64:
         scalarSelect64(inst, inst.destination);
         return true;
@@ -63,6 +71,16 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return true;
     case RdnaOpcode::SAndSaveexecB64:
         sSaveexec(inst, IrOpcode::BitwiseAnd32, false, false, true);
+        return true;
+    case RdnaOpcode::SOrSaveexecB64:
+        sSaveexec(inst, IrOpcode::BitwiseOr32, false, false, true);
+        return true;
+    case RdnaOpcode::SXorSaveexecB64:
+        sSaveexec(inst, IrOpcode::BitwiseXor32, false, false, true);
+        return true;
+    case RdnaOpcode::SAndn2SaveexecB64:
+        // EXEC = S0 & ~EXEC (the "2" operand is EXEC).
+        sSaveexec(inst, IrOpcode::BitwiseAnd32, true, false, true);
         return true;
     case RdnaOpcode::SAndn1SaveexecB64:
         sSaveexec(inst, IrOpcode::BitwiseAnd32, false, true, true);
@@ -190,6 +208,38 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return simpleInteger(inst, IrOpcode::BitwiseNot32, IrType::U32, false, false, true);
     case RdnaOpcode::SBrevB32:
         return simpleInteger(inst, IrOpcode::BitReverse32, IrType::U32, false, false, false);
+    case RdnaOpcode::SBrevB64: {
+        // s_brev_b64: D = bit-reverse of the 64-bit value, so the halves swap: D.lo = rev(S0.hi), D.hi = rev(S0.lo). SCC untouched.
+        const auto source = readU32Pair(sourceAt(inst, 0u));
+        const IrU32 low(ir.Emit(IrOpcode::BitReverse32, IrType::U32, {&source[1].Value()}));
+        const IrU32 high(ir.Emit(IrOpcode::BitReverse32, IrType::U32, {&source[0].Value()}));
+        writeU32Pair(inst.destination, {low, high});
+        return true;
+    }
+    case RdnaOpcode::SSextI32I8:
+    case RdnaOpcode::SSextI32I16: {
+        // s_sext_i32_i8 / _i16: D = sign-extend(S0[7:0]) or (S0[15:0]); SCC untouched.
+        const auto source = readU32(sourceAt(inst, 0u));
+        const auto width = inst.op == RdnaOpcode::SSextI32I8 ? 8u : 16u;
+        auto& result = ir.Emit(IrOpcode::BitFieldSExtract, IrType::U32, {&source.Value(), &ir.Constant(0u), &ir.Constant(width)});
+        writeOperand(inst.destination, &result);
+        return true;
+    }
+    case RdnaOpcode::SBcnt0I32B32:
+    case RdnaOpcode::SFf0I32B32: {
+        // s_bcnt0_i32_b32: D = number of zero bits of S0, SCC = (D != 0).
+        // s_ff0_i32_b32:   D = index of the lowest zero bit of S0, or -1 when S0 is all ones (SCC untouched).
+        // Both are the ones-variant applied to ~S0; FindILsb returns -1 for a zero input.
+        const IrU32 source = readU32(sourceAt(inst, 0u));
+        auto& inverted = ir.BitwiseNot(source.Value());
+        const bool count = inst.op == RdnaOpcode::SBcnt0I32B32;
+        auto& result = ir.Emit(count ? IrOpcode::BitCount32 : IrOpcode::FindILsb32, IrType::U32, {&inverted});
+        writeOperand(inst.destination, &result);
+        if (count) {
+            ir.SetScc(ir.INotEqual(result, ir.Constant(0u)));
+        }
+        return true;
+    }
     case RdnaOpcode::SBcnt1I32B32:
         return simpleInteger(inst, IrOpcode::BitCount32, IrType::U32, false, false, true);
     case RdnaOpcode::SBcnt1I32B64:
@@ -202,6 +252,8 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return simpleInteger(inst, IrOpcode::ShiftRightLogical32, IrType::U32, false, true, true);
     case RdnaOpcode::SAshrI32:
         return simpleInteger(inst, IrOpcode::ShiftRightArithmetic32, IrType::U32, false, true, true);
+    case RdnaOpcode::SAshrI64:
+        return sAshrI64(inst);
     case RdnaOpcode::SLshlB64:
         return simpleInteger(inst, IrOpcode::ShiftLeftLogical64, IrType::U64, false, false, true);
     case RdnaOpcode::SLshrB64:
@@ -248,6 +300,10 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return sBitcmpB32(inst, false);
     case RdnaOpcode::SBitcmp1B32:
         return sBitcmpB32(inst, true);
+    case RdnaOpcode::SBitcmp0B64:
+        return sBitcmpB64(inst, false);
+    case RdnaOpcode::SBitcmp1B64:
+        return sBitcmpB64(inst, true);
     case RdnaOpcode::SPackLlB32B16:
         return packB16(inst, false, false);
     case RdnaOpcode::SPackLhB32B16:
@@ -258,6 +314,8 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SSleep:
     case RdnaOpcode::SSetprio:
     case RdnaOpcode::STrap:
+    // S_CLAUSE is a scheduling hint with no architectural effect.
+    case RdnaOpcode::SClause:
         emitControlNop();
         return true;
     case RdnaOpcode::SWaitcntDepctr:
@@ -274,6 +332,9 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return true;
     case RdnaOpcode::SInstPrefetch:
         sInstPrefetch();
+        return true;
+    case RdnaOpcode::SCbranchCdbg:
+        // Debugger-conditional branches are never taken on a retail wave: fall through, emit nothing.
         return true;
     case RdnaOpcode::SBranch:
     case RdnaOpcode::SCbranchScc0:

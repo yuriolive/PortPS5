@@ -15,6 +15,11 @@
 
 extern "C" void NotImplemented_nid_no_patch(const char* funcName);
 
+// Runs (and removes) the handlers registered through __cxa_atexit for `dsoHandle`, newest first. A null
+// `dsoHandle` runs every registered handler, which is what process exit does. Shared with libSceLibcInternal,
+// which exports __cxa_finalize under its own module name (cross-prx verbatim `_nid_no_patch` name).
+extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
+
 // Logs and aborts for genuinely unsupported states (docs/spec/threading.md
 // Error policy). Replaces the throw in NotImplemented_nid_no_patch, which the
 // shared DWARF unwinder lets guest catch(...) swallow. The log names what was

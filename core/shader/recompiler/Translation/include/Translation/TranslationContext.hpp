@@ -1,3 +1,8 @@
+// core/shader/recompiler/Translation/include/Translation/TranslationContext.hpp
+// TranslationContext: lowers one decoded RdnaInstruction at a time into the recompiler IR through an IrBuilder.
+// It owns no program state beyond the builder's insertion point; register and exec/SCC effects are emitted as
+// ordered Get/Set IR operations that the SSA pass resolves later, so emission order is semantically significant.
+// One context per compiler thread; not thread-safe.
 #ifndef CORE_SHADER_RECOMPILIER_TRANSLATION_INCLUDE_TRANSLATION_TRANSLATIONCONTEXT_HPP
 #define CORE_SHADER_RECOMPILIER_TRANSLATION_INCLUDE_TRANSLATION_TRANSLATIONCONTEXT_HPP
 
@@ -50,6 +55,7 @@ private:
     IrU64 readU64(const RdnaOperand& operand);
     IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false);
     IrF32 readF16AsF32(const RdnaOperand& operand);
+    IrU32 readF16SourceBits(const RdnaOperand& operand);
     IrF32 readMixF32(const RdnaOperand& operand);
     IrU32 readU16LaneRaw(const RdnaOperand& operand, bool highLane);
     IrU32 readU16LaneAsU32(const RdnaOperand& operand, bool highLane, bool signExtend);
@@ -182,10 +188,13 @@ private:
     bool vBfeU32(const RdnaInstruction& inst, bool sign);
     bool vBfiB32(const RdnaInstruction& inst);
     bool sBitcmpB32(const RdnaInstruction& inst, bool expected);
+    bool sBitcmpB64(const RdnaInstruction& inst, bool expected);
+    bool sAshrI64(const RdnaInstruction& inst);
     bool vAlignbitB32(const RdnaInstruction& inst);
     bool vAlignbyteB32(const RdnaInstruction& inst);
     bool vLshlAddU32(const RdnaInstruction& inst);
     bool vAddLshlU32(const RdnaInstruction& inst);
+    bool vPermB32(const RdnaInstruction& inst);
     bool vXadU32(const RdnaInstruction& inst);
     bool vLshlOrB32(const RdnaInstruction& inst);
     bool vCndmaskB32(const RdnaInstruction& inst);
