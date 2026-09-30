@@ -168,11 +168,16 @@ portps5_add_gtest(savedata_fidelity_tests
 portps5_add_gtest(config_cross_prx_tests
     SOURCES
         config/ConfigCrossPrxTests.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/Sha1.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/NidCompute.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/NidResolver.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/ExportExclusions.cpp
     LIBRARIES
         libc
     INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/core/libs
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/include
     LABELS
         unit
 )
