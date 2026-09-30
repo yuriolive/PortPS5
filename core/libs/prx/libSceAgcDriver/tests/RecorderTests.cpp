@@ -18,6 +18,14 @@ namespace {
 // A device-function resolver that can make vkQueueSubmit fail, to exercise Submit's failure path.
 PFN_vkGetDeviceProcAddr realDeviceProc = nullptr;
 std::atomic<bool> failQueueSubmit{false};
+PFN_vkCmdPipelineBarrier realPipelineBarrier = nullptr;
+std::atomic<int> hostStageBarriers{0};
+
+// Forwards to the real barrier, counting those that make device writes visible to the HOST stage.
+VKAPI_ATTR void VKAPI_CALL CountingPipelineBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags flags, std::uint32_t memoryCount, const VkMemoryBarrier* memory, std::uint32_t bufferCount, const VkBufferMemoryBarrier* buffers, std::uint32_t imageCount, const VkImageMemoryBarrier* images) {
+    if ((destination & VK_PIPELINE_STAGE_HOST_BIT) != 0) ++hostStageBarriers;
+    realPipelineBarrier(commands, source, destination, flags, memoryCount, memory, bufferCount, buffers, imageCount, images);
+}
 
 VKAPI_ATTR VkResult VKAPI_CALL FailingQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
     return VK_ERROR_DEVICE_LOST;
@@ -25,6 +33,10 @@ VKAPI_ATTR VkResult VKAPI_CALL FailingQueueSubmit(VkQueue, std::uint32_t, const 
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL FaultInjectingDeviceProc(VkDevice device, const char* name) {
     if (failQueueSubmit.load() && std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&FailingQueueSubmit);
+    if (std::strcmp(name, "vkCmdPipelineBarrier") == 0) {
+        realPipelineBarrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(realDeviceProc(device, name));
+        return reinterpret_cast<PFN_vkVoidFunction>(&CountingPipelineBarrier);
+    }
     return realDeviceProc(device, name);
 }
 
@@ -403,12 +415,36 @@ TEST_F(RecorderTest, FailedSubmitUndoesLabelAccountingAndSnapshot) {
     EXPECT_EQ(Recorder::PendingCompletionLabels(), 0u) << "a label that will never land must not keep workers reaping";
     EXPECT_EQ(local.PendingLabels(), 0u);
     EXPECT_FALSE(Recorder::SnapshotWriteOverlaps(address, 4));
+    EXPECT_FALSE(Recorder::PendingLabelSince().has_value()) << "the failed batch's label age must not leak into the next batch";
     EXPECT_TRUE(local.Idle());
     // The pooled command buffer and fence were returned, so the recorder keeps working.
     local.Commands();
     EXPECT_EQ(local.SubmitAndEpoch(), 1u);
     local.Sync();
     EXPECT_TRUE(local.Idle());
+}
+
+// Review finding (PR #49, coderabbit): completions read GPU results on the CPU, and a fence wait alone does
+// not make device writes visible to the host. Invariant: a batch that wrote guest ranges (or carries
+// completions) ends with a memory barrier into the HOST stage; a batch with neither needs none.
+TEST_F(RecorderTest, SubmitMakesDeviceWritesVisibleToTheHost) {
+    auto counting = device.GetContext();
+    realDeviceProc = counting.deviceProc;
+    counting.deviceProc = &FaultInjectingDeviceProc;
+    Recorder::Options options;
+    options.timelineSemaphores = device.Timeline();
+    Recorder local(counting, options);
+    hostStageBarriers = 0;
+    local.Commands();
+    local.Submit();
+    EXPECT_EQ(hostStageBarriers.load(), 0) << "no writes and no completions: nothing to make visible";
+    local.NotePendingWrite(0x300000, 16);
+    local.Submit();
+    EXPECT_EQ(hostStageBarriers.load(), 1);
+    local.OnComplete([] {});
+    local.Submit();
+    EXPECT_EQ(hostStageBarriers.load(), 2);
+    local.Sync();
 }
 
 // Invariant (concurrency): many threads noting writes, submitting and syncing through the flush hook

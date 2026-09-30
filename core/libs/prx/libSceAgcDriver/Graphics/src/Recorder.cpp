@@ -390,6 +390,29 @@ bool Recorder::PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) co
     return std::any_of(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return overlaps(*batch, address, end); });
 }
 
+bool Recorder::InFlightWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
+    if (bytes == 0) return false;
+    const Scope scope(*this);
+    const auto end = address + bytes;
+    return std::any_of(inFlight.begin(), inFlight.end(), [&](const auto& batch) { return overlaps(*batch, address, end); });
+}
+
+void Recorder::SyncInFlightWrites(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0) return;
+    const Scope scope(*this);
+    // Inside a completion every batch still in flight was recorded after the completing one; see SyncThrough.
+    if (completionDepth != 0) return;
+    const auto end = address + bytes;
+    std::uint64_t target = 0;
+    for (auto it = inFlight.rbegin(); it != inFlight.rend(); ++it) {
+        if (overlaps(**it, address, end)) {
+            target = (*it)->serial;
+            break;
+        }
+    }
+    if (target != 0) FinishUpTo(target);
+}
+
 bool Recorder::OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
     const Scope scope(*this);
     return bytes != 0 && open != nullptr && overlaps(*open, address, address + bytes);
@@ -517,6 +540,15 @@ void Recorder::Submit() {
     if (open == nullptr) return;
     auto batch = std::move(open);
     try {
+        if (!batch->writes.empty() || !batch->completions.empty()) {
+            // Completions read GPU results on the CPU (staged write-backs, imported guest memory). A fence
+            // wait alone does not make device writes visible to the host: a memory dependency into the
+            // HOST stage is required, exactly as VulkanDevice::Dispatch records for its downloads.
+            VkMemoryBarrier toHost{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            toHost.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+            toHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(batch->commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &toHost, 0, nullptr, 0, nullptr);
+        }
         Check(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
         VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submission.commandBufferCount = 1;
@@ -545,6 +577,8 @@ void Recorder::Submit() {
             }
         }
         release(*batch);
+        // The pending-label age belongs to the open batch, which no longer exists.
+        pendingLabelSince_.store(NoPendingLabel, std::memory_order_release);
         try {
             publishPendingWrites();
         } catch (...) {

@@ -200,7 +200,9 @@ BindResult HostImport::stage(std::uint64_t address, std::size_t bytes, GuestAcce
         // which would end and submit that batch under the caller, who is still recording into it (the
         // Recorder::Scope contract). Serve the exact staged copy the producer wrote (ordered by a
         // barrier) or report that a Submit is needed first; never sync implicitly here.
-        if (found == stagings.end() || found->second->buffer == nullptr) {
+        if (found == stagings.end() || found->second->buffer == nullptr || !openWritesOnlyFromStaging(address, bytes, key)) {
+            // No copy, or the open batch's writes to the range did not all go into THIS copy (another
+            // staged range, an import, or a write this object did not make): its bytes would be stale.
             result.status = BindStatus::OpenBatchWrites;
             return result;
         }
@@ -215,8 +217,10 @@ BindResult HostImport::stage(std::uint64_t address, std::size_t bytes, GuestAcce
         afterBind(address, bytes, access, entry.buffer);
         return result;
     }
-    // Collect first: it runs the flush hook, landing pending GPU writes (and their write-backs) before
-    // the bytes below are read, then stamps CPU-dirty blocks.
+    // Land in-flight writers (their write-backs reach guest memory only at completion) without relying
+    // on an activated flush hook, and without submitting the open batch.
+    if (recorder.InFlightWriteOverlaps(address, bytes)) recorder.SyncInFlightWrites(address, bytes);
+    // Collect: it runs the flush hook (if any), then stamps CPU-dirty blocks.
     const auto generation = tracker.Collect(address, bytes);
     found = stagings.find(key);
     const bool upload = found == stagings.end() || generation == 0 || found->second->generation != generation;
@@ -273,6 +277,7 @@ void HostImport::afterBind(std::uint64_t address, std::size_t bytes, GuestAccess
     if (access != GuestAccess::Write) return;
     // Noted first so a CPU read through the flush hook syncs from now on.
     recorder.NotePendingWrite(address, bytes);
+    noteOpenWrite(address, bytes, staged == nullptr);
     auto* trk = &tracker;
     auto* owner = &recorder;
     if (staged == nullptr) {
@@ -289,6 +294,33 @@ void HostImport::afterBind(std::uint64_t address, std::size_t bytes, GuestAccess
         // the GPU decides from this ring whether the write-back overwrote it.
         owner->NoteWrittenBackOn(address, bytes);
     });
+}
+
+void HostImport::noteOpenWrite(std::uint64_t address, std::size_t bytes, bool imported) {
+    const auto serial = recorder.Submissions() + 1;  // the serial the open batch will get
+    if (openWritesSerial != serial) {
+        openWrites.clear();
+        openWritesSerial = serial;
+    }
+    openWrites.push_back({address, address + bytes, imported, std::make_pair(address, bytes)});
+}
+
+bool HostImport::openStagedWriteOverlaps(std::uint64_t address, std::size_t bytes) const {
+    if (openWritesSerial != recorder.Submissions() + 1) return false;
+    const auto end = address + bytes;
+    return std::any_of(openWrites.begin(), openWrites.end(), [&](const OpenWrite& write) { return !write.imported && address < write.end && write.begin < end; });
+}
+
+bool HostImport::openWritesOnlyFromStaging(std::uint64_t address, std::size_t bytes, const std::pair<std::uint64_t, std::size_t>& key) const {
+    if (openWritesSerial != recorder.Submissions() + 1) return false;
+    const auto end = address + bytes;
+    bool any = false;
+    for (const auto& write : openWrites) {
+        if (!(address < write.end && write.begin < end)) continue;
+        if (write.imported || write.key != key) return false;
+        any = true;
+    }
+    return any;
 }
 
 void HostImport::barrierAgainstOpenWrites() {
@@ -314,11 +346,18 @@ BindResult HostImport::Bind(std::uint64_t address, std::size_t bytes, GuestAcces
     std::lock_guard lock(mutex);
     GuestBinding imported;
     const bool openOverlap = recorder.OpenWriteOverlaps(address, bytes);
-    if (tryImport(address, bytes, access, imported)) {
-        result.binding = imported;
-        if (openOverlap) barrierAgainstOpenWrites();
-        afterBind(address, bytes, access, nullptr);
-        return result;
+    // An import reads guest memory directly, but a staged writer reaches guest memory only when its batch
+    // completes. So: a staged writer in the OPEN batch sends this bind to its staged copy (stage()), and
+    // staged writers already in flight are landed first (never submitting the open batch).
+    const bool stagedOpenWriter = openOverlap && openStagedWriteOverlaps(address, bytes);
+    if (!stagedOpenWriter) {
+        if (recorder.InFlightWriteOverlaps(address, bytes)) recorder.SyncInFlightWrites(address, bytes);
+        if (tryImport(address, bytes, access, imported)) {
+            result.binding = imported;
+            if (openOverlap) barrierAgainstOpenWrites();
+            afterBind(address, bytes, access, nullptr);
+            return result;
+        }
     }
     if (context.externalMemoryHost && options.importBudgetBytes != 0) ++stats.importRefusals;
     return stage(address, bytes, access);

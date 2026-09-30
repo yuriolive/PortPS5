@@ -287,6 +287,69 @@ TEST_F(HostImportTest, StagedWriteBackIsNotedOnTheOwningRecorder) {
     EXPECT_EQ(rest, 0x0BADF00Du);
 }
 
+// Review finding (PR #49, gitar): the open-batch fast path must serve only the copy the open batch
+// actually wrote. Invariant: an exact-key staged copy that is NOT the write target (an earlier read copy
+// of the same range while a larger write went elsewhere) is never served; the bind reports
+// OpenBatchWrites instead of returning pre-write bytes.
+TEST_F(HostImportTest, OpenBatchFastPathNeverServesAnotherProducersCopy) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const Recorder::Scope scope(*recorder);
+    ASSERT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::Ok);  // copy Y, exact key
+    const auto write = imports->Bind(guest.Address(), 128, GuestAccess::Write);               // different producer X
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    Fill(write.binding, 0x0F0F0F0F);
+    const auto read = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    EXPECT_EQ(read.status, BindStatus::OpenBatchWrites) << "Y does not hold what X wrote";
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+}
+
+// Review finding (PR #49, coderabbit): an import reads guest memory directly, but a staged writer reaches
+// it only at completion. Invariant (across batches): after a staged write was submitted, an import read of
+// the range first lands that write, with no flush hook active, so the bind returns only once guest memory
+// holds the result.
+TEST_F(HostImportTest, ImportAfterAnInFlightStagedWriteLandsTheWriteFirst) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(64ull << 20);
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 2, static_cast<std::size_t>(Alignment()));
+    tracker.state = PortPS5::GuestMemory::PageState::ReadOnly;  // a write bind cannot import: it stages
+    const auto write = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    ASSERT_FALSE(write.binding.imported);
+    Fill(write.binding, 0x13572468);
+    recorder->Submit();
+    tracker.state = PortPS5::GuestMemory::PageState::ReadWrite;
+    const auto read = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(read.status, BindStatus::Ok);
+    EXPECT_TRUE(read.binding.imported);
+    std::uint32_t value = 0;
+    std::memcpy(&value, guest.Data(), 4);
+    EXPECT_EQ(value, 0x13572468u) << "the staged write must have landed before the import was handed out";
+}
+
+// Review finding (PR #49, coderabbit): same hazard inside one batch. Invariant: when the OPEN batch has a
+// staged writer of the range, a read bind is served from that staged copy (not an import of guest memory
+// that does not hold the result yet), behind a barrier, without submitting the batch.
+TEST_F(HostImportTest, ImportReadOfAnOpenBatchStagedWriteUsesTheStagedCopy) {
+    if (!CanImport()) GTEST_SKIP() << "VK_EXT_external_memory_host unavailable";
+    MakeImports(64ull << 20);
+    AlignedBlock guest(static_cast<std::size_t>(Alignment()) * 2, static_cast<std::size_t>(Alignment()));
+    const Recorder::Scope scope(*recorder);
+    tracker.state = PortPS5::GuestMemory::PageState::ReadOnly;
+    const auto write = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    ASSERT_FALSE(write.binding.imported);
+    Fill(write.binding, 0x2468ACE0);
+    tracker.state = PortPS5::GuestMemory::PageState::ReadWrite;
+    const auto read = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(read.status, BindStatus::Ok);
+    EXPECT_FALSE(read.binding.imported) << "an import would read guest memory the staged write has not reached";
+    EXPECT_EQ(read.binding.buffer, write.binding.buffer);
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+}
+
 // Invariant: a device with VK_EXT_external_memory_host and a budget imports the guest allocation itself
 // (no copy), and GPU stores land in guest memory directly; the tracker learns of them at completion.
 TEST_F(HostImportTest, ImportedWritesLandInGuestMemoryDirectly) {

@@ -113,6 +113,14 @@ public:
     void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     /** @return Whether the open or an in-flight batch writes the range. */
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
+    /** @return Whether an already SUBMITTED (in-flight) batch writes the range; the open batch is ignored. */
+    bool InFlightWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
+    /**
+     * @brief Finishes (waits for and completes) the newest in-flight batch that writes the range and all
+     * before it, WITHOUT submitting the open batch. No-op inside a completion action. Unlike SyncThrough
+     * it is safe for a caller that is still recording into the open batch.
+     */
+    void SyncInFlightWrites(std::uint64_t address, std::size_t bytes);
     /** @return Whether the OPEN (unsubmitted) batch writes the range: a wait on it must submit first. */
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
 

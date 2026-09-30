@@ -23,6 +23,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -108,6 +110,17 @@ private:
     bool evictFor(std::uint64_t needed);
     void destroy(Import& entry) noexcept;
     void barrierAgainstOpenWrites();
+    // Writes this HostImport recorded into the OPEN batch (cleared when the open serial changes): which
+    // kind of producer wrote a range decides whether a later bind may import it or must use its copy.
+    struct OpenWrite {
+        std::uint64_t begin;
+        std::uint64_t end;
+        bool imported;
+        std::pair<std::uint64_t, std::size_t> key;
+    };
+    void noteOpenWrite(std::uint64_t address, std::size_t bytes, bool imported);
+    bool openStagedWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
+    bool openWritesOnlyFromStaging(std::uint64_t address, std::size_t bytes, const std::pair<std::uint64_t, std::size_t>& key) const;
     void afterBind(std::uint64_t address, std::size_t bytes, GuestAccess access, const std::shared_ptr<Buffer>& staged);
 
     Context context;
@@ -117,6 +130,8 @@ private:
     mutable std::mutex mutex;
     std::map<std::uint64_t, std::unique_ptr<Import>> imports;  // keyed by window begin
     std::map<std::pair<std::uint64_t, std::size_t>, std::unique_ptr<Staging>> stagings;
+    std::vector<OpenWrite> openWrites;
+    std::uint64_t openWritesSerial = 0;
     std::uint64_t useClock = 0;
     std::uint64_t stagedBytes = 0;
     HostImportStats stats;
