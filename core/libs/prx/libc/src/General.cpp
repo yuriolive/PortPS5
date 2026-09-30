@@ -204,11 +204,8 @@ extern "C" void SetSaveDataBaseDirOverride_nid_no_patch(const char* path) {
     }
 }
 
-extern "C" const char* GetSaveDataBaseDirOverride_nid_no_patch() {
+extern "C" std::string GetSaveDataBaseDirOverride_nid_no_patch() {
     std::lock_guard lock(g_saveDirMutex);
-    if (g_saveDirOverride.empty()) {
-        return nullptr;
-    }
-    return g_saveDirOverride.c_str();
+    return g_saveDirOverride;
 }
 

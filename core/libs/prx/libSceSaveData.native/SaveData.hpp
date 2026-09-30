@@ -99,8 +99,8 @@ inline std::string GetCurrentAppTitleId() {
 }
 
 inline std::filesystem::path GetSaveDataBaseDir() {
-    const char* overridePath = GetSaveDataBaseDirOverride_nid_no_patch();
-    if (overridePath != nullptr && overridePath[0] != '\0') {
+    const std::string overridePath = GetSaveDataBaseDirOverride_nid_no_patch();
+    if (!overridePath.empty()) {
         return std::filesystem::path(overridePath);
     }
 

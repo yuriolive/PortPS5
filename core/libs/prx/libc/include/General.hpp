@@ -26,7 +26,7 @@ extern "C" void RemovePathAlias_nid_no_patch(const char* guestPrefix);
 extern "C" void RegisterCommonDialogActive_nid_no_patch(bool active);
 extern "C" bool IsAnyCommonDialogActive_nid_no_patch();
 extern "C" void SetSaveDataBaseDirOverride_nid_no_patch(const char* path);
-extern "C" const char* GetSaveDataBaseDirOverride_nid_no_patch();
+extern "C" std::string GetSaveDataBaseDirOverride_nid_no_patch();
 
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
 
