@@ -1,3 +1,9 @@
+// core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
+// Tests for shader memory views and register-source resolution in the recompiler, plus SPIR-V
+// validate/optimize determinism and target rejection when ANYPS5_ENABLE_SPIRV_TOOLS is on.
+// Standalone runner (ctest 'agc_shader_memory'); recompile targets use Vulkan 1.3 / SPIR-V 1.6,
+// which the optimizer accepts (docs/spec/shader-recompiler.md).
+
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "Optimization/RequestMemoryView.hpp"

@@ -1,3 +1,9 @@
+// core/libs/prx/libSceAgcDriver/tests/BdaContracts.cpp
+// Host-only contract tests for the buffer-device-address (BDA) shader ABI: the SPIR-V emitter's BDA
+// target validation and the recompile-request serializer must reject malformed targets with a clear
+// error instead of emitting modules the driver would mis-bind. Runs without a Vulkan device.
+// Targets use the driver's Vulkan 1.3 environment (docs/spec/gpu-driver.md).
+
 #include "BdaShader.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "SpirvBackend/SpirvBda.hpp"

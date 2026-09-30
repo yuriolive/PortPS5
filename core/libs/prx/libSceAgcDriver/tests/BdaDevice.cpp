@@ -1,3 +1,8 @@
+// core/libs/prx/libSceAgcDriver/tests/BdaDevice.cpp
+// Device-level BDA test: creates a Vulkan 1.3 instance/device through the loader (SDL_LoadObject, same
+// path as the driver), queries the BDA feature chain and runs the BDA execution and colour-transfer
+// checks. Needs a Vulkan 1.3 device or lavapipe (ctest label 'lavapipe'); never game data.
+
 #include "BdaShader.hpp"
 #include "ColorTransferTests.hpp"
 #include <fstream>
