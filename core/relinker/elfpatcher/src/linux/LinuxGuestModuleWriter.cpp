@@ -1,3 +1,10 @@
+// Emits a Linux-loadable ELF shared object from a parsed guest (prx) image.
+// Subsystem: relinker elfpatcher, guest-module path (`sce_module`).
+// Appends one extra PT_LOAD holding rebuilt dynstr/dynsym/hash/rela/dynamic
+// data after the original segments (0x4000-aligned) and rewrites the ELF
+// header to point at a new program-header table. Pure function of its inputs:
+// no shared state, single-threaded per call.
+
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
@@ -12,8 +19,16 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     for (auto header : image.Headers) {
         if (header.Type != 1 && header.Type != 7 && header.Type != 0x6474e550 && header.Type != 0x6474e551) continue;
         if (header.Type == 1) {
-            header.Flags |= 4;
             end = std::max(end, header.MappedAddress + header.MemorySize);
+            // A PT_LOAD with no permission flags (the SCE dynlib data segment) is
+            // never mapped on the console. Forcing PF_R on it would map it
+            // read-only and, when it starts inside the last page of the preceding
+            // RW segment, shadow that segment's bss tail so the module initializer
+            // faults on its first write. Its symbol/relocation tables are already
+            // copied into the appended segment, so drop it. `end` still includes
+            // it so the appended block never overlaps its address range.
+            if (header.Flags == 0) continue;
+            header.Flags |= 4;
         }
         headers.push_back(header);
     }
