@@ -1,3 +1,7 @@
+// Window-thread pad input: SDL keyboard, mouse and game controller handling.
+// Subsystem: video/input. Owned by the VideoOut present loop; not thread-safe,
+// all methods run on that single thread and publish to libScePad through the
+// extern "C" *_nid_postfix entry points (see libScePad/include/PadState.hpp).
 #ifndef CORE_LIBS_PRX_LIBSCEVIDEOOUT_PADINPUT_HPP
 #define CORE_LIBS_PRX_LIBSCEVIDEOOUT_PADINPUT_HPP
 

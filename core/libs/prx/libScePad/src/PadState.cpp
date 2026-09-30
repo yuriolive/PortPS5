@@ -1,3 +1,8 @@
+// libScePad PadManager implementation: slot lifecycle, scePadRead merge logic
+// and cross-prx publish entry points.
+// Subsystem: input (docs/spec/input.md). Slot 0 merges keyboard/mouse with its
+// controller; slots 1..3 are controller-only and open only while connected.
+// Threading: one short mutex per PadManager call; no guest-visible host locks.
 #include "PadInternal.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>

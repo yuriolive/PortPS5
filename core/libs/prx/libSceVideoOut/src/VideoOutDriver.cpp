@@ -1,3 +1,6 @@
+// VideoOut driver: SDL window, flip queue, present and vblank threads.
+// Subsystem: video. Initialises the SDL video and game controller subsystems;
+// the present loop pumps SDL events and feeds PadInput (window thread only).
 #include <cstdio>
 #include <bit>
 #include <chrono>

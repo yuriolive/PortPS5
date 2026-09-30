@@ -1,3 +1,9 @@
+// libScePad host-side input state and cross-prx publish entry points.
+// Subsystem: input (docs/spec/input.md). PadInputState is the keyboard/mouse or
+// controller sample handed to PadManager; the extern "C" functions are the only
+// calls other prx (libSceVideoOut) make into libScePad, so they must stay
+// extern "C" to survive NID patching. Thread-safety: callable from the window
+// thread; PadManager serialises with one short mutex.
 #ifndef CORE_LIBS_PRX_LIBSCEPAD_PADSTATE_HPP
 #define CORE_LIBS_PRX_LIBSCEPAD_PADSTATE_HPP
 

@@ -1,3 +1,8 @@
+// libScePad internal PadManager: per-slot state behind scePadRead and friends.
+// Subsystem: input (docs/spec/input.md). Owns four pad slots (handle = slot+1),
+// the keyboard/mouse host sample (slot 0) and per-slot controller samples.
+// Threading: every method takes the single `mutex`; scePad* exports run on guest
+// threads while publishers run on the VideoOut window thread.
 #ifndef CORE_LIBS_PRX_LIBSCEPAD_PADINTERNAL_HPP
 #define CORE_LIBS_PRX_LIBSCEPAD_PADINTERNAL_HPP
 
