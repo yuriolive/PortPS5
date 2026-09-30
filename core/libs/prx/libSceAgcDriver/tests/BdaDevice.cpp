@@ -40,7 +40,19 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            // The instance apiVersion does not gate physical devices: a Vulkan 1.1/1.2 device (or a software
+            // rasterizer) can still be enumerated. Pick the first device that reports >= 1.3, matching the
+            // driver's own selection, and fail loudly instead of silently testing a lower-version device.
+            const auto getProperties = function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
+            for (const auto candidate : devices) {
+                VkPhysicalDeviceProperties candidateProperties{};
+                getProperties(candidate, &candidateProperties);
+                if (candidateProperties.apiVersion >= VK_API_VERSION_1_3) {
+                    context.physical = candidate;
+                    break;
+                }
+            }
+            Require(context.physical != VK_NULL_HANDLE, "no Vulkan 1.3 device");
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
