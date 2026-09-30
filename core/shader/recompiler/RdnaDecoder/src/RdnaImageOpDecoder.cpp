@@ -1,5 +1,11 @@
+// core/shader/recompiler/RdnaDecoder/src/RdnaImageOpDecoder.cpp
+// MIMG (image) instruction decoder: validates the RDNA2 MIMG control bits, resolves the opcode table entry
+// (sample/gather/atomic flags, address layout) and computes the address component count. Unsupported encodings
+// are rejected here with an exception that names the offending words, never silently mis-decoded.
+// Pure function of the code words; thread-safe.
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include <bit>
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 
@@ -223,8 +229,17 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     if ((word0 >> 26u) != 0x3Cu) {
         throw std::runtime_error("instruction is not MIMG");
     }
-    if ((word0 & 0x000350C0u) != 0u || (word1 & 0x3C000000u) != 0u) {
-        throw std::runtime_error("unsupported or reserved MIMG control bits");
+    const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
+    const auto& info = lookupOpcode(opcode);
+    // Word0 bit 12 is UNORM (unnormalized addressing). Only a sampler reads it: loads, stores and atomics
+    // address texels by integer anyway, and the RDNA2 ISA requires it to be set on image stores and atomics.
+    // So it is accepted on every non-sampling op and stays rejected on sample/gather, where it would change
+    // the coordinate interpretation (not implemented).
+    const auto reservedWord0 = info.sample || info.gather ? 0x000350C0u : 0x000340C0u;
+    if ((word0 & reservedWord0) != 0u || (word1 & 0x3C000000u) != 0u) {
+        char message[96];
+        std::snprintf(message, sizeof(message), "unsupported or reserved MIMG control bits (words %08x %08x)", word0, word1);
+        throw std::runtime_error(message);
     }
     const auto nsa = (word0 >> 1u) & 3u;
     const auto wordCount = 2u + nsa;
@@ -234,8 +249,6 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     if (programCounter % 4u != 0u || programCounter > std::numeric_limits<std::uint32_t>::max() - (wordCount * 4u - 1u)) {
         throw std::runtime_error("invalid MIMG program counter");
     }
-    const auto opcode = ((word0 >> 18u) & 0x7Fu) | ((word0 & 1u) << 7u);
-    const auto& info = lookupOpcode(opcode);
     const bool a16 = (word1 & 0x40000000u) != 0u;
     const bool d16 = (word1 & 0x80000000u) != 0u;
     const auto flags = info.flags | (a16 ? RdnaImageSampleFlagA16 : 0u);
