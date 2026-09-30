@@ -12,41 +12,51 @@ This spec covers `core/libs/prx/libSceAgcDriver` and the PM4 builders in `core/l
 - resource capture for the recompiler;
 - rasterizer state, draws, dispatches and presentation.
 
-Shader translation is in [shader-recompiler.md](shader-recompiler.md). Persistence of SPIR-V and pipelines is in [pipeline-cache.md](pipeline-cache.md). The guest arena and write tracking are in [guest-memory.md](guest-memory.md). Unless noted, file references are relative to `core/libs/prx/libSceAgcDriver/`, in AnyPS5 `main` (`e06dbff`) or PR #5 (`29b4601`).
+Shader translation is in [shader-recompiler.md](shader-recompiler.md). Persistence of SPIR-V and pipelines is in [pipeline-cache.md](pipeline-cache.md). The guest arena and write tracking are in [guest-memory.md](guest-memory.md). Unless noted, file references are relative to `core/libs/prx/libSceAgcDriver/`, in one of two AnyPS5 trees: `main@e06dbff` (pre-merge main, the old baseline) or `main@75a8668` (current main, which includes merged PR #5).
 
 ## Current state
 
 **Common to both trees.** `libSceAgc` builds PM4 packets into guest command buffers. The builders are `APS5_VABI` exports, such as `sceAgcDcbDrawIndex` (`libSceAgc/DcbDraw/src/DrawIndexed.cpp:12`), `sceAgcDcbDrawIndirect` (`DrawNonIndexed.cpp:12`) and `sceAgcAcbDispatchIndirect` (`Acb/src/Dispatch.cpp:12`). The driver decodes those buffers when they are submitted. Opcode names are in `Execution/include/Pm4Opcodes.hpp`.
 
-**`main`:**
+**`main@e06dbff`:**
 
 - One worker thread serves every queue (`Execution/src/Driver.cpp:300`).
 - `VulkanDevice::Dispatch` creates a module, layout, pipeline and fence per call, then waits on them (`Execution/src/VulkanDevice.cpp:759-800`).
 - Indirect draws (`0x24`, `0x25`, `0x2c`, `0x38`) are rejected (`Execution/src/Pm4.cpp:104`).
-- Depth/stencil is rejected (`Graphics/src/State.cpp:152`).
+- Depth/stencil **state** is decoded (`Graphics/src/State.cpp` `DecodeDepthStencil`) and handed to the pipeline as `VkPipelineDepthStencilStateCreateInfo`, but there is no depth image: a draw that enables a depth, stencil or depth-bounds test while `DB_Z_INFO`/`DB_STENCIL_INFO` binds a surface is rejected with a logged error. Depth surfaces are tracked as an open item below.
 - The graphics pipeline cache keys on the full SPIR-V bytes and keeps 128 entries (`Graphics/src/GraphicsPipelineCache.cpp:90-98,129`).
 
-**PR #5** (`Driver.cpp` is 6,214 lines, `Graphics/src/Recorder.cpp` is 2,901 lines):
+**Landed in PortPS5 (portps5-6, M1 Lane A):** `Graphics/include/Recorder.hpp` + `Graphics/src/Recorder.cpp` and `Graphics/include/HostImport.hpp` + `Graphics/src/HostImport.cpp`, adapted from AnyPS5 `8a69fefe` (merged PR #5; AnyPS5 `main`'s `Recorder` has moved on with read tracking and later fixes, and this port is based on `8a69fefe`):
 
-| Area | What PR #5 does | Where |
+| Piece | Behaviour | Differs from upstream |
 |---|---|---|
-| Queues | `Driver::QueueWorker` runs one thread per guest queue, so a `WAIT_REG_MEM` blocks only its own queue. Device work is serialised by `GuestMemory::GpuMutex`, and every queue shares one `VkQueue`. | `Driver.cpp:790-799`, `:6048 run()`, `:623-627` |
-| Recorder | Keeps one open batch. Submissions are numbered by serials on a timeline semaphore (`WaitSerial`, `FinishUpTo`). It tracks pending writes and reads (`NotePendingWrite`, `PendingReadOverlaps`) and runs completion actions (write-backs). | `Graphics/include/Recorder.hpp:20-40,93-177` |
-| Labels | Labels are deferred per worker (`DeferredLabels`). A pending-label table (`NoteLabel`, `NoteQueuedLabel`, `LookupLabel`) lets a `WAIT_REG_MEM` take a label's value **before the GPU executes it**, under a "late trust" rule. | `Driver.cpp:330-400`; `Recorder.hpp:210-283` |
-| Capture | `ShaderMemory::Capture` reads SRT chains and descriptors from guest memory **on the CPU**, in the unlocked prologue of a draw or dispatch. Pages with pending GPU writes are read word by word through the flush hook. `recordQueuedLabelsAfterCapture` restarts a packet whose capture overlapped a label its own queue has queued. | `Execution/include/ShaderMemory.hpp:20-60`; `Driver.cpp:431-439,1613,4990` |
-| Host import | `VK_EXT_external_memory_host` imports guest allocations. They are capped by `APS5_HOST_IMPORT_MIB` (default 6 GiB). A refused import falls back to CPU copies. | `Graphics/src/GuestBufferMemory.cpp:155-200` |
+| `Recorder` | One open batch per device, serials on a timeline semaphore (`WaitSerial`, `FinishUpTo`, `CompletedSerial`), pending-write snapshot read lock-free by the flush hook, label table (`NoteLabel`, `PendingLabel`, `LookupLabel`), `AfterCompletions` with the "GPU already stored it" rule, in-order completions. | Owns a recursive lock (`Recorder::Scope`) instead of `GuestMemory::GpuMutex`. No `getenv` switches, profiling tables or release thread (kept objects die after the outermost `Scope` ends). Flush hook registered through `IWriteTracker::SetFlushHook`. |
+| `HostImport` | `Bind(address, bytes, Read/Write)` returns a `VkBuffer` + device address: an import of the aligned guest window (`VK_EXT_external_memory_host`, `HOST_COHERENT` type, every page tracked `ReadWrite`), else a staging copy refreshed when `IWriteTracker::Collect` moves and written back on completion. Budgeted; LRU eviction never while an unfinished batch used the import. Bad ranges return `BindStatus`, not exceptions. | Budget is `HostImportOptions::importBudgetBytes` (0 forces staging: the spec's test hook); the automatic sizing stays M5. No `APS5_HOST_IMPORT_MIB`. |
+| Device | `VulkanDevice` enables `VK_KHR_timeline_semaphore` and `VK_EXT_external_memory_host` when present and reports them through `Graphics::Context::externalMemoryHost` / `hostImportAlignment`. | - |
+
+Not yet wired: `VulkanDevice::Dispatch`/`Draw` still execute synchronously and do not record into the `Recorder`; moving them (and `sceAgcDriverSubmitDcb`) onto `Recorder` + `HostImport` is the remaining M1 driver-port work. Tests: `tests/RecorderTests.cpp`, `tests/HostImportTests.cpp` (`agc_recorder_tests`, label `lavapipe`).
+
+**`main@75a8668`, the merged PR #5 work** (`Driver.cpp` is 6,305 lines, `Graphics/src/Recorder.cpp` is 2,910 lines):
+
+| Area | What `main@75a8668` does | Where |
+|---|---|---|
+| Queues | `Driver::QueueWorker` runs one thread per guest queue, so a `WAIT_REG_MEM` blocks only its own queue. Device work is serialised by `GuestMemory::GpuMutex`, and every queue shares one `VkQueue`. | `Driver.cpp:852-860` (`QueueWorker`), `:1524-1527` (thread start), `:6132 run()`, `:761` (shared `VkQueue`) |
+| Recorder | Keeps one open batch. Submissions are numbered by serials on a timeline semaphore (`WaitSerial`, `FinishUpTo`). It tracks pending writes and reads (`NotePendingWrite`, `PendingReadOverlaps`) and runs completion actions (write-backs). | `Graphics/include/Recorder.hpp:25-40,95-165` |
+| Labels | Labels are deferred per worker (`DeferredLabels`). A pending-label table (`NoteLabel`, `NoteQueuedLabel`, `LookupLabel`) lets a `WAIT_REG_MEM` take a label's value **before the GPU executes it**, under a "late trust" rule. | `Driver.cpp:375-383`; `Recorder.hpp:210-283` |
+| Capture | `ShaderMemory::Capture` reads SRT chains and descriptors from guest memory **on the CPU**, in the unlocked prologue of a draw or dispatch. Pages with pending GPU writes are read word by word through the flush hook. `recordQueuedLabelsAfterCapture` restarts a packet whose capture overlapped a label its own queue has queued. | `Execution/include/ShaderMemory.hpp:11-60`; `Driver.cpp:465-472,3516,4388,5066` |
+| Host import | `VK_EXT_external_memory_host` imports guest allocations. They are capped by `APS5_HOST_IMPORT_MIB` (default 6 GiB). A refused import falls back to CPU copies. | `Graphics/src/GuestBufferMemory.cpp:158-182` |
 | BDA | `BdaResources` holds a page table buffer (guest range to device address) and a fault buffer that the shader-side BDA path reads. | `Graphics/include/BdaResources.hpp` |
 | Detile | `TextureDetiler::Dispatch` runs `TextureDetile.comp` (GFX10 XOR swizzle equations as specialisation constants). The same shader also retiles. | `Graphics/include/TextureDetiler.hpp:45`; `Graphics/shaders/TextureDetile.comp:1-20` |
-| Textures | `StorageTexture` write-back with 64 KiB write stamps. The "adjacent generation" special case exists for video planes packed back to back. | `Graphics/src/Texture.cpp:838-849` |
-| Indirect draws | `resolveIndirectDraw` parses all four opcodes. The driver takes a GPU path when the CP's SGPR patch folds (`Rule::InPlace`, `Rule::Constant`), and **otherwise falls back to reading the records on the CPU**. Vertex ranges are capped by `APS5_INDIRECT_VERTEX_MIB`. | `Execution/src/Pm4.cpp:507-530`; `Driver.cpp:4410-4450` |
-| Depth/stencil | Rejected: `DB_DEPTH_CONTROL` (cx `0x200`), depth bounds and conditional colour writes. | `Graphics/src/State.cpp:320-322,520` |
-| Bindless | Material scans are capped at 256 records (`MaterialScanLimit`) and 16 slots (`BindlessSlots`, clamped to 1–48). | `core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp:184,857` |
-| Title HLE | `matchesFillKernel` matches an exact 9-dword kernel. `matchesCopyKernel` matches a code hash and V# words. | `Driver.cpp:1623,1860` |
-| Failure | `tolerate()`/`reportSkip()` skip a draw or dispatch that throws. The recompiler's `planFailure` memo rethrows forever. | `Driver.cpp:1575-1591`; `core/shader/recompiler/Recompiler.cpp:187-190,262-268` |
+| Textures | `StorageTexture` write-back with 64 KiB write stamps. The "adjacent generation" special case exists for video planes packed back to back. | `Graphics/src/Texture.cpp:839-850` |
+| Indirect draws | `resolveIndirectDraw` parses all four opcodes. The driver takes a GPU path (`vkCmdDraw[Indexed]Indirect`, or `vkCmdDraw[Indexed]IndirectCountKHR` for a GPU-side count) when the CP's SGPR patch folds (`Rule::InPlace`, or `Rule::Constant` with the records copied and patched) and the records come from a host import. **Otherwise it reads the records on the CPU**; `IndirectDrawPath` names the reason (`NotFolded`, `DrawIndex`, `IndxOffset`, `VertexRange`, `FeatureGap`, `NotImported`, `PendingImage`, `PendingLabelOrCopy`, ...). Vertex ranges are capped by `APS5_INDIRECT_VERTEX_MIB`. A device without `VK_KHR_draw_indirect_count` resolves GPU-count draws on the CPU. | `Execution/src/Pm4.cpp:545-586`; `Driver.cpp:4495-4521,4651`; `Graphics/include/Draw.hpp:42-48`; `Graphics/src/Draw.cpp:825-832`; `Execution/src/VulkanDevice.cpp:711-714` |
+| Depth/stencil | Rejected: `DB_DEPTH_CONTROL` (cx `0x200`), depth bounds and conditional colour writes. Always-pass state is rendered without a depth target, and `APS5_IGNORE_DEPTH_TEST` ignores the tests. | `Graphics/src/State.cpp:320-322,520` |
+| Bindless | Material scans are capped at 256 records (`MaterialScanLimit`) and 16 slots (`BindlessSlots`, clamped to 1–48). | `core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp:185,855` |
+| Title HLE | `matchesFillKernel` matches an exact 9-dword kernel. `matchesCopyKernel` matches a code hash and V# words. | `Driver.cpp:1692,1929` |
+| Failure | `tolerate()`/`reportSkip()` skip a draw or dispatch that throws. The recompiler's `planFailure` memo rethrows forever. | `Driver.cpp:1644-1660`; `core/shader/recompiler/Recompiler.cpp:190,264-268` |
 
-The driver module alone has 357 lines calling `getenv("APS5_…")` (summed `git grep -c`).
+The driver module alone has 360 lines calling `getenv("APS5_…")` (summed `git grep -c`).
 
-**The capture-ordering race.** Hardware reads descriptors and SRT words when it executes a draw. PR #5 reads them when it records the draw, on another thread, while earlier work may still be unexecuted. A capture's CPU read goes stale in four cases:
+**The capture-ordering race.** Hardware reads descriptors and SRT words when it executes a draw. `main@75a8668` reads them when it records the draw, on another thread, while earlier work may still be unexecuted. A capture's CPU read goes stale in four cases:
 
 - (a) An earlier batch writes the range but has not completed. The flush hook makes the read wait, which is correct but stalls.
 - (b) The capturing queue has queued a label that is not yet recorded. `recordQueuedLabelsAfterCapture` handles this by restarting the packet.
@@ -55,11 +65,44 @@ The driver module alone has 357 lines calling `getenv("APS5_…")` (summed `git 
 
 In cases (c) and (d) a pointer word is read before it has been written. The SRT walk then dereferences an unwritten pointer plus an offset, which is the observed "guest memory is not readable at 0x60" (`Execution/src/GuestMemory.cpp:560`). *Inference:* 0x60 is a zero base plus a field offset. The dispatch is then skipped (`tolerate`), and the plan-failure memo keeps it skipped. Widening batches widens the window.
 
+### Upstream Recorder delta since `8a69fefe`
+
+PortPS5 PR #49 ports the Recorder from AnyPS5 commit `8a69fefe` (`perf(agc): batch GPU work in a recorder with host-imported guest memory`). AnyPS5 `main@75a8668` has since changed it in four commits. Sizes below are `wc -l` on each tree; line numbers are `main@75a8668`.
+
+| Commit | Change to the Recorder |
+|---|---|
+| `29b4601` (merged PR #5) | `Graphics/src/Recorder.cpp` grows from 1,592 to 2,901 lines (2,910 at `main@75a8668`); `Graphics/include/Recorder.hpp` grows from 262 to 688 lines. All items in the table below. `tests/Recorder.cpp` is new (945 lines; 983 at `main@75a8668`). |
+| `e424b6b` | Per-thread recorder state (`DeferredBatches`, `QueuedLabelRanges`, `LabelGroupDwords`) moves from `thread_local` to `HostThreadLocal<T, Tag>` (`Graphics/src/Recorder.cpp:282`, `:482`), so it survives Windows thread teardown. |
+| `76f1d48` | Debug-only: `Draw.cpp` samples small in-place input ranges at record time and compares them at execution (`APS5_CAPTURE_INPUTS`, requires `APS5_CAPTURE_TRACE`). Not portable as written: a new environment switch. |
+| `9f1c680` | `ShaderResources::PrepareDrawBindings` returns a `DrawBindings` that holds per-draw input buffer snapshots until GPU completion (`ShaderResources.hpp:117`, used at `Draw.cpp:1111`). Fixes a record-vs-execute race on in-place inputs. Adds a test to `tests/Recorder.cpp`. |
+
+What `29b4601` adds to the Recorder itself (`Recorder.hpp`):
+
+| Area | Additions | Where |
+|---|---|---|
+| Read tracking | `ReadKind` (dispatch element, GPU copy, address-based, indirect, storage upload, copy source), `NotePendingRead[s]`, `PendingReadOverlaps`, `DescribePendingRead`, `ReadCounts`. Lets a CPU write wait only for batches that still read the range. | `:111-140` |
+| Late labels | `LabelHit` with a `late` flag and stamp, `LabelRefusal` reasons, `PendingLabel` / `LookupLabel` / `LookupLabelValue` with `afterStamp`, `NoteQueuedLabel`, `ForgetQueuedLabels`, `LateTrust`, `CloseLabelGroup`. A `WAIT_REG_MEM` may take a label value before the GPU writes it. | `:235-258` |
+| Write settling | `PendingWriteSnapshot`, `SnapshotOverlaps`, `PendingWriteSettled`, `PublishGeneration`, `InCompletion`, `ThreadHookWaits`. | `:294-369` |
+| Store runs | `RecordStore` / `FlushStores[Overlapping]` coalesce CPU-to-GPU stores into runs; `QueueKeyStore` / `FlushKeyStores` do the same for DCC key stores; `StoreCounts` reports joins, refused joins and WAW barriers. | `:74`, `:202`, `:377` |
+| Render pass reuse | `ContinuesRenderPass`, `LeaveRenderPassOpen`, `CommandsInRenderPass` keep a pass open across compatible draws. | `:67` |
+| Hazard tracker | `CommandClass` (17 classes), `Access`, `NoteAccess`, `MergeBarriers`, `BarrierValidate`, `CountBarriers`: barrier elision by simulated access tracking, with a validation mode. | `:404-430` |
+| GPU timing | Per-class timing through `BeginGpuTiming(CommandClass)`, `EndGpuTiming`, `AddGpuTiming`, `GpuTimingEnabled`. | `:404-410` |
+| Completion | `CompletedBatches`, `NewestSubmitted`, `CountPresent`, `Presents`, `FlipReadCheck`. | `:460-465` |
+
+What PR #49 should take, in order:
+
+1. [ ] **Re-base on `main@75a8668`'s `Recorder.hpp` and `.cpp`** instead of `8a69fefe`, since `8a69fefe` alone has no read tracking, late labels, store runs or hazard tracker. Cite `29b4601` in the commit body.
+2. [ ] **`e424b6b`:** take `HostThreadLocal` for the three per-thread vectors. It needs `prx/libc/include/HostThreadLocal.hpp` in the fork (check it exists first).
+3. [ ] **`9f1c680`:** take `DrawBindings` snapshots. This is a real correctness fix, so add its regression test.
+4. [ ] **Skip `76f1d48`** (env-switch debug aid); if wanted, map it to a `[debug]` key.
+5. [ ] **Env switches:** `Recorder.cpp` has 14 `getenv("APS5_")` calls at `8a69fefe` and 32 at `main@75a8668`. The 19 distinct names added since (32 calls, 31 distinct names in total) are `APS5_BARRIER_VALIDATE`, `APS5_COPY_READ_TRACKING`, `APS5_COUNT_ALL_COMPLETION_LABELS`, `APS5_DCC_KEYS_EACH`, `APS5_FLIP_READ_CHECK`, `APS5_FULL_BARRIERS`, `APS5_HOOK_FLUSH_CPU_BLOCKS`, `APS5_HOOK_FULL_SYNC`, `APS5_LABEL_RUNS_INLINE`, `APS5_LABEL_TRUST_LATE`, `APS5_NO_BARRIER_ELISION`, `APS5_NO_HOOK_COMPLETION_GUARD`, `APS5_NO_JOIN_WAW_CHECK`, `APS5_NO_LABEL_BATCHING`, `APS5_NO_LABEL_RUNS`, `APS5_NO_PROC_TABLE`, `APS5_NO_SEPARATE_QUEUED_LABELS`, `APS5_TRACE_BARRIERS`, `APS5_TRACE_CAPSYNC`. Each becomes a typed `[debug]` key or is deleted with its fallback path. Switches that select an alternative algorithm (`APS5_NO_*`) are removed, keeping the default path.
+6. [ ] **Tests:** `tests/Recorder.cpp` (983 lines) uses bare `Require()` and a hand-written runner (`readTrackingTests`, `writeSettledTests`, `completionCountTests`, `labelTests`, `lateLabelTests`, `unchangedSinceTests`, `keyProofTests`, `closeRaceTests`, `storeRunTests`, `resourceReadTests`, `dataWordPositionsTests`). The fork requires GoogleTest through `portps5_add_gtest`; port each function to a `TEST_F` on a lavapipe fixture. It asserts `Recorder::ReadTracking()` is on, which goes away with `APS5_COPY_READ_TRACKING`.
+
 ## Decision
 
 This follows the decision table in [README.md](README.md#subsystem-specs) §GPU driver:
 
-- Adopt PR #5's Recorder, host import and GPU detile.
+- Adopt AnyPS5 main's (merged PR #5) Recorder, host import and GPU detile.
 - Replace CPU-side capture: buffers are resolved on the GPU through device addresses, images at submit time behind the ordering fence, under the label-wait rule below.
 - Split the driver into seven modules.
 - Add depth/stencil, the indirect family and conditional colour writes.
@@ -104,7 +147,7 @@ on WAIT_REG_MEM(Q, addr, ref):
   else: recorder.WaitSerial(hit ? hit.batch.serial : poll)
 ```
 
-**Block-generation tracking** (M3) replaces PR #5's adjacent-generation special case. In M1-M2 that case survives only as an interim general mechanism, "adjacent block-generation advance", with no switch and no title reference.
+**Block-generation tracking** (M3) replaces AnyPS5 main's (merged PR #5) adjacent-generation special case. In M1-M2 that case survives only as an interim general mechanism, "adjacent block-generation advance", with no switch and no title reference.
 
 - Block generations, CPU and GPU, live in the tracker. The driver reads them with `Collect` and reports GPU writes with `MarkWritten` ([guest-memory.md](guest-memory.md)).
 - The BufferCache keeps the writer intervals: an interval map `[begin,end) → (writerId, gpuGen)` of which recorded batch wrote which range.
@@ -117,9 +160,13 @@ Surfaces packed into a shared block (video planes, for example) therefore no lon
 
 **Depth/stencil.** The Rasterizer translates `DB_DEPTH_CONTROL` (cx `0x200`), the stencil control, reference and mask registers, and depth bounds (when `VkPhysicalDeviceFeatures::depthBounds` is available) into the pipeline and dynamic state. Depth surfaces are host-owned `VkImage`s in the TextureCache. They are retiled to guest memory only when the CPU or a shader reads them as textures. *Inference:* HTILE metadata can start out as always-decompressed.
 
-**Conditional colour writes** (`DB_DEPTH_CONTROL` bits `0xc0000008`, today rejected at `State.cpp:322`) are mapped to colour-write-enable dynamic state where their semantics allow it. Otherwise they are a documented `Unsupported()`.
+**Implemented in M2 (state decode only).** `DecodeDepthStencil` (`Graphics/src/State.cpp`) decodes `DB_DEPTH_CONTROL` (cx `0x200`), `DB_STENCIL_CONTROL` (`0x10b`), `DB_STENCILREFMASK`/`_BF` (`0x10c`/`0x10d`) and the depth-bounds pair (`0x8`/`0x9`) into `State::depthStencil`; unset stencil registers read as their reset value 0. `ZFUNC`/`STENCILFUNC` (0-7) map numerically to `VkCompareOp`; stencil ops map to `VkStencilOp` (enum per AMD gfx10 register database: 0 KEEP, 1 ZERO, 2 ONES, 3 REPLACE_TEST, 4 REPLACE_OP, 5 ADD_CLAMP, 6 SUB_CLAMP, 7 INVERT, 8 ADD_WRAP, 9 SUB_WRAP, 10 AND, 11 OR, 12 XOR, 13 NAND, 14 NOR, 15 XNOR; REPLACE_TEST and REPLACE_OP become `REPLACE`, and `REPLACE_OP` with an op value different from the test value is rejected because Vulkan has one reference (unless the write mask is 0, which makes every op a KEEP); ADD/SUB need `STENCILOPVAL == 1`; XOR is `INVERT` when every written bit is set in the op value and `KEEP` when none is; ONES, AND, OR, NAND, NOR, XNOR and partial XOR are rejected). `Z_WRITE_ENABLE` without `Z_ENABLE` is inert and cleared (upstream `52ffef82`). The back face mirrors the front unless `BACKFACE_ENABLE` is set. `Pipeline.cpp` emits the create info (always with `depthBoundsTestEnable = VK_FALSE`, since the feature is not enabled and the render pass has no depth attachment, so Vulkan ignores the rest) and `GraphicsPipelineCache.cpp` keys on every field. Per-channel colour writes come from `CB_TARGET_MASK` into `colorWriteMask` (R/G/B/A bits one-to-one). Reserved `DB_DEPTH_CONTROL` bits (11-19, 23-29) are rejected. Tests: `tests/DepthStencilState.cpp` (GoogleTest, `agc_driver_depth_stencil_tests`) and the colour-mask checks in `tests/Graphics.cpp`.
 
-**Indirect family.** `DRAW_INDIRECT`, `DRAW_INDEX_INDIRECT`, `DRAW_INDIRECT_MULTI` and `DRAW_INDEX_INDIRECT_MULTI` always take the GPU path, through `vkCmdDraw[Indexed]Indirect[Count]`. When the CP's SGPR patch does not fold (PR #5's `NotFolded`, `DrawIndex` and `IndxOffset` cases), a patch compute pass copies the record fields into a per-draw user-data buffer that the shader reads for those SGPRs (a recompiler contract). Vertex buffers go through BDA, so the vertex-range cap goes away. `DISPATCH_INDIRECT` maps to `vkCmdDispatchIndirect`. No indirect record is ever read on the CPU.
+**Depth surface (not implemented).** A host-owned depth/stencil `VkImage`, `DB_Z_INFO`/`DB_STENCIL_INFO`/`DB_Z_READ_BASE`/`DB_DEPTH_SIZE` decode, the attachment in the render pass, clears (`DB_RENDER_CONTROL`, `DB_DEPTH_CLEAR`) and retiling are not built. Until then a bound surface plus an enabled test is an explicit rejection (`depth or stencil test with a bound depth surface is unsupported`), and with no bound surface the tests are inert exactly as on hardware, which covers 2D sprite layering that never binds a depth buffer.
+
+**Conditional colour writes** (`DB_DEPTH_CONTROL` bit 30 `ENABLE_COLOR_WRITES_ON_DEPTH_FAIL`, bit 31 `DISABLE_COLOR_WRITES_ON_DEPTH_PASS`) are decoded into `DepthStencilState`. Bit 30 only matters when a depth test can fail, so it is inert without a depth image. Bit 31 would suppress colour output, which the host pipeline cannot express, so it is rejected unless `CB_TARGET_MASK` writes no colour. Stencil operations are decoded only when `STENCIL_ENABLE` is set: a disabled test passes every pixel, so stale ops left in the registers never reject a draw. Originally planned as: mapped to colour-write-enable dynamic state where their semantics allow it. Otherwise they are a documented `Unsupported()`.
+
+**Indirect family.** `DRAW_INDIRECT`, `DRAW_INDEX_INDIRECT`, `DRAW_INDIRECT_MULTI` and `DRAW_INDEX_INDIRECT_MULTI` always take the GPU path, through `vkCmdDraw[Indexed]Indirect[Count]`. When the CP's SGPR patch does not fold (AnyPS5 main's `NotFolded`, `DrawIndex` and `IndxOffset` cases), a patch compute pass copies the record fields into a per-draw user-data buffer that the shader reads for those SGPRs (a recompiler contract). Vertex buffers go through BDA, so the vertex-range cap goes away. `DISPATCH_INDIRECT` maps to `vkCmdDispatchIndirect`. No indirect record is ever read on the CPU.
 
 **Bindless.** The baseline is one descriptor heap built with `VK_EXT_descriptor_indexing` (core in Vulkan 1.2): partially bound, update-after-bind arrays of sampled images, storage images and samplers, sized from the device limits. `VK_EXT_descriptor_buffer` is an optional backend. The TextureCache gives every resident view a heap slot. At submit time it builds, for the table ranges a shader declares, a GPU hash table from T# address to slot, which the shader probes. This replaces `MaterialScanLimit` and `BindlessSlots`. When the heap is full, slots are evicted LRU by serial.
 
@@ -171,8 +218,8 @@ The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` on
 
 | Milestone | Delivers |
 |---|---|
-| M1 | - [ ] Port the Recorder, host import with staging fallback, and GPU detile. Keep the interim adjacent block-generation advance (no switch, no title reference) until M3. Remove `matchesFillKernel`, `matchesCopyKernel`, `tolerate`-skips, the failure memo and the `APS5_*` switches (fill and copy run as the title's own shaders). Add the `driver-lavapipe` CI job. |
-| M2 | - [ ] Depth/stencil and conditional colour writes. Pipeline-cache integration. |
+| M1 | - [ ] Port the Recorder (- [x] landed, unwired), host import with staging fallback (- [x] landed, unwired), and GPU detile (- [x]); wiring them into the driver's submit path is open. Keep the interim adjacent block-generation advance (no switch, no title reference) until M3. Remove `matchesFillKernel`, `matchesCopyKernel`, `tolerate`-skips, the failure memo and the `APS5_*` switches (fill and copy run as the title's own shaders). Add the `driver-lavapipe` CI job. |
+| M2 | - [x] Depth/stencil and conditional colour-write state decode, Vulkan depth-stencil create info, pipeline-cache keying (no depth image). - [ ] Host depth surface (`DB_Z_*` decode, attachment, clears, retile). |
 | M3 | - [ ] Module split. The indirect family. Block-generation tracking. The capture-ordering redesign (GPU buffers, submit-time images, the label-wait rule). |
 | M4 | - [ ] GPU-side descriptor heap for bindless. Fill/copy IR pattern recognition. Wave64 through subgroup-size control, in step with the recompiler. |
 | M5 | - [ ] Automatic host-import budget, full-size streaming and aliasing, and the performance pass. |
@@ -185,5 +232,6 @@ The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` on
 3. Is one shared `VkQueue` sufficient, or do compute queues need an async-compute `VkQueue`, which would need cross-queue timeline waits?
 4. Does the budget formula need a per-vendor factor? This will be measured in M5.
 5. Is `VK_EXT_descriptor_buffer` worth a second backend, given driver maturity on all three vendors?
-6. Correction for the decision table in [README.md](README.md#subsystem-specs): it says "`DRAW_INDIRECT` is not implemented". That is true of `main`, but PR #5 implements the family with a CPU fallback. This spec keeps the M3 item and scopes it as "GPU path only, no CPU record reads".
-7. Sync assessment (PR #28): upstream `Recorder` (`Graphics/src/Recorder.cpp`, 2,901 lines) was trial-ported and reverted. Verdict: a raw port cannot land — 32 `getenv("APS5_…")` calls trip the `policy` job by design, throws cross the `APS5_VABI` boundary, and the file is unwired without the driver port. It returns adapted (typed `[debug]` config, return codes/abort path, file headers, GTest under `driver-lavapipe`) together with the M1 driver port. The `tests/Recorder.cpp` assessment likewise waits for the ported driver headers.
+6. Correction for the decision table in [README.md](README.md#subsystem-specs): it says "`DRAW_INDIRECT` is not implemented". That is true of `main@e06dbff`, but `main@75a8668` (merged PR #5) implements the family with a GPU path for folded SGPR patches and a CPU record-read fallback for the rest (table row "Indirect draws"). This spec keeps the M3 item and scopes it as "GPU path only, no CPU record reads".
+7. Sync assessment (PR #28): upstream `Recorder` (`Graphics/src/Recorder.cpp`, 2,901 lines at the trial port; 2,910 at `main@75a8668`) was trial-ported and reverted. Verdict: a raw port cannot land — 32 `getenv("APS5_…")` calls trip the `policy` job by design, throws cross the `APS5_VABI` boundary, and the file is unwired without the driver port. It returns adapted (typed `[debug]` config, return codes/abort path, file headers, GTest under `driver-lavapipe`) together with the M1 driver port. The `tests/Recorder.cpp` assessment likewise waits for the ported driver headers. **Update (portps5-6):** the adapted `Recorder` and `HostImport` landed without the GpuMutex coupling, release thread or env switches (see "Landed in PortPS5" above); wiring the driver's dispatch/draw/submit path onto them is still open.
+8. Depth surface: which title-independent trigger allocates the host depth image (first enabled `DB_DEPTH_CONTROL` test with a bound `DB_Z_INFO`, or the first `DB_Z_INFO` bind)? How are `DB_RENDER_CONTROL` depth clears and `DB_DEPTH_CLEAR` mapped to `loadOp`, and does a conditional colour write (`DB_DEPTH_CONTROL` bits 30/31) need a two-pass or `VK_EXT_color_write_enable` approach once a depth image exists? Until resolved, a bound surface with an enabled test is rejected.

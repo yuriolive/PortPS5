@@ -7,7 +7,7 @@
 // and diffs disassembled SPIR-V against the sibling `.spvasm` goldens; `--update-goldens`
 // rewrites those goldens from current output (deliberate regeneration only, e.g. after a
 // SPIRV-Tools bump). `--dump-corpus <dir>` writes the synthetic corpus as `.req` files.
-// Differences from upstream PR #5 ShaderReplay: no APS5_* environment switches (the
+// Differences from the upstream ShaderReplay (AnyPS5 main, merged PR #5): no APS5_* environment switches (the
 // policy job bans them; diagnostics are explicit flags), failures return codes instead of
 // throwing across boundaries, and validation rides on Recompile (spirv-val pre/post-opt
 // when SPIRV-Tools are enabled). Host-only dev tool: built for dev/ci presets, never

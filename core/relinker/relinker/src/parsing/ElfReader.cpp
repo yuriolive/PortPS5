@@ -1,8 +1,19 @@
+// ElfReader: bounds-checked parser for ELF64 headers, segments and sections.
+// Subsystem: relinker parsing. Owns a copy of the input file bytes for its
+// lifetime; all fields are untrusted, so every access is range-checked without
+// integer wrap and failures throw Relinker::RelinkerException. Const after
+// construction, so concurrent reads are safe.
+
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/domain/Types.hpp>
 #include <cstring>
 
 namespace Relinker {
+
+namespace {
+// sizeof(Elf64_Ehdr).
+constexpr std::size_t kElfHeaderSize = 0x40;
+}
 
 ElfReader::ElfReader(std::vector<std::uint8_t> fileBuffer)
     : _fileBuffer(std::move(fileBuffer))
@@ -20,8 +31,12 @@ std::uint8_t ElfReader::_readU8At(FileByteOffset fileByteOffset) const {
     return _fileBuffer[fileByteOffset];
 }
 
+// Bounds checks are written as `offset > size || size - offset < N` because
+// offsets come from untrusted ELF fields (e_phoff, p_offset, ...) and
+// `offset + N` can wrap around for values near UINT64_MAX, which would pass
+// the check and read out of bounds.
 std::uint16_t ElfReader::_readU16At(FileByteOffset fileByteOffset) const {
-    if (fileByteOffset + 2 > _fileBuffer.size()) {
+    if (fileByteOffset > _fileBuffer.size() || _fileBuffer.size() - fileByteOffset < 2) {
         throw RelinkerException("FileByteOffset out of bounds", fileByteOffset);
     }
     std::uint16_t value;
@@ -30,7 +45,7 @@ std::uint16_t ElfReader::_readU16At(FileByteOffset fileByteOffset) const {
 }
 
 std::uint32_t ElfReader::_readU32At(FileByteOffset fileByteOffset) const {
-    if (fileByteOffset + 4 > _fileBuffer.size()) {
+    if (fileByteOffset > _fileBuffer.size() || _fileBuffer.size() - fileByteOffset < 4) {
         throw RelinkerException("FileByteOffset out of bounds", fileByteOffset);
     }
     std::uint32_t value;
@@ -39,7 +54,7 @@ std::uint32_t ElfReader::_readU32At(FileByteOffset fileByteOffset) const {
 }
 
 std::uint64_t ElfReader::_readU64At(FileByteOffset fileByteOffset) const {
-    if (fileByteOffset + 8 > _fileBuffer.size()) {
+    if (fileByteOffset > _fileBuffer.size() || _fileBuffer.size() - fileByteOffset < 8) {
         throw RelinkerException("FileByteOffset out of bounds", fileByteOffset);
     }
     std::uint64_t value;
@@ -48,7 +63,10 @@ std::uint64_t ElfReader::_readU64At(FileByteOffset fileByteOffset) const {
 }
 
 ElfHeader ElfReader::ReadHeader() const {
-    if (_fileBuffer.size() < 20) {
+    // ReadHeader reads fields up to e_shstrndx (offset 0x3e, 2 bytes), so a
+    // full Elf64_Ehdr (0x40 bytes) must be present; a shorter file would
+    // otherwise fail later with a misleading "out of bounds" diagnostic.
+    if (_fileBuffer.size() < kElfHeaderSize) {
         throw RelinkerException("File too small for ELF header");
     }
 

@@ -206,6 +206,51 @@ if(BUILD_TESTING)
     )
     add_test(NAME strict_nid_filter COMMAND strict_nid_filter_tests)
 
+    # Relinker hardening regression tests (GoogleTest). Each target compiles only
+    # the translation units it exercises, like the legacy runners above.
+    set(RELINKER_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    portps5_add_gtest(relinker_elf_reader_bounds_tests
+        SOURCES
+            ${RELINKER_DIR}/relinker/tests/ElfReaderBoundsTests.cpp
+            ${RELINKER_DIR}/relinker/src/parsing/ElfReader.cpp
+        INCLUDES
+            ${RELINKER_DIR}/domain/include
+            ${RELINKER_DIR}/relinker/include
+            ${RELINKER_DIR}/io/include
+    )
+    portps5_add_gtest(relinker_buffer_bounds_tests
+        SOURCES
+            ${RELINKER_DIR}/io/tests/BufferBoundsTests.cpp
+            ${RELINKER_DIR}/io/src/ByteReader.cpp
+            ${RELINKER_DIR}/io/src/BufferUtils.cpp
+        INCLUDES ${RELINKER_DIR}/io/include
+    )
+    portps5_add_gtest(relinker_file_writer_tests
+        SOURCES
+            ${RELINKER_DIR}/io/tests/FileWriterTests.cpp
+            ${RELINKER_DIR}/io/src/FileWriter.cpp
+        INCLUDES ${RELINKER_DIR}/domain/include ${RELINKER_DIR}/io/include
+    )
+    portps5_add_gtest(relinker_x64_decoder_emms_tests
+        SOURCES
+            ${RELINKER_DIR}/codegen/tests/X64DecoderEmmsTests.cpp
+            ${RELINKER_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
+        INCLUDES ${RELINKER_DIR}/codegen/include ${RELINKER_DIR}/domain/include
+    )
+    portps5_add_gtest(relinker_linux_guest_module_writer_tests
+        SOURCES
+            ${RELINKER_DIR}/elfpatcher/tests/LinuxGuestModuleWriterTests.cpp
+            ${RELINKER_DIR}/elfpatcher/src/linux/LinuxGuestModuleWriter.cpp
+            ${RELINKER_DIR}/io/src/BufferUtils.cpp
+        INCLUDES
+            ${RELINKER_DIR}/elfpatcher/include
+            ${RELINKER_DIR}/relinker/include
+            ${RELINKER_DIR}/domain/include
+            ${RELINKER_DIR}/io/include
+    )
+    add_test(NAME windows_lazy_got COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_lazy_got.py $<TARGET_FILE:relinker>)
+
     get_property(ALL_RELINKER_TESTS DIRECTORY PROPERTY TESTS)
     set_property(TEST ${ALL_RELINKER_TESTS} PROPERTY LABELS "unit")
 endif()

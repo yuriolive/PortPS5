@@ -1,3 +1,7 @@
+// core/libs/prx/libc/include/general/LogMacros.hpp
+// Diagnostic logging macros and string utilities for PortPS5 runtime libraries.
+// Provides severity-tagged logging (ERR, WARN, INFO, DEBUG, TRACE) and function trimming.
+
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_LOGMACROS_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GENERAL_LOGMACROS_HPP
 
@@ -40,6 +44,8 @@ std::fflush(stream))
 
 #define APS5_LOG_OUT(fmt, ...) _APS5_LOG_IMPL(stdout, fmt, __VA_ARGS__)
 #define APS5_LOG_ERR(fmt, ...) _APS5_LOG_IMPL(stderr, fmt, __VA_ARGS__)
+#define APS5_LOG_INFO(fmt, ...) _APS5_LOG_IMPL(stdout, fmt, __VA_ARGS__)
+#define APS5_LOG_WARN(fmt, ...) _APS5_LOG_IMPL(stderr, fmt, __VA_ARGS__)
 #define APS5_LOG_CHARS_OUT(fmt) _APS5_LOG_IMPL_NF(stdout, fmt)
 #define APS5_LOG_CHARS_ERR(fmt) _APS5_LOG_IMPL_NF(stderr, fmt)
 
