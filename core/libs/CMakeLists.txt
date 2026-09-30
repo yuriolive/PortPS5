@@ -351,6 +351,13 @@ if(BUILD_TESTING)
         LIBRARIES libc
         LABELS   unit
     )
+    # Bounds-checked strings/memory, wcstombs, strtoumax, asctime, atomics, `_s` printf, fopen_s/fgetpos.
+    portps5_add_gtest(guest_libc_extras_tests
+        SOURCES  tests/GuestLibcExtras.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
     # strndup/asprintf/operator new family/aligned_alloc over a test application heap.
     portps5_add_gtest(guest_heap_frontend_tests
         SOURCES  tests/GuestHeapFrontends.cpp
