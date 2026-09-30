@@ -12,12 +12,16 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "SceTypes.hpp"
 
+#include <algorithm>
+#include <array>
+#include <barrier>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern "C" {
@@ -29,6 +33,8 @@ int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mount_point, Sav
 int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) noexcept;
 int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) noexcept;
 int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const SaveDataIcon* icon) noexcept;
+int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint*, SaveDataMountInfo*) noexcept;
+int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint*, const char*) noexcept;
 int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDataIcon* icon) noexcept;
 int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) noexcept;
 int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) noexcept;
@@ -80,6 +86,7 @@ protected:
     }
 };
 
+// Mount modes preserve exists, missing, busy, and double-unmount error semantics.
 TEST_F(SaveDataFidelityTest, MountModesAndErrorCodes) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
     // Double initialization rejected
@@ -134,6 +141,7 @@ TEST_F(SaveDataFidelityTest, MountModesAndErrorCodes) {
     EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
 }
 
+// A clean unmount/remount must preserve synthetic save payload bytes.
 TEST_F(SaveDataFidelityTest, WriteUnmountRemountReadConsistency) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -176,6 +184,7 @@ TEST_F(SaveDataFidelityTest, WriteUnmountRemountReadConsistency) {
     EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
 }
 
+// Restart after an unclean RDWR session restores the complete previous save.
 TEST_F(SaveDataFidelityTest, CrashSafetySnapshotRestoreOnCrash) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -240,6 +249,7 @@ TEST_F(SaveDataFidelityTest, CrashSafetySnapshotRestoreOnCrash) {
     EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
 }
 
+// Clean RDWR unmount consumes the rollback snapshot.
 TEST_F(SaveDataFidelityTest, CrashSafetyCleanUnmountRemovesSnapshot) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -271,6 +281,7 @@ TEST_F(SaveDataFidelityTest, CrashSafetyCleanUnmountRemovesSnapshot) {
     EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
 }
 
+// Memory saves enforce quota and round-trip bytes through atomic replacement.
 TEST_F(SaveDataFidelityTest, MemoryBlobAtomicSwapAndQuota) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -317,6 +328,7 @@ TEST_F(SaveDataFidelityTest, MemoryBlobAtomicSwapAndQuota) {
     EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
 }
 
+// Directory search honors percent and underscore wildcards and exact names.
 TEST_F(SaveDataFidelityTest, DirNameSearchPatternMatching) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -364,6 +376,7 @@ TEST_F(SaveDataFidelityTest, DirNameSearchPatternMatching) {
     EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
 }
 
+// Mounted metadata fields and icon bytes round-trip without loss.
 TEST_F(SaveDataFidelityTest, ParamAndIconRoundTrip) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -425,6 +438,7 @@ TEST_F(SaveDataFidelityTest, ParamAndIconRoundTrip) {
     EXPECT_EQ(sceSaveDataTerminate(), SAVE_DATA_OK);
 }
 
+// Native dialogs expose RUNNING before FINISHED and release active registrations.
 TEST_F(SaveDataFidelityTest, DialogStateTransitionsAndCommonDialogUsed) {
     EXPECT_FALSE(sceCommonDialogIsUsed());
 
@@ -479,6 +493,7 @@ TEST_F(SaveDataFidelityTest, DialogStateTransitionsAndCommonDialogUsed) {
     EXPECT_EQ(sceSaveDataDialogTerminate(), SAVE_DATA_DIALOG_OK);
 }
 
+// Unknown mount bits abort through the documented unsupported-state policy.
 TEST_F(SaveDataFidelityTest, DeathTestCorruptMountModeAborts) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -491,6 +506,7 @@ TEST_F(SaveDataFidelityTest, DeathTestCorruptMountModeAborts) {
     EXPECT_DEATH(sceSaveDataMount3(&mount, &result), ".*");
 }
 
+// Unsupported transferring mounts abort instead of throwing across the guest ABI.
 TEST_F(SaveDataFidelityTest, DeathTestTransferringMountAborts) {
     ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
 
@@ -500,6 +516,136 @@ TEST_F(SaveDataFidelityTest, DeathTestTransferringMountAborts) {
 
     SaveDataMountResult result{};
     EXPECT_DEATH(sceSaveDataTransferringMount(&mount, &result), ".*");
+}
+
+// Invalid guest names must not delete the save root or internal memory storage.
+TEST_F(SaveDataFidelityTest, DeleteRejectsInvalidNames) {
+    std::filesystem::create_directories(TempDir() / "_memory");
+    std::ofstream(TempDir() / "_memory" / "sentinel") << "keep";
+    SaveDataDelete del{};
+    EXPECT_EQ(sceSaveDataDelete(nullptr), SAVE_DATA_ERROR_PARAMETER);
+    EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_PARAMETER);
+    for (const char* name : {"", ".", "..", "_memory", "../outside", "a/b", "a\\b", "C:save"}) {
+        auto dir = MakeDirName(name);
+        del.dir_name = &dir;
+        EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_PARAMETER) << name;
+        EXPECT_TRUE(std::filesystem::exists(TempDir() / "_memory" / "sentinel"));
+    }
+    SceSaveDataDirName unterminated{};
+    std::memset(unterminated.data, 'x', sizeof(unterminated.data));
+    del.dir_name = &unterminated;
+    EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_ERROR_PARAMETER);
+
+    auto valid = MakeDirName("VALID");
+    del.dir_name = &valid;
+    std::filesystem::create_directories(TempDir() / "VALID");
+    std::ofstream(TempDir() / "VALID" / "state") << "remove";
+    EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_OK);
+    EXPECT_FALSE(std::filesystem::exists(TempDir() / "VALID"));
+    EXPECT_EQ(sceSaveDataDelete(&del), SAVE_DATA_OK); // Missing saves retain success semantics.
+}
+
+// A dangling link forces recursive copy failure after staging starts. Never publish
+// that partial snapshot, allocate a slot, or let recovery replace the original save.
+TEST_F(SaveDataFidelityTest, FailedSnapshotCopyIsNotPublished) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+    const auto save = TempDir() / "COPY_FAIL";
+    std::filesystem::create_directory(save);
+    std::ofstream(save / "state") << "original";
+    std::error_code ec;
+    std::filesystem::create_symlink(save / "missing", save / "broken", ec);
+    if (ec) GTEST_SKIP() << "Symlink creation unavailable: " << ec.message();
+    auto name = MakeDirName("COPY_FAIL");
+    SaveDataMount3 mount{};
+    mount.dir_name = &name;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_RDWR;
+    SaveDataMountResult result{};
+    EXPECT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_ERROR_INTERNAL);
+    EXPECT_FALSE(std::filesystem::exists(TempDir() / "COPY_FAIL.portps5-prev"));
+    EXPECT_FALSE(std::filesystem::exists(TempDir() / ".COPY_FAIL.portps5-prev.tmp"));
+    ResetSaveDataStateForTesting();
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+    std::string contents;
+    std::ifstream(save / "state") >> contents;
+    EXPECT_EQ(contents, "original");
+    std::filesystem::remove(save / "broken");
+    ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+    EXPECT_STREQ(result.mount_point.data, "/_sm/0");
+    EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+}
+
+// Concurrent callers of the same mount must observe exactly one owner; BUSY
+// checking and free-slot selection form one transaction under the module mutex.
+TEST_F(SaveDataFidelityTest, ConcurrentMountHasSingleOwner) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+    auto name = MakeDirName("SHARED");
+    SaveDataMount3 mount{};
+    mount.dir_name = &name;
+    mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE2;
+    constexpr std::size_t count = 8;
+    std::barrier start(static_cast<std::ptrdiff_t>(count));
+    std::array<int, count> codes{};
+    std::array<SaveDataMountResult, count> results{};
+    std::vector<std::thread> threads;
+    for (std::size_t i = 0; i < count; ++i) {
+        threads.emplace_back([&, i] {
+            start.arrive_and_wait();
+            codes[i] = sceSaveDataMount3(&mount, &results[i]);
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    EXPECT_EQ(std::count(codes.begin(), codes.end(), SAVE_DATA_OK), 1);
+    EXPECT_EQ(std::count(codes.begin(), codes.end(), SAVE_DATA_ERROR_BUSY), count - 1);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (codes[i] == SAVE_DATA_OK) {
+            EXPECT_EQ(sceSaveDataUmount2(0, &results[i].mount_point), SAVE_DATA_OK);
+        }
+    }
+}
+
+// Slot allocation/reuse must not cross-wire metadata or icons between concurrent
+// saves. Each worker owns its mount while other workers mount and unmount theirs.
+TEST_F(SaveDataFidelityTest, ConcurrentSlotsKeepMetadataAndIconsIsolated) {
+    ASSERT_EQ(sceSaveDataInitialize3(nullptr), SAVE_DATA_OK);
+    constexpr int count = 8;
+    std::barrier start(count);
+    std::vector<std::thread> threads;
+    for (int i = 0; i < count; ++i) {
+        threads.emplace_back([&, i] {
+            const std::string payload = "worker" + std::to_string(i);
+            auto name = MakeDirName(payload.c_str());
+            SaveDataMount3 mount{};
+            mount.dir_name = &name;
+            mount.mount_mode = SAVE_DATA_MOUNT_MODE_CREATE2;
+            start.arrive_and_wait();
+            for (int iteration = 0; iteration < 20; ++iteration) {
+                SaveDataMountResult result{};
+                ASSERT_EQ(sceSaveDataMount3(&mount, &result), SAVE_DATA_OK);
+                EXPECT_EQ(sceSaveDataSetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_TITLE,
+                                             payload.c_str(), payload.size() + 1), SAVE_DATA_OK);
+                char title[128]{};
+                EXPECT_EQ(sceSaveDataGetParam(&result.mount_point, SAVE_DATA_PARAM_TYPE_TITLE,
+                                             title, sizeof(title), nullptr), SAVE_DATA_OK);
+                EXPECT_STREQ(title, payload.c_str());
+                SaveDataIcon icon{};
+                icon.buf = const_cast<char*>(payload.data());
+                icon.buf_size = icon.data_size = payload.size();
+                EXPECT_EQ(sceSaveDataSaveIcon(&result.mount_point, &icon), SAVE_DATA_OK);
+                const auto iconPath = TempDir() / payload / ".portps5" / "icon0.png";
+                EXPECT_EQ(sceSaveDataSaveIconByPath(&result.mount_point, iconPath.string().c_str()), SAVE_DATA_OK);
+                SaveDataMountInfo info{};
+                EXPECT_EQ(sceSaveDataGetMountInfo(&result.mount_point, &info), SAVE_DATA_OK);
+                EXPECT_LE(info.free_blocks, info.blocks);
+                char bytes[32]{};
+                icon.buf = bytes;
+                icon.buf_size = sizeof(bytes);
+                EXPECT_EQ(sceSaveDataLoadIcon(&result.mount_point, &icon), SAVE_DATA_OK);
+                EXPECT_EQ(std::string(bytes, icon.data_size), payload);
+                EXPECT_EQ(sceSaveDataUmount2(0, &result.mount_point), SAVE_DATA_OK);
+            }
+        });
+    }
+    for (auto& thread : threads) thread.join();
 }
 
 } // namespace

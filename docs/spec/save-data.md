@@ -53,7 +53,9 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 **Storage layout.** Saves live at `%LOCALAPPDATA%/PortPS5/saves/<titleId>/<dirName>/`, where `titleId` comes from `/app0/sce_sys/param.json` (`libkernel/AppMetadata/src/AppMetadata.cpp:22-37`). Memory blobs live at `<titleId>/_memory/<slot>.bin`. PortPS5 metadata lives in `<dirName>/.portps5/`: `param.bin` (the last `SetParam`) and `icon0.png`. 1.0 has one user, so there is no user level in the path.
 
-**Crash safety.** An RDWR mount snapshots the directory to `<dirName>.portps5-prev/` before the first write, and a clean `Umount2` deletes the snapshot. A snapshot left over at start-up means a session died mid-save, so it is restored and the event is logged. Memory blobs are written to a temporary file and swapped in with `ReplaceFileW`, never truncated in place.
+**Crash safety.** An RDWR mount snapshots the directory to `<dirName>.portps5-prev/` before the first write, and a clean `Umount2` deletes the snapshot. The copy is staged in `.<dirName>.portps5-prev.tmp/` and renamed to the snapshot path only after copying succeeds; a failed copy or rename rejects the mount and removes the staging copy. A snapshot left over at start-up means a session died mid-save, so it is restored and the event is logged. Memory blobs are written to a temporary file and swapped in with `ReplaceFileW`, never truncated in place.
+
+**Validation and synchronization.** Delete requires a terminated, nonempty directory name and rejects `.`, `..`, `_memory`, and names containing `/`, `\`, or `:`. Slot lookups and use, including metadata I/O, are serialized with mount and unmount. Dialog scans skip internal and snapshot directories, skip entries with metadata errors, and stop on iterator errors without throwing. Only a running native dialog owns a common-dialog registration.
 
 **Fidelity.** `SetParam`, `GetParam` and `DirNameSearch` round-trip the stored param, and icons are stored and returned. `GetMountInfo` reports free blocks from the real free disk space, capped at `SAVE_DATA_BLOCKS_MAX`. `TransferringMount` calls `Unsupported()`, which logs and aborts, until a gate title needs it. No throw crosses the `APS5_VABI` boundary ([threading.md](threading.md)).
 
@@ -123,7 +125,7 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 | Milestone | Work |
 |---|---|
 | M1 | - [x] Offline NP, trophies, user service and system dialogs non-blocking at boot for all five titles. NP, dialog and trophy import inventory. `MsgDialog` stops throwing. |
-| M2 | - [x] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration. Round-trip in `tools/regress`. Dreaming Sarah and TMNT pass. |
+| M2 | - [ ] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration. Round-trip in `tools/regress`. Dreaming Sarah and TMNT pass. |
 | M3 | - [ ] Tomb Raider save/load (the PRD gate for save/load), including the multi-slot list dialog. |
 | M4–M5 | - [ ] Bugsnax and Demon's Souls saves, including any backup events or memory-blob paths they use. |
 | M6 | - [ ] The user guide documents the save location and migration. |

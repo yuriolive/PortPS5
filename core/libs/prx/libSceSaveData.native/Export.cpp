@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #ifdef _WIN32
@@ -291,8 +292,16 @@ int APS5_VABI sceSaveDataDelete(const SaveDataDelete* del) noexcept {
     if (del == nullptr || del->dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    const auto* nameEnd = static_cast<const char*>(
+        std::memchr(del->dir_name->data, '\0', sizeof(del->dir_name->data)));
+    if (nameEnd == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    const std::string_view name(del->dir_name->data, nameEnd - del->dir_name->data);
+    if (name.empty() || name == "." || name == ".." || name == "_memory" ||
+        name.find_first_of("/\\:") != std::string_view::npos) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     try {
-        const std::filesystem::path path = GetSaveDataBaseDir() / std::string(del->dir_name->data);
+        const std::filesystem::path path = GetSaveDataBaseDir() / name;
         std::error_code ec;
         if (std::filesystem::is_directory(path, ec)) {
             std::filesystem::remove_all(path, ec);
@@ -388,6 +397,7 @@ int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mount_point, Sav
     if (mount_point == nullptr || info == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::lock_guard lock(g_save_mutex);
     int slot = find_slot_by_mount_point(mount_point->data);
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
@@ -413,6 +423,7 @@ int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_
     if (mount_point == nullptr || param_buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::lock_guard lock(g_save_mutex);
     int slot = find_slot_by_mount_point(mount_point->data);
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
@@ -545,6 +556,7 @@ int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDat
     if (mount_point == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::lock_guard lock(g_save_mutex);
     int slot = find_slot_by_mount_point(mount_point->data);
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
@@ -605,6 +617,8 @@ int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult
     }
 
     try {
+        // Serialize BUSY checks, slot selection, and publication with slot users.
+        std::lock_guard lock(g_save_mutex);
         const std::filesystem::path root = GetSaveDataBaseDir();
         const std::filesystem::path real_path = root / dirName;
         const std::filesystem::path snapshot_path = root / (dirName + ".portps5-prev");
@@ -647,12 +661,23 @@ int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult
             std::filesystem::create_directories(real_path / ".portps5", ec);
         }
 
-        // Crash safety snapshot for RDWR mount: snapshot existing dir before writes occur
+        // Publish only complete snapshots. Hidden staging copies are ignored by recovery
+        // and dialog scans, including if the process dies while copying.
+        bool snapshotCreated = false;
         if (rdwr && exists) {
-            std::filesystem::remove_all(snapshot_path, ec);
-            ec.clear();
-            std::filesystem::copy(real_path, snapshot_path,
-                                  std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+            const auto temporaryPath = root / ("." + dirName + ".portps5-prev.tmp");
+            std::filesystem::remove_all(temporaryPath, ec);
+            if (ec) return SAVE_DATA_ERROR_INTERNAL;
+            std::filesystem::copy(real_path, temporaryPath,
+                                  std::filesystem::copy_options::recursive, ec);
+            if (!ec) std::filesystem::remove_all(snapshot_path, ec);
+            if (!ec) std::filesystem::rename(temporaryPath, snapshot_path, ec);
+            if (ec) {
+                std::error_code cleanupError;
+                std::filesystem::remove_all(temporaryPath, cleanupError);
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+            snapshotCreated = true;
         }
 
         // Short mount point aliased via path alias table
@@ -664,7 +689,7 @@ int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult
         g_slots[slot].real_path = real_path.string();
         g_slots[slot].snapshot_path = snapshot_path.string();
         g_slots[slot].is_rdwr = rdwr;
-        g_slots[slot].snapshot_created = (rdwr && exists);
+        g_slots[slot].snapshot_created = snapshotCreated;
 
         std::memset(mount_result, 0, sizeof(*mount_result));
         std::snprintf(mount_result->mount_point.data, sizeof(mount_result->mount_point.data), "%s", mountPoint.c_str());
@@ -691,6 +716,7 @@ int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const S
     if (mount_point == nullptr || icon == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::lock_guard lock(g_save_mutex);
     int slot = find_slot_by_mount_point(mount_point->data);
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
@@ -712,6 +738,7 @@ int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, c
     if (mount_point == nullptr || path == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::lock_guard lock(g_save_mutex);
     int slot = find_slot_by_mount_point(mount_point->data);
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
@@ -737,6 +764,7 @@ int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_
     if (mount_point == nullptr || param_buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::lock_guard lock(g_save_mutex);
     int slot = find_slot_by_mount_point(mount_point->data);
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;
@@ -945,6 +973,7 @@ int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_
     if (mount_point == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::lock_guard lock(g_save_mutex);
     int slot = find_slot_by_mount_point(mount_point->data);
     if (slot == -1) {
         return SAVE_DATA_ERROR_NOT_MOUNTED;

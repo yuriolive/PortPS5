@@ -32,15 +32,18 @@ static bool FindNewestSaveDir(char* outName, std::size_t outSize) {
 
     std::filesystem::file_time_type newestTime{};
     std::string newestName;
-    for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
-        if (ec) break;
-        if (entry.is_directory(ec)) {
+    // Keep entry failures separate from iterator errors so a bad entry is skipped.
+    for (auto it = std::filesystem::directory_iterator(root, ec);
+         !ec && it != std::filesystem::directory_iterator{}; it.increment(ec)) {
+        const auto& entry = *it;
+        std::error_code entryError;
+        if (entry.is_directory(entryError) && !entryError) {
             auto name = entry.path().filename().string();
             if (!name.empty() && name[0] != '.' && name != "_memory" &&
-                (name.size() <= 14 || name.compare(name.size() - 14, 14, ".portps5-prev") != 0) &&
+                !(name.size() >= 13 && name.compare(name.size() - 13, 13, ".portps5-prev") == 0) &&
                 name.size() < outSize) {
-                auto time = entry.last_write_time(ec);
-                if (!ec) {
+                auto time = entry.last_write_time(entryError);
+                if (!entryError) {
                     if (newestName.empty() || time > newestTime) {
                         newestTime = time;
                         newestName = std::move(name);
@@ -67,7 +70,6 @@ int APS5_VABI sceSaveDataDialogClose(const void* close_param) noexcept {
         return SAVE_DATA_DIALOG_OK;
     }
     g_status = SAVE_DATA_DIALOG_STATUS_FINISHED;
-    RegisterCommonDialogActive_nid_no_patch(false);
     return SAVE_DATA_DIALOG_OK;
 }
 
