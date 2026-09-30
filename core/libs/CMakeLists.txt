@@ -330,15 +330,13 @@ if(BUILD_TESTING)
         set_tests_properties(guest_rtc PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRtc>")
     endif()
-    add_executable(mspace_tests tests/Mspace.cpp)
-    target_include_directories(mspace_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(mspace_tests PRIVATE libc)
-    configure_windows_unwind(mspace_tests)
-    add_test(NAME mspace COMMAND mspace_tests)
-    if(WIN32)
-        set_tests_properties(mspace PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
+    # Mspace allocator invariants, return codes and randomized stress (GoogleTest).
+    portps5_add_gtest(mspace_tests
+        SOURCES  tests/Mspace.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
     add_executable(guest_memory_tests tests/GuestMemory.cpp)
     target_include_directories(guest_memory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_memory_tests PRIVATE libkernel libc)
