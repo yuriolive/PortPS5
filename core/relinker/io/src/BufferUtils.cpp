@@ -4,6 +4,9 @@
 
 namespace Io {
 
+// Bounds checks use `offset > size || size - offset < N` instead of
+// `offset + N > size`: the latter wraps for offsets near SIZE_MAX and would
+// accept an out-of-range access.
 void WriteU8(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint8_t v) {
     if (offset >= buf.size())
         throw std::out_of_range("WriteU8 out of bounds");
@@ -11,19 +14,19 @@ void WriteU8(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint8_t v)
 }
 
 void WriteU16(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint16_t v) {
-    if (offset + 2 > buf.size())
+    if (offset > buf.size() || buf.size() - offset < 2)
         throw std::out_of_range("WriteU16 out of bounds");
     std::memcpy(buf.data() + offset, &v, 2);
 }
 
 void WriteU32(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint32_t v) {
-    if (offset + 4 > buf.size())
+    if (offset > buf.size() || buf.size() - offset < 4)
         throw std::out_of_range("WriteU32 out of bounds");
     std::memcpy(buf.data() + offset, &v, 4);
 }
 
 void WriteU64(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint64_t v) {
-    if (offset + 8 > buf.size())
+    if (offset > buf.size() || buf.size() - offset < 8)
         throw std::out_of_range("WriteU64 out of bounds");
     std::memcpy(buf.data() + offset, &v, 8);
 }
@@ -72,7 +75,7 @@ std::uint64_t AlignUp64(std::uint64_t value, std::uint64_t alignment) {
 }
 
 std::uint16_t ReadU16(const std::vector<std::uint8_t>& buf, std::size_t offset) {
-    if (offset + 2 > buf.size())
+    if (offset > buf.size() || buf.size() - offset < 2)
         throw std::out_of_range("ReadU16 out of bounds");
     std::uint16_t v;
     std::memcpy(&v, buf.data() + offset, 2);
@@ -80,7 +83,7 @@ std::uint16_t ReadU16(const std::vector<std::uint8_t>& buf, std::size_t offset) 
 }
 
 std::uint32_t ReadU32(const std::vector<std::uint8_t>& buf, std::size_t offset) {
-    if (offset + 4 > buf.size())
+    if (offset > buf.size() || buf.size() - offset < 4)
         throw std::out_of_range("ReadU32 out of bounds");
     std::uint32_t v;
     std::memcpy(&v, buf.data() + offset, 4);
@@ -88,7 +91,7 @@ std::uint32_t ReadU32(const std::vector<std::uint8_t>& buf, std::size_t offset) 
 }
 
 std::uint64_t ReadU64(const std::vector<std::uint8_t>& buf, std::size_t offset) {
-    if (offset + 8 > buf.size())
+    if (offset > buf.size() || buf.size() - offset < 8)
         throw std::out_of_range("ReadU64 out of bounds");
     std::uint64_t v;
     std::memcpy(&v, buf.data() + offset, 8);

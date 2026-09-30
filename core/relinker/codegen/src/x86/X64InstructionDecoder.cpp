@@ -252,7 +252,7 @@ std::size_t X64InstructionDecoder::Decode(const std::uint8_t* data, std::size_t 
                    (opcode >= TwoByteModRmRangeCMin && opcode <= TwoByteModRmRangeCMax) ||
                    (opcode >= TwoByteModRmRangeDMin && opcode <= TwoByteModRmRangeDMax) ||
                    (opcode >= TwoByteModRmRangeEMin && opcode <= TwoByteModRmRangeEMax) ||
-                   (opcode >= TwoByteModRmRangeGMin && opcode <= TwoByteModRmRangeGMax) ||
+                   (opcode >= TwoByteModRmRangeGMin && opcode <= TwoByteModRmRangeGMax && opcode != TwoByteEmms) ||
                    (opcode >= TwoByteModRmRangeHMin && opcode <= TwoByteModRmRangeHMax) ||
                    (opcode >= TwoByteModRmRangeIMin && opcode <= TwoByteModRmRangeIMax) ||
                    (opcode >= TwoBytePrefetchGrpMin && opcode <= TwoBytePrefetchGrpMax) ||
@@ -505,7 +505,7 @@ DecodedInstructionInfo X64InstructionDecoder::DecodeInstruction(
             (op >= TwoByteModRmRangeCMin && op <= TwoByteModRmRangeCMax) ||
             (op >= TwoByteModRmRangeDMin && op <= TwoByteModRmRangeDMax) ||
             (op >= TwoByteModRmRangeEMin && op <= TwoByteModRmRangeEMax) ||
-            (op >= TwoByteModRmRangeGMin && op <= TwoByteModRmRangeGMax) ||
+            (op >= TwoByteModRmRangeGMin && op <= TwoByteModRmRangeGMax && op != TwoByteEmms) ||
             (op >= TwoByteModRmRangeHMin && op <= TwoByteModRmRangeHMax) ||
             (op >= TwoByteModRmRangeIMin && op <= TwoByteModRmRangeIMax) ||
             (op >= TwoBytePrefetchGrpMin && op <= TwoBytePrefetchGrpMax) ||
