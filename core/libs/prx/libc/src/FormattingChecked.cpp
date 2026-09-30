@@ -26,14 +26,14 @@ extern "C" {
 
 /// vsprintf_s: formats `format` with the guest va_list into `buffer[size]`; returns the untruncated length.
 int APS5_VABI vsprintf_s_nid_postfix(char* buffer, std::size_t size, const char* format, VaList* args) {
-    return LibcDetail::FormatWindows(buffer, size, format, args);
+    return LibcDetail::GuardedFormat([&] { return LibcDetail::FormatWindows(buffer, size, format, args); });
 }
 
 /// sprintf_s: same contract as vsprintf_s with inline varargs.
 int APS5_VABI sprintf_s_nid_postfix(char* buffer, std::size_t size, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWindows(buffer, size, format, args);
+    const int result = LibcDetail::GuardedFormat([&] { return LibcDetail::FormatWindows(buffer, size, format, args); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -42,7 +42,7 @@ int APS5_VABI sprintf_s_nid_postfix(char* buffer, std::size_t size, const char* 
 int APS5_VABI snprintf_s_nid_postfix(char* buffer, std::size_t size, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWindows(buffer, size, format, args);
+    const int result = LibcDetail::GuardedFormat([&] { return LibcDetail::FormatWindows(buffer, size, format, args); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -51,7 +51,7 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, std::size_t size, const char*
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::PrintWindows(format, args);
+    const int result = LibcDetail::GuardedFormat([&] { return LibcDetail::PrintWindows(format, args); });
     __builtin_sysv_va_end(args);
     return result;
 }

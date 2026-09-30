@@ -37,12 +37,26 @@ thread_local bool heapCallbackActive = false;
 // Built-in allocator used when the replacement table is present but entirely empty. Entry points use the
 // same System V signatures as a title-supplied allocator so both go through one callback path. The guest
 // heap reports exhaustion by throwing, so these never return null (which lets calloc skip a null check).
-/// Built-in malloc: guest-heap allocation; throws std::bad_alloc-family on exhaustion, never returns null.
-void* APS5_VABI defaultAllocate(std::size_t bytes) { return GuestHeap::GuestHeapAllocate_nid_postfix(bytes); }
+// The guest heap reports an impossible request size with std::length_error / std::overflow_error. Callers
+// (nothrow new, aligned_alloc, strndup) treat only std::bad_alloc as "heap exhausted", so map size overflow
+// to exhaustion here; otherwise a huge nothrow request would abort instead of returning null.
+template<typename TAction>
+decltype(auto) AsBadAlloc(TAction action) {
+    try {
+        return action();
+    } catch (const std::length_error&) {
+        throw std::bad_alloc();
+    } catch (const std::overflow_error&) {
+        throw std::bad_alloc();
+    }
+}
+
+/// Built-in malloc: guest-heap allocation; throws std::bad_alloc on exhaustion or size overflow, never returns null.
+void* APS5_VABI defaultAllocate(std::size_t bytes) { return AsBadAlloc([&] { return GuestHeap::GuestHeapAllocate_nid_postfix(bytes); }); }
 /// Built-in free; null is a no-op.
 void APS5_VABI defaultFree(void* pointer) { GuestHeap::GuestHeapFree_nid_postfix(pointer); }
 /// Built-in realloc with guest-heap semantics (null pointer allocates, size 0 frees and returns null).
-void* APS5_VABI defaultReallocate(void* pointer, std::size_t bytes) { return GuestHeap::GuestHeapReallocate_nid_postfix(pointer, bytes); }
+void* APS5_VABI defaultReallocate(void* pointer, std::size_t bytes) { return AsBadAlloc([&] { return GuestHeap::GuestHeapReallocate_nid_postfix(pointer, bytes); }); }
 /// Built-in calloc: throws std::bad_alloc on count*bytes overflow, otherwise returns zeroed memory.
 void* APS5_VABI defaultCalloc(std::size_t count, std::size_t bytes) {
     if (bytes != 0 && count > std::numeric_limits<std::size_t>::max() / bytes) throw std::bad_alloc();
@@ -51,7 +65,7 @@ void* APS5_VABI defaultCalloc(std::size_t count, std::size_t bytes) {
     return pointer;
 }
 /// Built-in memalign: power-of-two alignment required (the guest heap throws std::invalid_argument otherwise).
-void* APS5_VABI defaultAlign(std::size_t alignment, std::size_t bytes) { return GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes); }
+void* APS5_VABI defaultAlign(std::size_t alignment, std::size_t bytes) { return AsBadAlloc([&] { return GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes); }); }
 /// Built-in posix_memalign: returns 0, EINVAL (22) for bad alignment/null output, ENOMEM (12) on exhaustion.
 int APS5_VABI defaultPosixAlign(void** pointer, std::size_t alignment, std::size_t bytes) {
     if (pointer == nullptr || alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) return 22;

@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -20,6 +21,17 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+
+extern "C" {
+// Declaration of `_ZnwmRKSt9nothrow_t_nid_postfix`; its contract is documented at the definition.
+void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t, const void*);
+// Declaration of `aligned_alloc_nid_postfix`; its contract is documented at the definition.
+void* APS5_VABI aligned_alloc_nid_postfix(std::size_t, std::size_t);
+// Declaration of `strndup_nid_postfix`; its contract is documented at the definition.
+char* APS5_VABI strndup_nid_postfix(const char*, std::size_t);
+// Declaration of `__error_nid_postfix`; its contract is documented at the definition.
+int* APS5_VABI __error_nid_postfix();
+}
 
 namespace {
 
@@ -111,4 +123,16 @@ TEST(ApplicationHeapDefault, MisuseIsFatalAndInitIsIdempotent) {
     EXPECT_DEATH(DieOnThrow([] { InitializeDefaultHeap(); ApplicationHeapCalloc_nid_no_patch(std::numeric_limits<std::size_t>::max(), 2); }), "calloc size overflow");
     EXPECT_DEATH(DieOnThrow([] { InitializeDefaultHeap(); ApplicationHeapAlign_nid_no_patch(3, 16); }), "invalid alignment");
     EXPECT_DEATH(DieOnThrow(RegisterPartialTable), "incomplete allocator API");
+}
+
+// Invariant (review regression): with the built-in heap, an impossible size is reported as exhaustion. The
+// guest heap signals it with std::length_error; that used to escape the nothrow paths and abort the process
+// instead of returning nullptr + ENOMEM.
+TEST(ApplicationHeapDefault, HugeRequestsReturnNullInsteadOfAborting) {
+    InitializeDefaultHeap();
+    constexpr auto Huge = std::numeric_limits<std::size_t>::max();
+    EXPECT_EQ(_ZnwmRKSt9nothrow_t_nid_postfix(Huge, nullptr), nullptr);
+    *__error_nid_postfix() = 0;
+    EXPECT_EQ(aligned_alloc_nid_postfix(16, Huge), nullptr);
+    EXPECT_EQ(*__error_nid_postfix(), 12);
 }

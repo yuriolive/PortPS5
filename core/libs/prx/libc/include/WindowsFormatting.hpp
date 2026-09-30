@@ -5,7 +5,9 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 
 #include "SceTypes.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
+#include <exception>
 #include <climits>
 #include <cstring>
 #include <limits>
@@ -13,6 +15,26 @@
 #include <string>
 #include <vector>
 #include <type_traits>
+
+// Guest errno accessor (FreeBSD numbering), defined in General.cpp / Errors.cpp.
+extern "C" int* APS5_VABI __error_nid_postfix();
+
+namespace LibcDetail {
+
+// Runs a Windows narrow formatting call and converts the formatter's exceptions (malformed or unsupported
+// conversion, oversized width, null stream) into the libc contract: -1 with guest errno EINVAL (22). A host
+// exception must not unwind through System V guest frames, which carry no unwind info.
+template<class TAction>
+int GuardedFormat(TAction action) {
+    try {
+        return action();
+    } catch (const std::exception&) {
+        *__error_nid_postfix() = 22;
+        return -1;
+    }
+}
+
+}
 
 namespace LibcDetail {
 

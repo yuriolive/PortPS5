@@ -58,6 +58,8 @@ void* TryAllocate(std::size_t size, std::size_t alignment) {
 
 // Throwing-new core: retry through the new_handler until it is absent, then abort (see file header).
 void* AllocateOrAbort(std::size_t size, std::size_t alignment) {
+    // An invalid alignment can never be fixed by a new_handler; fail fast instead of retrying forever.
+    if (alignment != 0 && (alignment & (alignment - 1)) != 0) Unsupported("operator new: alignment is not a power of two");
     for (;;) {
         if (void* pointer = TryAllocate(size, alignment)) return pointer;
         const GuestNewHandler handler = g_newHandler.load();

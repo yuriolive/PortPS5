@@ -278,3 +278,10 @@ TEST_F(HeapFrontend, FatalPathsAbortWithLoggedReason) {
     EXPECT_DEATH({ g_fail = true; _ZnwmSt11align_val_t_nid_postfix(8, 64); }, "operator new: out of memory");
     EXPECT_DEATH({ int value = 0; reallocalign_nid_postfix(&value, 8, 16); }, "reallocalign of an existing block");
 }
+
+// Invariant (review regression): a non-power-of-two alignment can never be fixed by a new_handler, so throwing
+// aligned new must abort at once even when a handler is installed (it used to call the handler forever).
+TEST_F(HeapFrontend, InvalidAlignmentAbortsEvenWithNewHandler) {
+    EXPECT_DEATH({ _ZSt15set_new_handlerPFvvE_nid_postfix(RecoveringHandler); _ZnwmSt11align_val_t_nid_postfix(8, 24); },
+                 "alignment is not a power of two");
+}

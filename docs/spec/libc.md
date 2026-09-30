@@ -24,7 +24,7 @@ Not covered here: locale and iostream ABI data ([relinker.md](relinker.md) Open 
 
 Port the AnyPS5 libc additions that are general mechanisms, adapting each to this repository's rules instead of copying it:
 
-- Errors a real console reports as codes are codes (nothrow `new` returns null, `fopen_s`/`fgetpos` return errno values, formatting failures are `-1`/`EINVAL`). Only genuinely unsupported states abort through `Unsupported()` (throwing `operator new` without a `new_handler` on an exhausted heap, `reallocalign` of an existing block).
+- Errors a real console reports as codes are codes (nothrow `new` returns null, `fopen_s` returns an errno value, `fgetpos` returns `-1` and sets guest errno, formatting failures are `-1`/`EINVAL`). Only genuinely unsupported states abort through `Unsupported()` (throwing `operator new` without a `new_handler` on an exhausted heap, `reallocalign` of an existing block).
 - Nothing new throws a host exception into guest frames: the shared unwinder lets a guest `catch (...)` swallow it, and host typeinfo never matches a guest `catch (std::bad_alloc&)`.
 - Guest errno (`__error()`, FreeBSD numbering) is set, never the host `errno`.
 - Guest callbacks (exit handlers, thread-exit destructors) are stored and called as System V (`APS5_VABI`) functions; a plain function pointer passes the argument in the wrong register on Windows.

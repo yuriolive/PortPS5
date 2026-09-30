@@ -30,6 +30,7 @@ int* APS5_VABI __error_nid_postfix();
 namespace {
 constexpr int GuestEnoent = 2;
 constexpr int GuestEinval = 22;
+constexpr int GuestEbadf = 9;
 }
 
 extern "C" {
@@ -50,10 +51,16 @@ int APS5_VABI fopen_s_nid_postfix(FileStream** result, const char* filename, con
 }
 
 /// fgetpos: stores the current position of `stream` in `*position` (a 64-bit offset, the FreeBSD fpos_t).
-/// Returns 0, or -1 with guest errno EINVAL for a null position or an unpositionable stream.
+/// Returns 0, or -1 with guest errno EINVAL for a null position and EBADF for a null/closed stream.
 int APS5_VABI fgetpos_nid_postfix(FileStream* stream, std::int64_t* position) {
     if (!position) { *__error_nid_postfix() = GuestEinval; return -1; }
-    const std::int64_t offset = ftello_nid_postfix(stream);
+    std::int64_t offset = -1;
+    try {
+        offset = ftello_nid_postfix(stream);
+    } catch (const std::exception&) {  // null or closed stream
+        *__error_nid_postfix() = GuestEbadf;
+        return -1;
+    }
     if (offset < 0) return -1;
     *position = offset;
     return 0;
@@ -63,7 +70,12 @@ int APS5_VABI fgetpos_nid_postfix(FileStream* stream, std::int64_t* position) {
 /// errno EINVAL for a null position (or the seek's own error).
 int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* position) {
     if (!position) { *__error_nid_postfix() = GuestEinval; return -1; }
-    return fseeko_nid_postfix(stream, *position, SEEK_SET);
+    try {
+        return fseeko_nid_postfix(stream, *position, SEEK_SET);
+    } catch (const std::exception&) {  // null or closed stream
+        *__error_nid_postfix() = GuestEbadf;
+        return -1;
+    }
 }
 
 }

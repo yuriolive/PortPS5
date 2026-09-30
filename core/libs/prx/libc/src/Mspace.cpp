@@ -82,6 +82,14 @@ Arena* Find(void* handle) {
     return nullptr;
 }
 
+// Unregisters every arena whose handle lies in [start, end). A nested mspace lives inside its parent's
+// allocation, so it stops existing when that allocation (or the parent arena) is freed or destroyed; leaving it
+// registered would make later creates over the reused memory fail as "overlapping". Caller holds arenaMutex.
+// The arena being modified is never erased by this: its own handle is below the range it manages.
+void DropArenasIn(std::uintptr_t start, std::uintptr_t end) {
+    arenas.erase(arenas.lower_bound(start), arenas.lower_bound(end));
+}
+
 void AddFree(Arena& arena, std::uintptr_t start, std::uintptr_t end) {
     arena.chunks[start] = {end, false, 0};
     arena.free.emplace(end - start, start);
@@ -135,6 +143,7 @@ bool FindUsed(Arena* arena, const void* pointer, std::map<std::uintptr_t, Chunk>
 void Release(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
     auto start = chunk->first;
     auto end = chunk->second.end;
+    DropArenasIn(start, end);  // nested mspaces inside the released block die with it
     arena.inUse -= end - start;
     if (chunk != arena.chunks.begin()) {
         const auto previous = std::prev(chunk);
@@ -225,7 +234,11 @@ void* APS5_VABI sceLibcMspaceCreate_nid_postfix(const char* name, void* base,
 // forgotten (the guest owns the backing memory).
 int APS5_VABI sceLibcMspaceDestroy_nid_postfix(void* handle) {
     std::lock_guard lock(arenaMutex);
-    if (arenas.erase(reinterpret_cast<std::uintptr_t>(handle)) != 0) return 0;
+    const auto found = arenas.find(reinterpret_cast<std::uintptr_t>(handle));
+    if (found != arenas.end()) {
+        DropArenasIn(found->first, found->second->end);  // the arena itself plus every nested arena
+        return 0;
+    }
     Error(GuestEinval);
     return -1;
 }

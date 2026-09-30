@@ -400,3 +400,20 @@ TEST_F(MspaceTest, RandomizedStressMatchesModel) {
     EXPECT_EQ(stats.currentInuseSize, 0u);
     EXPECT_NE(sceLibcMspaceMalloc_nid_postfix(arena, RegionSize - 256), nullptr);  // fully coalesced
 }
+
+// Invariant (review regression): nested mspaces die with their parent. Destroying the outer mspace, or freeing
+// the allocation that contains a nested one, must unregister the nested arena; otherwise re-creating an mspace
+// over the reused memory fails as "overlapping" (EINVAL).
+TEST_F(MspaceTest, NestedMspaceIsDroppedWithParent) {
+    void* outer = sceLibcMspaceMalloc_nid_postfix(arena, 8192);
+    ASSERT_NE(outer, nullptr);
+    ASSERT_EQ(sceLibcMspaceCreate_nid_postfix("nested", outer, 8192, 0), outer);
+    sceLibcMspaceFree_nid_postfix(arena, outer);  // releasing the containing block drops the nested arena
+    void* again = sceLibcMspaceMalloc_nid_postfix(arena, 8192);
+    ASSERT_NE(again, nullptr);
+    EXPECT_EQ(sceLibcMspaceCreate_nid_postfix("nested2", again, 8192, 0), again);
+    // Destroying the parent drops the nested arena too, so the whole region can be re-created.
+    EXPECT_EQ(sceLibcMspaceDestroy_nid_postfix(arena), 0);
+    EXPECT_EQ(sceLibcMspaceMalloc_nid_postfix(again, 64), nullptr);  // nested handle is gone
+    EXPECT_EQ(sceLibcMspaceCreate_nid_postfix("reborn", region, RegionSize, 0), region);
+}

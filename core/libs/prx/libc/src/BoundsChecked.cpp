@@ -30,8 +30,11 @@ int APS5_VABI strncpy_s_nid_postfix(char* dest, std::size_t destsz, const char* 
         dest[0] = '\0';
         return GuestEinval;
     }
+    // Scan no further than the destination could hold (Annex K): a source without a NUL inside that window
+    // is an ERANGE violation and must not be read past it.
+    const std::size_t window = count < destsz ? count : destsz;
     std::size_t length = 0;
-    while (length < count && src[length] != '\0') ++length;
+    while (length < window && src[length] != '\0') ++length;
     if (length >= destsz) {
         dest[0] = '\0';
         return GuestErange;
@@ -57,9 +60,11 @@ int APS5_VABI strncat_s_nid_postfix(char* dest, std::size_t destsz, const char* 
         dest[0] = '\0';
         return used == destsz ? GuestErange : GuestEinval;
     }
+    const std::size_t room = destsz - used;
+    const std::size_t window = count < room ? count : room;
     std::size_t length = 0;
-    while (length < count && src[length] != '\0') ++length;
-    if (length >= destsz - used) {
+    while (length < window && src[length] != '\0') ++length;
+    if (length >= room) {
         dest[0] = '\0';
         return GuestErange;
     }

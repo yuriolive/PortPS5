@@ -17,6 +17,9 @@
 #include <cstring>
 #include <ctime>
 #include <exception>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <filesystem>
 #include <limits>
 
@@ -53,6 +56,8 @@ unsigned int APS5_VABI _Atomic_load_4_nid_postfix(volatile unsigned int*, int);
 int APS5_VABI snprintf_s_nid_postfix(char*, std::size_t, const char*, ...);
 // Declaration of `sprintf_s_nid_postfix`; its contract is documented at the definition.
 int APS5_VABI sprintf_s_nid_postfix(char*, std::size_t, const char*, ...);
+// Declaration of `sscanf_nid_postfix`; its contract is documented at the definition.
+int APS5_VABI sscanf_nid_postfix(const char*, const char*, ...);
 // Declaration of `vsprintf_s_nid_postfix`; its contract is documented at the definition.
 int APS5_VABI vsprintf_s_nid_postfix(char*, std::size_t, const char*, void*);
 // Declaration of `fopen_nid_postfix`; its contract is documented at the definition.
@@ -281,21 +286,64 @@ TEST_F(StdioExtras, FgetposFsetposRoundTrip) {
     EXPECT_EQ(fclose_nid_postfix(stream), 0);
 }
 
+
+// Invariant (oracle: C11 Annex K / review regression): strcpy_s/strncat_s scan the source only within the
+// destination window. A source with no NUL inside that window returns ERANGE without reading past it, which a
+// PAGE_NOACCESS guard page right after the source proves (an unbounded scan would fault).
 #ifdef _WIN32
-// Invariant (regression, Windows narrow formatter): a hostile literal or star width/precision is rejected
-// (the formatter throws invalid_argument) instead of reaching the host snprintf, which overflows its stack
-// for huge widths. Sane widths still format.
+TEST(BoundsCheckedStrings, SourceScanStopsAtDestinationWindow) {
+    auto* page = static_cast<char*>(VirtualAlloc(nullptr, 8192, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    ASSERT_NE(page, nullptr);
+    DWORD previous = 0;
+    ASSERT_TRUE(VirtualProtect(page + 4096, 4096, PAGE_NOACCESS, &previous));
+    char* source = page + 4096 - 4;  // exactly four readable bytes, then the guard page
+    std::memcpy(source, "abcd", 4);
+    char dest[4] = "zzz";
+    EXPECT_EQ(strcpy_s_nid_postfix(dest, sizeof(dest), source), Erange);
+    EXPECT_EQ(dest[0], '\0');
+    char joined[8] = "ab";
+    EXPECT_EQ(strcat_s_nid_postfix(joined, 5, source), Erange);  // room for 2 more, source has no NUL in 2
+    EXPECT_EQ(joined[0], '\0');
+    VirtualFree(page, 0, MEM_RELEASE);
+}
+#endif
+
+// Invariant (review regression): fgetpos/fsetpos report a null or closed stream as -1/EBADF (9) instead of
+// letting a host exception reach the caller.
+TEST_F(StdioExtras, PositionFunctionsRejectBadStreams) {
+    std::int64_t position = 0;
+    *__error_nid_postfix() = 0;
+    EXPECT_EQ(fgetpos_nid_postfix(nullptr, &position), -1);
+    EXPECT_EQ(*__error_nid_postfix(), 9);
+    EXPECT_EQ(fsetpos_nid_postfix(nullptr, &position), -1);
+    FileStream* stream = nullptr;
+    ASSERT_EQ(fopen_s_nid_postfix(&stream, Name, "wb+"), 0);
+    ASSERT_EQ(fclose_nid_postfix(stream), 0);
+}
+
+// Invariant (review regression): sscanf with a null string or format returns EOF/EINVAL rather than invoking
+// undefined behaviour in the host scanf.
+TEST(Sscanf, NullArgumentsAreRejected) {
+    int value = 0;
+    *__error_nid_postfix() = 0;
+    EXPECT_EQ(sscanf_nid_postfix(nullptr, "%d", &value), EOF);
+    EXPECT_EQ(*__error_nid_postfix(), Einval);
+    *__error_nid_postfix() = 0;
+    EXPECT_EQ(sscanf_nid_postfix("1", nullptr, &value), EOF);
+    EXPECT_EQ(*__error_nid_postfix(), Einval);
+}
+
+#ifdef _WIN32
+// Invariant (review regression, Windows narrow formatter): hostile literal/star widths and precisions fail with
+// -1 and guest errno EINVAL at the export boundary; no exception unwinds through System V guest frames.
 TEST(CheckedPrintf, NarrowFormatterRejectsHugeWidths) {
     char buffer[16];
     EXPECT_EQ(sprintf_s_nid_postfix(buffer, sizeof(buffer), "%5d", 7), 5);
-    bool threw = false;
-    try { sprintf_s_nid_postfix(buffer, sizeof(buffer), "%99999999999d", 7); } catch (const std::exception&) { threw = true; }
-    EXPECT_TRUE(threw);
-    threw = false;
-    try { sprintf_s_nid_postfix(buffer, sizeof(buffer), "%*d", std::numeric_limits<int>::min(), 7); } catch (const std::exception&) { threw = true; }
-    EXPECT_TRUE(threw);
-    threw = false;
-    try { sprintf_s_nid_postfix(buffer, sizeof(buffer), "%.99999999999f", 1.0); } catch (const std::exception&) { threw = true; }
-    EXPECT_TRUE(threw);
+    *__error_nid_postfix() = 0;
+    EXPECT_EQ(sprintf_s_nid_postfix(buffer, sizeof(buffer), "%99999999999d", 7), -1);
+    EXPECT_EQ(*__error_nid_postfix(), Einval);
+    EXPECT_EQ(sprintf_s_nid_postfix(buffer, sizeof(buffer), "%*d", std::numeric_limits<int>::min(), 7), -1);
+    EXPECT_EQ(sprintf_s_nid_postfix(buffer, sizeof(buffer), "%.99999999999f", 1.0), -1);
+    EXPECT_EQ(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%q", 1), -1);  // unsupported conversion
 }
 #endif

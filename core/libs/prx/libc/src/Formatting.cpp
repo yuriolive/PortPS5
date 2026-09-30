@@ -27,19 +27,30 @@ extern "C" int* APS5_VABI __error_nid_postfix();
 extern "C" {
 
 /// vfprintf: formats `format` with the guest va_list into `stream`. Returns the character count, or -1 on a
-/// short write. Throws (host exception) for a null/closed stream or a malformed format on Windows.
+/// short write. On Windows a null/closed stream or a malformed/oversized conversion gives -1 with errno EINVAL
+/// (no exception); other hosts still throw for a null/closed stream.
 int APS5_VABI vfprintf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
-    auto* native = GetNativeStream(stream);
 #ifdef _WIN32
-    std::string buffer;
-    const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
-    const int result = std::fwrite(buffer.data(), 1, static_cast<size_t>(count), native) ==
-        static_cast<size_t>(count) ? count : -1;
+    const int result = LibcDetail::GuardedFormat([&] {
+        auto* native = GetNativeStream(stream);
+        std::string buffer;
+        const int count = LibcDetail::FormatWindows(nullptr, 0, format, args, &buffer);
+        return std::fwrite(buffer.data(), 1, static_cast<size_t>(count), native) == static_cast<size_t>(count) ? count : -1;
+    });
+    if (stream == nullptr) return result;  // rejected above (-1/EINVAL): nothing to sync
+    try {
+        stream->SyncStatus();
+    } catch (const std::exception&) {  // closed stream
+        *__error_nid_postfix() = 22;
+        return -1;
+    }
+    return result;
 #else
+    auto* native = GetNativeStream(stream);
     const int result = std::vfprintf(native, format, *reinterpret_cast<std::va_list*>(args));
-#endif
     stream->SyncStatus();
     return result;
+#endif
 }
 
 /// fprintf: inline-varargs form of vfprintf_nid_postfix with the same return value and failure modes.
@@ -102,7 +113,7 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
 int APS5_VABI printf_nid_postfix(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::PrintWindows(format, args);
+    const int result = LibcDetail::GuardedFormat([&] { return LibcDetail::PrintWindows(format, args); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -111,7 +122,7 @@ int APS5_VABI printf_nid_postfix(const char* format, ...) {
 int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::PrintWindows(format, args);
+    const int result = LibcDetail::GuardedFormat([&] { return LibcDetail::PrintWindows(format, args); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -120,7 +131,7 @@ int APS5_VABI libc_printf_nid_postfix(const char* format, ...) {
 int APS5_VABI snprintf_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWindows(buffer, size, format, args);
+    const int result = LibcDetail::GuardedFormat([&] { return LibcDetail::FormatWindows(buffer, size, format, args); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -129,7 +140,7 @@ int APS5_VABI snprintf_nid_postfix(char* buffer, size_t size, const char* format
 int APS5_VABI sprintf_nid_postfix(char* buffer, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWindows(buffer, SIZE_MAX, format, args);
+    const int result = LibcDetail::GuardedFormat([&] { return LibcDetail::FormatWindows(buffer, SIZE_MAX, format, args); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -201,6 +212,8 @@ int APS5_VABI sprintf_nid_postfix(VA_ARGS) {
 /// Windows additionally marshals the pointers through LibcDetail::ScanfArguments because the host vsscanf
 /// can not consume a System V va_list.
 int APS5_VABI sscanf_nid_postfix(const char* str, const char* format, ...) {
+    // A null string or format is undefined behaviour in the host scanf; report EINVAL like fscanf does.
+    if (str == nullptr || format == nullptr) { *__error_nid_postfix() = 22; return EOF; }
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
@@ -226,7 +239,7 @@ int APS5_VABI sscanf_nid_postfix(const char* str, const char* format, ...) {
 /// vprintf: formats with the guest va_list to stdout; returns the character count.
 int APS5_VABI vprintf_nid_postfix(const char* str, VaList* c) {
 #ifdef _WIN32
-    return LibcDetail::PrintWindows(str, c);
+    return LibcDetail::GuardedFormat([&] { return LibcDetail::PrintWindows(str, c); });
 #else
     std::va_list* va = reinterpret_cast<std::va_list*>(c);
     return std::vprintf(str, *va);
@@ -236,7 +249,7 @@ int APS5_VABI vprintf_nid_postfix(const char* str, VaList* c) {
 /// vsprintf: unbounded formatting of the guest va_list into `str`; returns the character count.
 int APS5_VABI vsprintf_nid_postfix(char* str, const char* format, VaList* args) {
 #ifdef _WIN32
-    return LibcDetail::FormatWindows(str, SIZE_MAX, format, args);
+    return LibcDetail::GuardedFormat([&] { return LibcDetail::FormatWindows(str, SIZE_MAX, format, args); });
 #else
     return std::vsprintf(str, format, *reinterpret_cast<std::va_list*>(args));
 #endif
@@ -245,7 +258,7 @@ int APS5_VABI vsprintf_nid_postfix(char* str, const char* format, VaList* args) 
 /// vsnprintf: bounded formatting of the guest va_list into `str[size]`; returns the untruncated length.
 int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, VaList* c) {
 #ifdef _WIN32
-    return LibcDetail::FormatWindows(str, size, format, c);
+    return LibcDetail::GuardedFormat([&] { return LibcDetail::FormatWindows(str, size, format, c); });
 #else
     std::va_list* va = reinterpret_cast<std::va_list*>(c);
     return std::vsnprintf(str, size, format, *va);

@@ -43,14 +43,23 @@ extern "C" {
 FileStream _Stderr_nid_postfix{stderr};
 FileStream _Stdout_nid_postfix{stdout};
 
-/// Registers `func(arg)` to run at process exit or when `dsoHandle` is finalized. Returns 0 (registration
-/// can not fail). The first registration installs the std::atexit hook that finalizes everything.
+/// Registers `func(arg)` to run at process exit or when `dsoHandle` is finalized. Returns 0, or -1 (nothing
+/// registered) when the registry can not grow or the std::atexit hook can not be installed. The first
+/// registration installs the std::atexit hook that finalizes everything.
 int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle) {
     std::lock_guard lock(g_exitMutex);
-    g_exitDestructors.push_back({func, arg, dsoHandle});
+    try {
+        g_exitDestructors.push_back({func, arg, dsoHandle});
+    } catch (const std::bad_alloc&) {
+        return -1;  // registration failure is a nonzero return, never an exception into guest frames
+    }
     if (!g_exitRunnerRegistered) {
+        // Only remember the hook once it really registered, so a later call can retry after a failure.
+        if (std::atexit([] { CxaFinalize_nid_no_patch(nullptr); }) != 0) {
+            g_exitDestructors.pop_back();
+            return -1;
+        }
         g_exitRunnerRegistered = true;
-        std::atexit([] { CxaFinalize_nid_no_patch(nullptr); });
     }
     return 0;
 }
