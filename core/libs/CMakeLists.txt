@@ -490,6 +490,7 @@ portps5_add_gtest(audio_mixer_tests
 
 portps5_add_gtest(audio_out2_tests
     SOURCES  tests/AudioOut2.cpp
+             tests/AudioOut2KytyPorts.cpp
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
     LIBRARIES libSceAudioOut libc SDL2-static
     LABELS   unit
