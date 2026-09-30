@@ -219,15 +219,25 @@ static void queueAudio(const Port& port, const void* data) {
     std::vector<AudioFrame> stereoFrames;
     convertAndDownmix(port, data, stereoFrames);
 
+    // Resample once into staging: retrying must reuse these frames, never
+    // re-feed the stream (already-resampled output would be lost on a rejected
+    // push and the stream would bloat). Filter history stays in the stream.
+    std::vector<AudioFrame> staged;
+    if (!source->ResampleStereo(stereoFrames.data(), port.samplesNum, staged)) {
+        Unsupported("queueAudio: resampler rejected port grain");
+    }
+    const auto stagedFrames = static_cast<std::uint32_t>(staged.size());
+
     // Wait until a whole grain fits under the ring ceiling, then push. The
-    // target leaves room for this grain so the push cannot be rejected while
-    // this producer holds the source lock (consumers only free space). Without
-    // this, a wait satisfied by a partial drain would be followed by a silent
-    // drop that still reports success. Grains larger than the ceiling can never
-    // fit; they are attempted once and counted as overrun drops by the push.
-    const std::uint32_t roomTarget = port.samplesNum < AUDIO_MIXER_CEILING_FRAMES
+    // target is sized from the staged (post-resample) count and leaves room
+    // for it, so the push cannot be rejected while this producer holds the
+    // source lock (consumers only free space). Without this, a wait satisfied
+    // by a partial drain would be followed by a silent drop that still reports
+    // success. Staged grains larger than the ceiling can never fit; they are
+    // attempted once and counted as overrun drops by the push.
+    const std::uint32_t roomTarget = stagedFrames < AUDIO_MIXER_CEILING_FRAMES
         ? std::min(AUDIO_MIXER_TARGET_CUSHION_FRAMES,
-                   AUDIO_MIXER_CEILING_FRAMES - port.samplesNum)
+                   AUDIO_MIXER_CEILING_FRAMES - stagedFrames)
         : 0u;
     const auto pushStart = std::chrono::steady_clock::now();
     while (true) {
@@ -236,7 +246,7 @@ static void queueAudio(const Port& port, const void* data) {
         if (elapsedMs >= PUSH_TIMEOUT_MS) break;
         source->WaitUntilQueuedAtMost(roomTarget,
             static_cast<std::uint32_t>(PUSH_TIMEOUT_MS - elapsedMs));
-        if (source->PushAndResample(stereoFrames.data(), port.samplesNum)) break;
+        if (source->PushStereo48k(staged.data(), stagedFrames)) break;
     }
 }
 

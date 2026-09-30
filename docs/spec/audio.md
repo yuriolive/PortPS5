@@ -96,7 +96,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 | Milestone | Audio work |
 |---|---|
 | M1 | - [x] Port AudioOut2 and ATRAC9 from PR #5. Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
-| M2 | - [x] Single host mixer with the resampler and the soft limiter. TMNT proves the mixing path. Underrun bar enforced in the full run. |
+| M2 | - [x] Single host mixer with the resampler and the soft limiter. - [ ] TMNT proves the mixing path. Underrun bar enforced in the full run (needs a local title run with published results; unit tests alone do not close this). |
 | M3 | - [ ] Tomb Raider FMV audio within the A/V bar, jointly with [video-fmv.md](video-fmv.md). |
 | M4 | - [ ] Any codec or NGS2 surface that the inventory flags for Bugsnax. |
 | M5 | - [ ] Object-port panning, validated on Demon's Souls. |

@@ -453,6 +453,7 @@ TEST(AudioOut2Tests, V1PacingReleasesTableAndPinsSourceAcrossClose) {
         for (float sample : mixed) EXPECT_FLOAT_EQ(sample, 0.5f);
         EXPECT_EQ(sceAudioOutClose(replacement), 0);
         mixer.Shutdown();
+        mixer.PauseWallClockForTesting(false);
     }
 }
 
@@ -495,4 +496,5 @@ TEST(AudioOut2Tests, V1SingleAndBatchProducersSharePacingLock) {
     EXPECT_EQ(source.GetQueuedFrames(), 4096u);
     EXPECT_EQ(sceAudioOutClose(handle), 0);
     mixer.Shutdown();
+    mixer.PauseWallClockForTesting(false);
 }

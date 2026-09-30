@@ -280,6 +280,9 @@ TEST(AudioMixerTests, DriverlessSteadyPushZeroUnderruns) {
     mixer.Initialize();
     mixer.ForceWallClockForTesting();
     mixer.ResetTelemetryForTesting();
+    // Freeze retirement: exact push/consume accounting must not depend on host
+    // scheduling preemptions between iterations.
+    mixer.PauseWallClockForTesting(true);
 
     AudioSource* source = mixer.RegisterSource(48000, 2);
     ASSERT_NE(source, nullptr);
@@ -299,13 +302,10 @@ TEST(AudioMixerTests, DriverlessSteadyPushZeroUnderruns) {
     }
 
     EXPECT_EQ(mixer.GetUnderruns(), 0u);
-    // SimulateCallback re-anchors the wall clock each grain; only real
-    // scheduling slack between the final grain and this read can accrue.
-    const auto consumed = mixer.GetFramesConsumed();
-    EXPECT_GE(consumed, 28800000u);
-    EXPECT_LE(consumed, 28800000u + 480u); // +10 ms wall-clock slack
+    EXPECT_EQ(mixer.GetFramesConsumed(), 28800000u);
 
     mixer.UnregisterSource(source);
+    mixer.PauseWallClockForTesting(false);
 }
 
 // Verifies that injecting N buffer starvation gaps counts exactly N underrun events.
@@ -314,6 +314,7 @@ TEST(AudioMixerTests, DriverlessInjectedGapsCounted) {
     mixer.Initialize();
     mixer.ForceWallClockForTesting();
     mixer.ResetTelemetryForTesting();
+    mixer.PauseWallClockForTesting(true);
 
     AudioSource* source = mixer.RegisterSource(48000, 2);
     ASSERT_NE(source, nullptr);
@@ -335,6 +336,7 @@ TEST(AudioMixerTests, DriverlessInjectedGapsCounted) {
     EXPECT_EQ(mixer.GetUnderruns(), kInjectedGaps);
 
     mixer.UnregisterSource(source);
+    mixer.PauseWallClockForTesting(false);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +349,8 @@ TEST(AudioMixerTests, OverrunDropCeiling) {
     mixer.Initialize();
     mixer.ForceWallClockForTesting();
     mixer.ResetTelemetryForTesting();
+    // Freeze retirement so the exact fill level cannot drift on preemption.
+    mixer.PauseWallClockForTesting(true);
 
     AudioSource* source = mixer.RegisterSource(48000, 2);
     ASSERT_NE(source, nullptr);
@@ -365,6 +369,7 @@ TEST(AudioMixerTests, OverrunDropCeiling) {
     EXPECT_GE(mixer.GetOverrunDrops(), 1u);
 
     mixer.UnregisterSource(source);
+    mixer.PauseWallClockForTesting(false);
 }
 
 // Holds callback admission across Reset/Init to prove old frames cannot be
@@ -406,6 +411,8 @@ TEST(AudioMixerTests, OversizedCallbackMixesChunksAndSilentTail) {
     SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
     ASSERT_TRUE(mixer.Initialize());
     mixer.ForceWallClockForTesting();
+    // Freeze retirement so the staged grains survive verbatim until Process.
+    mixer.PauseWallClockForTesting(true);
     auto* first = mixer.RegisterSource(48000, 2);
     auto* second = mixer.RegisterSource(48000, 2);
     ASSERT_NE(first, nullptr);
@@ -430,6 +437,7 @@ TEST(AudioMixerTests, OversizedCallbackMixesChunksAndSilentTail) {
     AudioMixerTestAccess::Process(mixer, output.data(), 1700);
     for (float sample : output) EXPECT_FLOAT_EQ(sample, 0.0f);
     mixer.Shutdown();
+    mixer.PauseWallClockForTesting(false);
 }
 
 // Failure must not latch initialization: changing to an available driver allows

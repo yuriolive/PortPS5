@@ -113,7 +113,9 @@ void AudioSource::Init(std::uint32_t sampleRate, std::uint32_t channels) {
     Reset();
     m_sampleRate = sampleRate ? sampleRate : AUDIO_MIXER_SAMPLE_RATE;
     m_channels = channels ? channels : AUDIO_MIXER_CHANNELS;
-    m_paused.store(false, std::memory_order_relaxed);
+    // Sources start paused: an open-but-never-fed source must not count a
+    // callback shortfall as an underrun. The first pushed grain unpauses.
+    m_paused.store(true, std::memory_order_relaxed);
 
     if (m_sampleRate != AUDIO_MIXER_SAMPLE_RATE) {
         std::lock_guard lock(m_resamplerLock);
@@ -156,6 +158,11 @@ bool AudioSource::PushStereo48k(const AudioFrame* frames, std::uint32_t count) {
     // Retire elapsed wall-clock frames first so a no-device ring reflects
     // real-time playback instead of filling to the ceiling between polls.
     AudioMixer::Get().PumpWallClock();
+    if (count > 0) {
+        // First data unpauses: only sources that have received audio can
+        // starve the device, so only they count callback underruns.
+        m_paused.store(false, std::memory_order_release);
+    }
     const bool pushed = m_ring.Push(frames, count);
     if (!pushed) {
         AudioMixer::Get().RecordOverrunDrop();
@@ -183,23 +190,40 @@ void AudioSource::Drain(std::uint32_t timeoutMs) noexcept {
 }
 
 bool AudioSource::PushAndResample(const AudioFrame* frames, std::uint32_t inCount) {
+    std::vector<AudioFrame> staged;
+    if (!ResampleStereo(frames, inCount, staged)) {
+        return false;
+    }
+    return PushStereo48k(staged.data(), static_cast<std::uint32_t>(staged.size()));
+}
+
+bool AudioSource::ResampleStereo(const AudioFrame* frames, std::uint32_t inCount,
+                                 std::vector<AudioFrame>& out) {
+    if (inCount == 0) {
+        out.clear();
+        return true;
+    }
     if (m_sampleRate == AUDIO_MIXER_SAMPLE_RATE || !m_resampler) {
-        return PushStereo48k(frames, inCount);
+        out.assign(frames, frames + inCount);
+        return true;
     }
     std::lock_guard lock(m_resamplerLock);
     if (SDL_AudioStreamPut(m_resampler, frames, static_cast<int>(inCount * sizeof(AudioFrame))) < 0) {
         return false;
     }
     const int availBytes = SDL_AudioStreamAvailable(m_resampler);
-    if (availBytes >= static_cast<int>(sizeof(AudioFrame))) {
-        const int outFrames = availBytes / static_cast<int>(sizeof(AudioFrame));
-        std::vector<AudioFrame> resampled(outFrames);
-        const int got = SDL_AudioStreamGet(m_resampler, resampled.data(), availBytes);
-        if (got > 0) {
-            const std::uint32_t framesGot = static_cast<std::uint32_t>(got) / sizeof(AudioFrame);
-            return PushStereo48k(resampled.data(), framesGot);
-        }
+    if (availBytes < static_cast<int>(sizeof(AudioFrame))) {
+        out.clear();
+        return true;
     }
+    const int outFrames = availBytes / static_cast<int>(sizeof(AudioFrame));
+    out.resize(outFrames);
+    const int got = SDL_AudioStreamGet(m_resampler, out.data(), availBytes);
+    if (got <= 0) {
+        out.clear();
+        return true;
+    }
+    out.resize(static_cast<std::uint32_t>(got) / sizeof(AudioFrame));
     return true;
 }
 

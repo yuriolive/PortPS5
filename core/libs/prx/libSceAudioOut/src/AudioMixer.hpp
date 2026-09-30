@@ -213,6 +213,17 @@ public:
     bool PushAndResample(const AudioFrame* frames, std::uint32_t inCount);
 
     /**
+     * @brief Resamples stereo frames to 48 kHz into out without touching the ring.
+     *
+     * Lets callers stage a grain once and retry only the ring push: re-feeding
+     * the stream on every retry would lose already-resampled frames and bloat
+     * the resampler. Keeps the stream's filter history across grains.
+     * @return False only when the SDL stream itself rejects the input.
+     */
+    bool ResampleStereo(const AudioFrame* frames, std::uint32_t inCount,
+                        std::vector<AudioFrame>& out);
+
+    /**
      * @brief Waits until queued frames drop to or below targetFrames.
      *
      * Pumps the wall-clock fallback each iteration so a no-device ring drains
