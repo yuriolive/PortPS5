@@ -472,7 +472,11 @@ Pthread APS5_VABI scePthreadSelf() noexcept {
     }
     handle->adopted = true;
     handle->_detached.store(true, std::memory_order_release);  // join/detach -> EINVAL.
+#ifdef _WIN32
+    // threadId exists only in the Windows layout of PthreadPrivate (Pthread.hpp);
+    // the POSIX layout identifies the thread through std::thread instead.
     handle->threadId = std::this_thread::get_id();
+#endif
     handle->guestTid = GuestTid::Ensure();
     // Ensure() returns 0 when the compact tid allocator is exhausted (>2^24
     // live threads), the same condition scePthreadCreate reports as EAGAIN. A

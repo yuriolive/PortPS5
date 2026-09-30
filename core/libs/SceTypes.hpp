@@ -177,6 +177,14 @@ using PthreadMutexattr = PthreadMutexattrPrivate*;
 using PthreadRwlock = PthreadRwlockPrivate*;
 using PthreadRwlockattr = PthreadRwlockattrPrivate*;
 using PthreadCond = PthreadCondPrivate*;
+/**
+ * @brief Guest handle of a scePthreadSem* semaphore.
+ *
+ * An 8-byte guest slot holding a host pointer to PthreadSemPrivate (futex
+ * words, see Pthread/include/SemBarrierTypes.hpp). Unlike mutex/cond/rwlock
+ * slots it is not an in-place futex word: 0 means uninitialised and the value 2
+ * is the destroyed marker written by scePthreadSemDestroy.
+ */
 using PthreadSem = PthreadSemPrivate*;
 using PthreadCondattr = PthreadCondattrPrivate*;
 using PthreadKey = int;
