@@ -874,6 +874,9 @@ TEST(RdnaPortedInstructionTests, MimgUnormAcceptedOnStoreRejectedOnSample) {
     EXPECT_NO_THROW({ EXPECT_EQ(mimg(0x08u, kUnorm, kWord1).op, RdnaOpcode::ImageStore); });
     // image_load (0x00) with UNORM is also accepted (the bit is ignored by loads).
     EXPECT_NO_THROW(mimg(0x00u, kUnorm, kWord1));
+    // Only UNORM was relaxed: other reserved word-0 bits (bit 14 here) are still rejected on a store, so the decoder did
+    // not simply stop validating non-sampling ops.
+    EXPECT_THROW((void)mimg(0x08u, 1u << 14u, kWord1), std::runtime_error);
     // image_sample (0x20, sampler in word1) with UNORM stays rejected, and the message names the words.
     constexpr std::uint32_t kSampleWord1 = kWord1 | (1u << 21u);
     EXPECT_NO_THROW(mimg(0x20u, 0u, kSampleWord1));
