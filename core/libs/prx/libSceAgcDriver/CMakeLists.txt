@@ -389,6 +389,25 @@ if(BUILD_TESTING)
         LABELS   lavapipe
     )
 
+    # Hosted depth/stencil decode tests: synthetic register maps through DecodeState,
+    # no GPU and no guest memory (draws use no colour target).
+    portps5_add_gtest(agc_driver_depth_stencil_tests
+        SOURCES  tests/DepthStencilState.cpp
+                 Graphics/src/State.cpp
+                 Graphics/src/ColorTargetLayout.cpp
+                 Execution/src/GuestMemory.cpp
+                 Execution/src/GuestGpuRange.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include
+                 ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+                 ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
+        LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   unit
+    )
+
     portps5_add_gtest(recompiler_fixes_tests
         SOURCES  ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/RecompilerFixesTests.cpp
         INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler
