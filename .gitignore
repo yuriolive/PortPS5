@@ -35,13 +35,13 @@
 _SaveData/
 _sd/
 
-build/
-b/
-Build/
-build-*/
-cmake-build-debug/
-cmake-build-release/
-cmake-build-*/
+/build/
+/b/
+/Build/
+/build-*/
+/cmake-build-debug/
+/cmake-build-release/
+/cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake

@@ -64,6 +64,8 @@ add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SwapchainState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/HostImport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetTransfer.cpp
@@ -368,9 +370,56 @@ if(BUILD_TESTING)
         set_tests_properties(${agcTestName} PROPERTIES LABELS "lavapipe")
     endforeach()
 
+    # Recorder and HostImport (portps5-6): GoogleTest on a real Vulkan device (lavapipe on hosted CI).
+    # Labelled 'lavapipe' like the other driver suites; tests skip themselves when no device exists.
+    portps5_add_gtest(agc_recorder_tests
+        SOURCES  ${CMAKE_CURRENT_SOURCE_DIR}/tests/RecorderTests.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/HostImportTests.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/HostImport.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferPool.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+                 ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+        LIBRARIES SDL2-static libc
+        LABELS   lavapipe
+    )
+
+    # Hosted depth/stencil decode tests: synthetic register maps through DecodeState,
+    # no GPU and no guest memory (draws use no colour target).
+    portps5_add_gtest(agc_driver_depth_stencil_tests
+        SOURCES  tests/DepthStencilState.cpp
+                 Graphics/src/State.cpp
+                 Graphics/src/ColorTargetLayout.cpp
+                 Execution/src/GuestMemory.cpp
+                 Execution/src/GuestGpuRange.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include
+                 ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+                 ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
+        LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   unit
+    )
+
     portps5_add_gtest(recompiler_fixes_tests
         SOURCES  ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/RecompilerFixesTests.cpp
         INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+        LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   unit
+    )
+
+    # Instruction-semantics tests for the RDNA2 fixes ported from upstream (lane E): decode, translate and
+    # interpret the emitted IR for hand-assembled synthetic instructions. No GPU, no game data.
+    portps5_add_gtest(recompiler_ported_instruction_tests
+        SOURCES  ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/RdnaPortedInstructionTests.cpp
+        INCLUDES ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${CMAKE_SOURCE_DIR}/core/shader/recompiler/tests/golden
         LIBRARIES shader_recompiler_agc_driver libc
         LABELS   unit
     )

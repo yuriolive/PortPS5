@@ -19,21 +19,21 @@ PRD bar owned here: F5 (XInput, DualSense USB, keyboard/mouse mapping).
 
 ## Current state
 
-References are relative to the AnyPS5 tree. Both trees are identical here unless a difference is noted.
+References are relative to the AnyPS5 tree and cite `main@75a8668` (current AnyPS5 main, includes merged PR #5) unless marked `main@e06dbff` (the pre-merge baseline).
 
 | Area | Verified state |
 |---|---|
-| Physical controllers | **None.** Neither tree references `SDL_GameController`, `SDL_Joystick` or XInput anywhere under `core/`. The top-level `CMakeLists.txt:26-28` forces `SDL_JOYSTICK`, `SDL_HAPTIC` and `SDL_HIDAPI` off, and `:29` forces `SDL_SENSOR` off. |
-| Keyboard/mouse → pad | A compile-time table of 33 bindings (`core/libs/prx/libScePad/include/InputMapping.hpp:17-51`): WASD for the left stick, TFGH for the right stick, mouse-left = Square, mouse-right = R2, wheel = D-pad up/down, middle-click toggles mouse-look, F11 toggles fullscreen. Mouse-look polls every 33 ms at a fixed sensitivity (`:13-15`). |
-| Event plumbing | Events are read in the VideoOut window loop (`libSceVideoOut/src/VideoOutDriver.cpp:432-446` in PR #5), then `PadInput::HandleEvent` / `publish` run (`libSceVideoOut/src/PadInput.cpp:23-135`). `APS5_NO_PAD_INPUT` drops keys and buttons (`PadInput.cpp:31-34`). |
-| `scePadOpen` | Accepts index 0 only and returns a constant handle (`libScePad/Export.cpp:77-88`). |
-| `scePadRead` | `main` throws. PR #5 returns one current state per call (`Export.cpp:92-98`). |
-| Pad state | Always reports connected, and `connectedCount` is 1 (`Export.cpp:37-55`; `src/PadState.cpp:35-36`). L2/R2 analog values are synthesised as 0 or 255 from the digital bits (`PadState.cpp:31-32`). Motion is constant (`:33-34`). The timestamp advances only when the state changes (`:47-53`). |
-| Output features | `scePadSetVibration`, `SetLightBar`, `ResetLightBar`, `SetTriggerEffect`, `SetTiltCorrectionState`, `ResetOrientation` and `GetHandle` all throw (`Export.cpp:57-170`). `SetMotionSensorState` returns OK. |
-| `libSceMouse`, `libSceKeyboard` | Every export throws (`libSceMouse/Export.cpp:8-32`, `libSceKeyboard/Export.cpp:8-50`). |
-| Known debt | `docs/TechnicalDebt.md:33`: there is no way to change the keyboard/mouse mapping. |
+| Physical controllers | `main@e06dbff`: **none.** It references no `SDL_GameController`, `SDL_Joystick` or XInput anywhere under `core/`, and the top-level `CMakeLists.txt:26-28` forces `SDL_JOYSTICK`, `SDL_HAPTIC` and `SDL_HIDAPI` off, and `:29` forces `SDL_SENSOR` off. `main@75a8668`: SDL game controllers are opened, hot-plugged and sampled through `PadInput` (`libSceVideoOut/src/PadInput.cpp:25-69`, `:119-188`, `:190-208`), and `CMakeLists.txt:28` turns `SDL_JOYSTICK` on. `SDL_HAPTIC`, `SDL_HIDAPI` and `SDL_SENSOR` stay off (`:29-31`). XInput is not referenced anywhere. |
+| Keyboard/mouse → pad | A default compile-time table of 33 bindings (`core/libs/prx/libScePad/include/InputMapping.hpp:18-52`): WASD for the left stick, TFGH for the right stick, mouse-left = Square, mouse-right = R2, wheel = D-pad up/down, middle-click toggles mouse-look, F11 toggles fullscreen. Mouse-look polls every 33 ms at a fixed sensitivity (`:14-16`). `main@75a8668` can override the table from an `anyps5-input.ini` next to the executable or from the path in `ANYPS5_INPUT_CONFIG` (`libSceVideoOut/src/InputMapping.cpp:128-146`). |
+| Event plumbing | Events are read in the VideoOut window loop (`libSceVideoOut/src/VideoOutDriver.cpp:483-490`), then `PadInput::HandleEvent`, `Update` and `publish` run (`libSceVideoOut/src/PadInput.cpp:190-342`). `APS5_NO_PAD_INPUT` drops keys, mouse buttons and the wheel (`PadInput.cpp:216-219`, `:237`). |
+| `scePadOpen` | Accepts index 0 only and returns a constant handle (`libScePad/Export.cpp:121-132`). |
+| `scePadRead` | `main@e06dbff` throws (`Export.cpp:90-96`). `main@75a8668` returns one current state per call (`Export.cpp:136-142`). |
+| Pad state | Always reports connected, and `connectedCount` is 1 (`Export.cpp:39-57`; `src/PadState.cpp:138-139`). L2/R2 analog values come from the controller's analog triggers, with 255 when only the digital bit is set (`PadState.cpp:110-111`). Motion is the controller's accelerometer and gyro when motion is enabled and present, otherwise a constant rest pose (`:113-136`). The timestamp advances only when the published state changes (`:266-276`). |
+| Output features | `main@75a8668` forwards `scePadSetVibration`, `SetLightBar`, `ResetLightBar`, `SetTriggerEffect`, `SetMotionSensorState` and `ResetOrientation` to `PadInput::applyOutput` (`Export.cpp:153-163`, `:172-183`, `:192-216`; `PadInput.cpp:71-107`). `GetHandle`, `SetTiltCorrectionState`, `SetAngularVelocityDeadbandState` and `SetVibrationTriggerEffectWeakWhileEmbeddedMicInUse` still throw (`Export.cpp:59-65`, `:165-170`, `:185-190`, `:225-229`). `main@e06dbff` throws for all of them. |
+| `libSceMouse`, `libSceKeyboard` | `libSceKeyboard`: every export throws (`libSceKeyboard/Export.cpp:8-52`). `libSceMouse`: every export throws at `main@e06dbff` (`Export.cpp:8-32`), while `main@75a8668` implements `sceMouseInit`, `Open`, `Close` and `Read` over `src/mouse_impl.cpp` (`Export.cpp:5-21`). PortPS5's `libSceMouse/Export.cpp` still throws (see M1). |
+| Known debt | `docs/TechnicalDebt.md:33` (PortPS5): there is no way to change the keyboard/mouse mapping. `main@75a8668` has the `.ini` override above. |
 
-the decision table in [README.md](README.md#subsystem-specs) says "`libScePad` implements `scePadRead` over SDL". That is accurate only for keyboard and mouse events. XInput and DualSense support is new work, and it needs SDL subsystems that the build currently disables.
+the decision table in [README.md](README.md#subsystem-specs) says "`libScePad` implements `scePadRead` over SDL". At `main@e06dbff` that is accurate only for keyboard and mouse events. `main@75a8668` also reads SDL game controllers, but XInput is not referenced, and `SDL_HIDAPI`, `SDL_HAPTIC` and `SDL_SENSOR` are still forced off (`CMakeLists.txt:29-31`), so how far XInput and DualSense USB support goes is unverified here and stays new PortPS5 work.
 
 ## Decision
 
@@ -101,6 +101,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
   - [x] Button OR-merging and stick displacement arbitration rules (`PadHapticsTests.cpp`).
   - [x] Radial and axial dead-zone mathematics and clamp boundaries (`PadHapticsTests.cpp`).
+  - [x] Controller button/axis/trigger translation, slot merge with keyboard, and per-slot connect/disconnect through `scePadRead` (`tests/input/ControllerInputTests.cpp`, synthetic samples, no device).
   - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
   - [ ] TOML controller binding parsing and rejection of invalid identifiers.
   - [x] Monotonic timestamp advancement invariants on sequential `scePadRead` calls (`PadHapticsTests.cpp`).
@@ -122,7 +123,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] Port PR #5's `scePadRead`. Import inventory for Mouse and Keyboard. Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input`. Sync status (PR #28): the mouse backend (`libSceMouse/src/mouse_impl.cpp`, `include/MouseState.hpp`, `include/mouse_structs.h`) plus VideoOut routing (`libSceVideoOut/src/MouseInput.cpp`, `include/MouseInput.hpp`) are byte-identical to upstream `53bda68`; `libSceMouse/Export.cpp` still throws, so the Current-state row above stands. `tests/Mouse.cpp` is converted to GTest but DISABLED until the M2 exports land (builds in CI to pin the API). Debt: the process-global `std::mutex mouseMutex` (`mouse_impl.cpp:9`) violates the no-global-locks rule and must go with the M2 work. |
+| M1 | - [ ] Port AnyPS5 main's `scePadRead` (merged PR #5). Import inventory for Mouse and Keyboard. Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input`. Sync status (PR #28): the mouse backend (`libSceMouse/src/mouse_impl.cpp`, `include/MouseState.hpp`, `include/mouse_structs.h`) plus VideoOut routing (`libSceVideoOut/src/MouseInput.cpp`, `include/MouseInput.hpp`) are byte-identical to upstream `53bda68`; `libSceMouse/Export.cpp` still throws, so the Current-state row above stands. `tests/Mouse.cpp` is converted to GTest but DISABLED until the M2 exports land (builds in CI to pin the API). Debt: the process-global `std::mutex mouseMutex` (`mouse_impl.cpp:9`) violates the no-global-locks rule and must go with the M2 work. |
 | M2 | - [ ] Everything in the target design. XInput, DualSense USB and keyboard/mouse pass the matrix on Dreaming Sarah and TMNT (the F5 delivery milestone). |
 | M3–M5 | - [ ] Regression only. Add analog-trigger and multi-button coverage as the 3D titles demand. |
 | M6 | - [ ] The release matrix is published in the release notes. |
@@ -132,3 +133,13 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 - Do any gate titles need a second local player (TMNT supports co-op)? 1.0 gates single-player only. A second slot works in the design but is not gated.
 - Gyro through `SDL_SENSOR`: the PRD puts only haptics and adaptive triggers out of scope. Does any gate title need motion?
 - Should rumble on XInput stay on by default? It adds no DualSense-specific behaviour.
+
+## Controller polling (implemented)
+
+- Attach: `SDL_CONTROLLERDEVICEADDED` -> `SDL_GameControllerOpen` -> lowest free slot; `REMOVED` frees it. A fifth controller is ignored.
+- Buttons: A/B/X/Y = Cross/Circle/Square/Triangle, START = Options, shoulders = L1/R1, stick clicks = L3/R3, D-pad, touchpad click = TouchPad bit.
+- Sticks: -32768..32767 -> 0..255 (centre 128) with a radial dead zone from `[input] deadzone` (default 0.08), rescaled so output starts at 0 at the zone edge.
+- Triggers: 0..32767 -> 0..255 in `analog_buttons_l2/r2`; the digital L2/R2 bit is raised above 30/255.
+- Slot 0 merge: buttons OR, sticks furthest from centre, keyboard R2/L2 still force 255.
+- `debug.ignore_host_input`: controllers are never attached while it is set. On window focus loss every attached controller publishes neutral state.
+- Slots 1..3 can be opened with `scePadOpen` only while a controller occupies them.

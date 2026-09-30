@@ -20,11 +20,19 @@ void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin)
     throw std::runtime_error("GNM subvector loop instructions are not supported by this translator");
 }
 
+// s_*_saveexec_b32/b64 (RDNA2 ISA, SOP1): D = EXEC; EXEC = op(S0, EXEC); SCC = (EXEC != 0).
+//
+// Ordering invariant: hardware reads S0 before it writes the old EXEC into D, so the aliased form
+// `s_and_saveexec_b64 vcc, vcc` computes exec & (old vcc). Writing D first and reading S0 second would
+// turn it into exec & exec. The source is therefore read before the destination write.
+//
+// The per-lane EXEC predicate (ir.SetExec) is the lane's own bit of the new mask, not "mask != 0"
+// (that is SCC): lanes whose bit is clear must go inactive.
 void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operation, bool negateExec, bool negateSource, bool write64) {
     if (write64) {
         const std::array<IrU32, 2> oldExec{IrU32(ir.GetExecLo()), IrU32(ir.GetExecHi())};
-        writeU32Pair(inst.destination, oldExec);
         const std::array<IrU32, 2> source = readU32Pair(sourceAt(inst, 0u));
+        writeU32Pair(inst.destination, oldExec);
         IrValue& lowExecOperand = negateExec ? ir.BitwiseNot(oldExec[0].Value()) : oldExec[0].Value();
         IrValue& lowSourceOperand = negateSource ? ir.BitwiseNot(source[0].Value()) : source[0].Value();
         IrValue& highExecOperand = negateExec ? ir.BitwiseNot(oldExec[1].Value()) : oldExec[1].Value();
@@ -35,19 +43,19 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         ir.SetExecHi(newExecHi.Value());
         const IrU1 nonZero(ir.LogicalOr(ir.INotEqual(newExecLo.Value(), ir.Constant(0u)), ir.INotEqual(newExecHi.Value(), ir.Constant(0u))));
         ir.SetScc(nonZero.Value());
-        ir.SetExec(nonZero.Value());
+        ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
         return;
     }
     const IrU32 oldExec(ir.GetExecLo());
-    writeRawU32(inst.destination, oldExec);
     const IrU32 source = readU32(sourceAt(inst, 0u));
+    writeRawU32(inst.destination, oldExec);
     IrValue& execOperand = negateExec ? ir.BitwiseNot(oldExec.Value()) : oldExec.Value();
     IrValue& sourceOperand = negateSource ? ir.BitwiseNot(source.Value()) : source.Value();
     const IrU32 newExec(ir.Emit(operation, IrType::U32, {&execOperand, &sourceOperand}));
     ir.SetExecLo(newExec.Value());
     const IrU1 nonZero(ir.INotEqual(newExec.Value(), ir.Constant(0u)));
     ir.SetScc(nonZero.Value());
-    ir.SetExec(nonZero.Value());
+    ir.SetExec(threadBit({newExec, IrU32(ir.GetExecHi())}).Value());
 }
 
 void TranslationContext::addU32(const RdnaInstruction& inst, bool vector, bool useCarryIn) {
@@ -66,7 +74,9 @@ void TranslationContext::addU32(const RdnaInstruction& inst, bool vector, bool u
         ir.SetScc(carryOut.Value());
         return;
     }
-    const IrU1 carryIn = vector ? IrU1(ir.GetVcc()) : IrU1(ir.GetScc());
+    // A vector carry-in is the lane mask the third source names: implicit VCC in the VOP2 encoding
+    // (two sources), any SGPR pair in the VOP3 encoding (three sources, RDNA2 ISA v_add_co_ci_u32).
+    const IrU1 carryIn = !vector ? IrU1(ir.GetScc()) : inst.sourceCount >= 3u ? readMask(sourceAt(inst, 2u)) : IrU1(ir.GetVcc());
     const IrU32 carryInU32(ir.Select(carryIn.Value(), ir.Constant(1u), ir.Constant(0u)));
     IrValue& secondAdd = ir.Emit(IrOpcode::IAddCarry32, IrType::U32x2, {&sum.Value(), &carryInU32.Value()});
     const IrU32 result(ir.Emit(IrOpcode::CompositeExtractU32x2, IrType::U32, {&secondAdd, &ir.Constant(0u)}));
@@ -100,7 +110,8 @@ void TranslationContext::subbU32(const RdnaInstruction& inst, bool vector, bool 
     const IrU32 second = readU32(sourceAt(inst, 1u));
     const IrU32& lhs = reverse ? second : first;
     const IrU32& rhs = reverse ? first : second;
-    const IrU1 borrowIn = vector ? IrU1(ir.GetVcc()) : IrU1(ir.GetScc());
+    // Same carry-in rule as addU32: VOP3 names the borrow mask in its third source, VOP2 uses VCC.
+    const IrU1 borrowIn = !vector ? IrU1(ir.GetScc()) : inst.sourceCount >= 3u ? readMask(sourceAt(inst, 2u)) : IrU1(ir.GetVcc());
     const IrU32 borrowInU32(ir.Select(borrowIn.Value(), ir.Constant(1u), ir.Constant(0u)));
     const IrU32 partial(ir.ISub(lhs.Value(), rhs.Value()));
     const IrU1 firstBorrow(ir.ULessThan(lhs.Value(), rhs.Value()));
@@ -175,8 +186,22 @@ void TranslationContext::sInstPrefetch() {
     (void)ir.Emit(IrOpcode::InstPrefetch, IrType::Void, {});
 }
 
+/// Lowers s_getpc_b64 to the shader's absolute address (GetShaderBase + next-PC
+/// offset) and writes the 64-bit result to the destination SGPR pair, low word
+/// first. A raw next-PC offset would name a near-zero address for PC-relative
+/// data behind the shader's own code; the per-request base keeps relocated
+/// copies sharing one compiled variant.
+/// \param inst The decoded SOPP instruction; uses inst.destination and the
+///             current program counter.
 void TranslationContext::sGetpcB64(const RdnaInstruction& inst) {
-    const IrU64 pc(ir.ConstantU64(static_cast<std::uint64_t>(currentProgramCounter) + 4u));
+    // PC-relative data lives behind the shader's own code (e.g. an NGG vertex
+    // shader fetching vertices after its code via s_getpc+s_add_u32+s_addc_u32).
+    // Emitting the raw next-PC offset names a tiny near-zero address, so every
+    // load reads zero and the draw never rasterizes. Add the per-request shader
+    // base so the V# names the real data; relocated copies keep sharing one
+    // compiled variant because the base is evaluated from the code address.
+    IrValue& base = ir.Emit(IrOpcode::GetShaderBase, IrType::U64, {});
+    const IrU64 pc(ir.Emit(IrOpcode::IAdd64, IrType::U64, {&base, &ir.ConstantU64(static_cast<std::uint64_t>(currentProgramCounter) + 4u)}));
     writeU32Pair(inst.destination, extractU64(pc));
 }
 

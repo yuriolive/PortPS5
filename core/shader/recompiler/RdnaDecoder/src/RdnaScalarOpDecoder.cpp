@@ -1,3 +1,8 @@
+// core/shader/recompiler/RdnaDecoder/src/RdnaScalarOpDecoder.cpp
+// Decoder for the RDNA2 scalar formats SOP1, SOP2, SOPK, SOPC and SOPP: opcode tables per format, operand
+// and destination-width decoding, and literal-constant handling. An opcode missing from a table throws
+// std::invalid_argument naming the format and opcode so the failing instruction is diagnosable.
+// Pure function of the code words; thread-safe.
 #include "RdnaDecoder/RdnaScalarOpDecoder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <stdexcept>
@@ -11,18 +16,24 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
     switch (opcode) {
         case 0x03u: return RdnaOpcode::SMovB32;
         case 0x04u: return RdnaOpcode::SMovB64;
+        case 0x05u: return RdnaOpcode::SCmovB32;
         case 0x06u: return RdnaOpcode::SCmovB64;
         case 0x07u: return RdnaOpcode::SNotB32;
         case 0x08u: return RdnaOpcode::SNotB64;
         case 0x09u: return RdnaOpcode::SWqmB32;
         case 0x0au: return RdnaOpcode::SWqmB64;
         case 0x0bu: return RdnaOpcode::SBrevB32;
+        case 0x0cu: return RdnaOpcode::SBrevB64;
+        case 0x0du: return RdnaOpcode::SBcnt0I32B32;
         case 0x0fu: return RdnaOpcode::SBcnt1I32B32;
         case 0x10u: return RdnaOpcode::SBcnt1I32B64;
+        case 0x11u: return RdnaOpcode::SFf0I32B32;
         case 0x13u: return RdnaOpcode::SFf1I32B32;
         case 0x14u: return RdnaOpcode::SFf1I32B64;
         case 0x15u: return RdnaOpcode::SFlbitI32B32;
         case 0x16u: return RdnaOpcode::SFlbitI32B64;
+        case 0x19u: return RdnaOpcode::SSextI32I8;
+        case 0x1au: return RdnaOpcode::SSextI32I16;
         case 0x1bu: return RdnaOpcode::SBitset0B32;
         case 0x1cu: return RdnaOpcode::SBitset0B64;
         case 0x1du: return RdnaOpcode::SBitset1B32;
@@ -30,6 +41,9 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
         case 0x1fu: return RdnaOpcode::SGetpcB64;
         case 0x20u: return RdnaOpcode::SSetpcB64;
         case 0x24u: return RdnaOpcode::SAndSaveexecB64;
+        case 0x25u: return RdnaOpcode::SOrSaveexecB64;
+        case 0x26u: return RdnaOpcode::SXorSaveexecB64;
+        case 0x27u: return RdnaOpcode::SAndn2SaveexecB64;
         case 0x28u: return RdnaOpcode::SOrn2SaveexecB64;
         case 0x2du: return RdnaOpcode::SQuadmaskB64;
         case 0x34u: return RdnaOpcode::SAbsI32;
@@ -77,6 +91,7 @@ RdnaOpcode decodeSop2Opcode(std::uint32_t opcode) {
         case 0x20u: return RdnaOpcode::SLshrB32;
         case 0x21u: return RdnaOpcode::SLshrB64;
         case 0x22u: return RdnaOpcode::SAshrI32;
+        case 0x23u: return RdnaOpcode::SAshrI64;
         case 0x24u: return RdnaOpcode::SBfmB32;
         case 0x25u: return RdnaOpcode::SBfmB64;
         case 0x26u: return RdnaOpcode::SMulI32;
@@ -113,6 +128,8 @@ RdnaOpcode decodeSopcOpcode(std::uint32_t opcode) {
         case 0x0bu: return RdnaOpcode::SCmpLeU32;
         case 0x0cu: return RdnaOpcode::SBitcmp0B32;
         case 0x0du: return RdnaOpcode::SBitcmp1B32;
+        case 0x0eu: return RdnaOpcode::SBitcmp0B64;
+        case 0x0fu: return RdnaOpcode::SBitcmp1B64;
         case 0x12u: return RdnaOpcode::SCmpEqU64;
         case 0x13u: return RdnaOpcode::SCmpLgU64;
         default: throw std::invalid_argument("unsupported SOPC opcode " + std::to_string(opcode));
@@ -165,7 +182,15 @@ RdnaOpcode decodeSoppOpcode(std::uint32_t opcode) {
         case 0x10u: return RdnaOpcode::SSendmsg;
         case 0x12u: return RdnaOpcode::STrap;
         case 0x16u: return RdnaOpcode::STtracedata;
+        // S_CBRANCH_CDBGSYS / _CDBGUSER / _CDBGSYS_OR_USER / _CDBGSYS_AND_USER branch only while a
+        // debugger has set the conditional-debug bits of the wave STATUS register (RDNA2 ISA, SOPP
+        // 23-26); no retail wave ever has them set, so all four are "never taken".
+        case 0x17u:
+        case 0x18u:
+        case 0x19u:
+        case 0x1au: return RdnaOpcode::SCbranchCdbg;
         case 0x20u: return RdnaOpcode::SInstPrefetch;
+        case 0x21u: return RdnaOpcode::SClause;
         case 0x23u: return RdnaOpcode::SWaitcntDepctr;
         default: throw std::invalid_argument("unsupported SOPP opcode " + std::to_string(opcode));
     }
@@ -181,7 +206,8 @@ void decodeScalarBinarySources(std::uint32_t programCounter, std::span<const std
 bool isSoppWaitOpcode(RdnaOpcode opcode) {
     return opcode == RdnaOpcode::SNop || opcode == RdnaOpcode::SWaitcnt || opcode == RdnaOpcode::SWaitcntDepctr ||
         opcode == RdnaOpcode::SSleep || opcode == RdnaOpcode::SSetprio || opcode == RdnaOpcode::SSendmsg ||
-        opcode == RdnaOpcode::STrap || opcode == RdnaOpcode::STtracedata || opcode == RdnaOpcode::SInstPrefetch;
+        opcode == RdnaOpcode::STrap || opcode == RdnaOpcode::STtracedata || opcode == RdnaOpcode::SInstPrefetch ||
+        opcode == RdnaOpcode::SClause || opcode == RdnaOpcode::SCbranchCdbg;
 }
 
 std::uint32_t scalarDestinationDwordCount(RdnaOpcode opcode) {
@@ -189,11 +215,16 @@ std::uint32_t scalarDestinationDwordCount(RdnaOpcode opcode) {
         case RdnaOpcode::SMovB64:
         case RdnaOpcode::SCmovB64:
         case RdnaOpcode::SNotB64:
+        case RdnaOpcode::SBrevB64:
+        case RdnaOpcode::SAshrI64:
         case RdnaOpcode::SWqmB64:
         case RdnaOpcode::SBitset0B64:
         case RdnaOpcode::SBitset1B64:
         case RdnaOpcode::SGetpcB64:
         case RdnaOpcode::SAndSaveexecB64:
+        case RdnaOpcode::SOrSaveexecB64:
+        case RdnaOpcode::SXorSaveexecB64:
+        case RdnaOpcode::SAndn2SaveexecB64:
         case RdnaOpcode::SOrn2SaveexecB64:
         case RdnaOpcode::SQuadmaskB64:
         case RdnaOpcode::SAndn1SaveexecB64:

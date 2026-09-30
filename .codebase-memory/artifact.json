@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "3b28346464f837f00c5c2c62c6a88bd39b968347",
-    "indexed_at": "2026-09-27T23:03:00Z",
-    "project": "PortPS5-parallel-m1",
-    "nodes": 14391,
-    "edges": 53966,
-    "original_size": 37748736,
-    "compressed_size": 5206592,
-    "compression_level": 3
+    "commit": "72f2e66bc268afa2e9554844211a4de20c426dc8",
+    "indexed_at": "2026-09-30T16:13:52Z",
+    "project": "PortPS5",
+    "nodes": 17005,
+    "edges": 63816,
+    "original_size": 37027840,
+    "compressed_size": 7432281,
+    "compression_level": 9
 }

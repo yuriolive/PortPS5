@@ -16,12 +16,12 @@ PRD bars owned here: F4 (FMV plays; skipping is not a pass) and the ±80 ms A/V 
 
 References are relative to `core/`.
 
-| Area | AnyPS5 `main` | PR #5 |
+| Area | AnyPS5 `main@e06dbff` | AnyPS5 `main@75a8668` (incl. merged PR #5) |
 |---|---|---|
-| Bink 2 (title-decoded) | No verified FMV reach. | Demon's Souls' intro cinematic plays through the title's own decoder. It depends on two fixes:<br>• the `s_*_saveexec` source-before-destination order (`shader/recompiler/Translation/src/ControlFlowInstructions.cpp:18-25`; the comment names the Bink 2 kernels; `APS5_SAVEEXEC_WRITE_FIRST` reverts it);<br>• "adjacent-generation" write-back for video planes packed back to back (`libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp:838-849`, `:2609-2641`; kill switch `APS5_NO_ADJACENT_GENERATION`). |
-| `libSceAvPlayer.native` | All 27 exports are `NotImplemented_nid_no_patch`, which throws `std::runtime_error` (`libs/prx/libc/src/General.cpp:85-87`). For example, `sceAvPlayerInit` is at `libs/prx/libSceAvPlayer.native/Export.cpp:87-91`. | Upstream implements a 27-export state machine simulating player lifecycle (Ready/Play/Pause/Stop) with a 1080p blank clip. PortPS5 ports this state machine with full System V ABI annotations and companion GoogleTest suite. |
+| Bink 2 (title-decoded) | No verified FMV reach. | Demon's Souls' intro cinematic plays through the title's own decoder. It depends on two fixes:<br>• the `s_*_saveexec` source-before-destination order (`shader/recompiler/Translation/src/ControlFlowInstructions.cpp:18-25`; the comment names the Bink 2 kernels; `APS5_SAVEEXEC_WRITE_FIRST` reverts it);<br>• "adjacent-generation" write-back for video planes packed back to back (`libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp:839-850`, `:2617-2674`; kill switch `APS5_NO_ADJACENT_GENERATION`). |
+| `libSceAvPlayer.native` | All 27 exports are `NotImplemented_nid_no_patch`, which throws `std::runtime_error` (`libs/prx/libc/src/General.cpp:85-87`). For example, `sceAvPlayerInit` is at `libs/prx/libSceAvPlayer.native/Export.cpp:87-91`. | Upstream implements a 28-export state machine simulating player lifecycle (Ready/Play/Pause/Stop) with a 1080p blank clip. PortPS5 ports this state machine with full System V ABI annotations and companion GoogleTest suite. |
 | `libSceAvPlayer` (non-native) | 25 throw-stubs. | Compiles the shared native implementation into its own PRX with C linkage and System V ABI. |
-| Flip pacing | `libSceVideoOut` synthesises a 59.94 Hz vblank from `steady_clock` (`VideoOutDriver.cpp` `vblankLoop`). | Same (`libs/prx/libSceVideoOut/src/VideoOutDriver.cpp:504-521`). A flip waits for `lastFlipVblank + flipRate + 1` (`:350-362`). The swapchain present mode is hard-coded to FIFO (`libSceAgcDriver/Execution/src/VulkanDevice.cpp:847`, `:1471`). |
+| Flip pacing | `libSceVideoOut` synthesises a 59.94 Hz vblank from `steady_clock` (`VideoOutDriver.cpp` `vblankLoop`). | Same (`libs/prx/libSceVideoOut/src/VideoOutDriver.cpp:531-553`). A flip waits for `lastFlipVblank + flipRate + 1` (`:391-395`). The swapchain present mode is hard-coded to FIFO (`libSceAgcDriver/Execution/src/VulkanDevice.cpp:918`, `:1550`). |
 | A/V telemetry | None. | None. |
 
 The architecture spec previously called AvPlayer coverage "zero". AvPlayer now provides a non-blocking offline state machine serving a blank frame stream and simulated event transitions so titles polling AvPlayer frame getters or event loops never crash or deadlock at boot. Real system media decoding (e.g., Media Foundation) remains scheduled for full FMV verification.
@@ -32,7 +32,7 @@ The architecture spec previously called AvPlayer coverage "zero". AvPlayer now p
 
 This follows the decision table in [README.md](README.md#subsystem-specs) §Video / FMV:
 - Keep the path where the title runs its own decoder.
-- Carry PR #5's Bink-plane write-back through M1–M2 only as an interim general mechanism, *adjacent block-generation advance*, with no switch and no title reference. Replace it with general block-generation tracking in M3.
+- Carry AnyPS5 main's (merged PR #5) Bink-plane write-back through M1–M2 only as an interim general mechanism, *adjacent block-generation advance*, with no switch and no title reference. Replace it with general block-generation tracking in M3.
 - Audit AvPlayer in M1.
 - Decode system formats (H.264/H.265) with Media Foundation.
 - FMV playback is a gate requirement. Skipping a video is not a pass.
@@ -44,7 +44,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Vide
 - block-generation tracking of GPU-written surfaces, which supersedes `AdjacentGenerationEnabled` ([gpu-driver.md](gpu-driver.md), [guest-memory.md](guest-memory.md));
 - capture ordering that never satisfies a wait from an unexecuted label.
 
-**Interim, M1–M2: adjacent block-generation advance.** Until general tracking lands in M3, PR #5's write-back (`Texture.cpp:838-849`, `:2609-2641`) is ported with its Bink and video-plane naming removed. It is stated as a general rule: a GPU write to a surface also advances the write generation of the adjacent block it shares with a surface packed back to back, so that surface is not read stale. It has no switch and no title reference, and it applies to every surface. M3 deletes it when general block-generation tracking replaces it.
+**Interim, M1–M2: adjacent block-generation advance.** Until general tracking lands in M3, AnyPS5 main's write-back (`Texture.cpp:839-850`, `:2617-2674` at `main@75a8668`) is ported with its Bink and video-plane naming removed. It is stated as a general rule: a GPU write to a surface also advances the write generation of the adjacent block it shares with a surface packed back to back, so that surface is not read stale. It has no switch and no title reference, and it applies to every surface. M3 deletes it when general block-generation tracking replaces it.
 
 The `APS5_NO_ADJACENT_GENERATION` and `APS5_SAVEEXEC_WRITE_FIRST` switches are deleted, per the kill-switch rule in [configuration.md](configuration.md).
 

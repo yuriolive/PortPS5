@@ -27,7 +27,7 @@
 ## Upstream Attribution
 
 <!-- If porting or adapting from AnyPS5 main or a PR, cite the source commit hash and PR number. -->
-- Upstream source commit/PR: <!-- e.g. AnyPS5 commit e06dbff or PR #5 / N/A -->
+- Upstream source commit/PR: <!-- e.g. AnyPS5 commit 29b4601 (merged PR #5) / N/A -->
 
 ## Verification & Testing
 

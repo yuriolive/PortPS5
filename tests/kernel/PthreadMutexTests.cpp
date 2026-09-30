@@ -4,6 +4,7 @@
 
 #include "common/TestHarness.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <array>
 #include <atomic>
@@ -215,6 +216,37 @@ TEST(PthreadMutex, ZeroTimeoutAndImmediateAcquisition) {
 
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
     EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
+}
+
+// Verifies priority-inheritance mutex attribute configuration and acquisition.
+TEST(PthreadMutex, PriorityInheritanceProtocol) {
+    PthreadMutexattr attr = nullptr;
+    ASSERT_EQ(scePthreadMutexattrInit(&attr), 0);
+    ASSERT_NE(attr, nullptr);
+
+    // Protocol 0 = PTHREAD_PRIO_NONE (supported)
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 0), 0);
+    // Protocol 1 = PTHREAD_PRIO_INHERIT, 2 = PTHREAD_PRIO_PROTECT (unsupported, return SCE EINVAL)
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 1), static_cast<int>(0x80020016u));
+    EXPECT_EQ(scePthreadMutexattrSetprotocol(&attr, 2), static_cast<int>(0x80020016u));
+
+    PthreadMutex mutex = nullptr;
+    ASSERT_EQ(scePthreadMutexInit(&mutex, &attr, "none_mutex"), 0);
+    EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+    EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
+    EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
+    EXPECT_EQ(scePthreadMutexattrDestroy(&attr), 0);
+}
+
+// Death test: verify Unsupported() aborts and cannot be caught by try/catch.
+TEST(PthreadMutexDeathTest, UnsupportedAbortsProcess) {
+    EXPECT_DEATH({
+        try {
+            Unsupported("test_unsupported_death");
+        } catch (...) {
+            // Must never be caught!
+        }
+    }, "Unsupported: test_unsupported_death");
 }
 
 } // namespace

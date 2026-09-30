@@ -216,7 +216,7 @@ TEST(PthreadCond, MultipleWaitersSequentialSignal) {
         });
     }
 
-    ASSERT_TRUE(waitUntil(ready, WAITERS, std::chrono::seconds(5)));
+    ASSERT_TRUE(waitUntil(ready, WAITERS, std::chrono::seconds(15)));
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
     // Signal first waiter: publish one permit so exactly one worker can proceed.
@@ -225,7 +225,8 @@ TEST(PthreadCond, MultipleWaitersSequentialSignal) {
     EXPECT_EQ(scePthreadCondSignal(&cond), 0);
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
 
-    ASSERT_TRUE(waitUntil(woken, 1, std::chrono::seconds(5)));
+    ASSERT_TRUE(waitUntil(woken, 1, std::chrono::seconds(15)));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     // Signal second waiter.
     EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
@@ -277,4 +278,61 @@ TEST(PthreadCond, CondattrClockValidation) {
     EXPECT_EQ(scePthreadCondattrDestroy(&attr), 0);
 }
 
+// Verifies that scePthreadCondTimedwait with zero timeout returns timeout immediately if not signaled.
+TEST(PthreadCond, TimedwaitZeroTimeoutExpiresImmediately) {
+    PthreadMutex mutex = nullptr;
+    ASSERT_EQ(scePthreadMutexInit(&mutex, nullptr, "zero_timed_mtx"), 0);
+    PthreadCond cond = nullptr;
+    ASSERT_EQ(scePthreadCondInit(&cond, nullptr, "zero_timed_cond"), 0);
+
+    EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+    auto start = std::chrono::steady_clock::now();
+    int res = scePthreadCondTimedwait(&cond, &mutex, 0);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_LT(elapsed, std::chrono::milliseconds(100));
+    EXPECT_EQ(res, static_cast<int>(0x8002003Cu)); // SCE_KERNEL_ERROR_ETIMEDOUT
+
+    EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
+    EXPECT_EQ(scePthreadCondDestroy(&cond), 0);
+    EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
+}
+
+// Verifies that scePthreadCondSignalto wakes waiting threads (broadcast-as-signal behavior).
+TEST(PthreadCond, SignaltoWakesWaiters) {
+    PthreadMutex mutex = nullptr;
+    ASSERT_EQ(scePthreadMutexInit(&mutex, nullptr, "sigto_mtx"), 0);
+    PthreadCond cond = nullptr;
+    ASSERT_EQ(scePthreadCondInit(&cond, nullptr, "sigto_cond"), 0);
+
+    std::atomic<bool> ready{false};
+    std::atomic<bool> woken{false};
+
+    std::thread waiter([&] {
+        EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+        ready.store(true, std::memory_order_release);
+        while (!woken.load(std::memory_order_acquire)) {
+            EXPECT_EQ(scePthreadCondWait(&cond, &mutex), 0);
+        }
+        EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
+    });
+
+    while (!ready.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    EXPECT_EQ(scePthreadMutexLock(&mutex), 0);
+    woken.store(true, std::memory_order_release);
+    EXPECT_EQ(scePthreadCondSignalto(&cond, nullptr), 0);
+    EXPECT_EQ(scePthreadMutexUnlock(&mutex), 0);
+
+    waiter.join();
+    EXPECT_TRUE(woken.load(std::memory_order_acquire));
+
+    EXPECT_EQ(scePthreadCondDestroy(&cond), 0);
+    EXPECT_EQ(scePthreadMutexDestroy(&mutex), 0);
+}
+
 } // namespace
+

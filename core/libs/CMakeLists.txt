@@ -330,15 +330,48 @@ if(BUILD_TESTING)
         set_tests_properties(guest_rtc PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceRtc>")
     endif()
-    add_executable(mspace_tests tests/Mspace.cpp)
-    target_include_directories(mspace_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(mspace_tests PRIVATE libc)
-    configure_windows_unwind(mspace_tests)
-    add_test(NAME mspace COMMAND mspace_tests)
-    if(WIN32)
-        set_tests_properties(mspace PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
+    # Mspace allocator invariants, return codes and randomized stress (GoogleTest).
+    portps5_add_gtest(mspace_tests
+        SOURCES  tests/Mspace.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
+    # Lifecycle exports (cxa_atexit/finalize, thread atexit, init_env).
+    portps5_add_gtest(guest_lifecycle_tests
+        SOURCES  tests/GuestLifecycle.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc libSceLibcInternal
+        LABELS   unit
+    )
+    # Wide formatting, wide stream output and the scanf family.
+    portps5_add_gtest(guest_wide_io_tests
+        SOURCES  tests/GuestWideIo.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
+    # Bounds-checked strings/memory, wcstombs, strtoumax, asctime, atomics, `_s` printf, fopen_s/fgetpos.
+    portps5_add_gtest(guest_libc_extras_tests
+        SOURCES  tests/GuestLibcExtras.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
+    # strndup/asprintf/operator new family/aligned_alloc over a test application heap.
+    portps5_add_gtest(guest_heap_frontend_tests
+        SOURCES  tests/GuestHeapFrontends.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
+    # Application heap fallback when the title supplies no allocator replacements.
+    portps5_add_gtest(application_heap_default_tests
+        SOURCES  tests/ApplicationHeapDefault.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
     add_executable(guest_memory_tests tests/GuestMemory.cpp)
     target_include_directories(guest_memory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_memory_tests PRIVATE libkernel libc)
@@ -383,10 +416,32 @@ if(BUILD_TESTING)
     target_link_libraries(config_tests PRIVATE libc)
     configure_windows_unwind(config_tests)
     portps5_add_test(config config_tests)
-    add_executable(write_tracker_tests tests/WriteTracker.cpp)
-    target_include_directories(write_tracker_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    configure_windows_unwind(write_tracker_tests)
-    portps5_add_test(write_tracker write_tracker_tests)
+    # LocaleNids pins the six libc locale/iostream NID data exports (hash,
+    # linkage, size, zero-init) plus the verbatim Loader wrappers, including
+    # the uninitialized-Get abort as a death test (config_tests cannot abort
+    # in-process). Uses real Nid::ComputeNid, so the NID sources compile in.
+    portps5_add_gtest(locale_nid_tests
+        SOURCES  tests/LocaleNids.cpp
+                 nid/src/NidCompute.cpp
+                 nid/src/Sha1.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/nid/include
+        LIBRARIES libc
+        LABELS   unit
+    )
+    # WriteTracker suites are GoogleTest (portps5_add_gtest): the IWriteTracker
+    # contract plus WriteWatchTracker/page-state behavior (TEST invariant
+    # comments per tools/check_comments.py rule 3).
+    portps5_add_gtest(write_tracker_tests
+        SOURCES
+            tests/WriteTracker.cpp
+        LIBRARIES
+            libc
+        INCLUDES
+            ${CMAKE_CURRENT_SOURCE_DIR}
+        LABELS
+            unit
+    )
     add_executable(application_heap_tests tests/ApplicationHeap.cpp prx/libc/src/ApplicationHeap.cpp)
     target_include_directories(application_heap_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     set_target_properties(application_heap_tests PROPERTIES CXX_EXTENSIONS OFF)
@@ -485,5 +540,19 @@ portps5_add_gtest(pad_haptics_tests
              ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
     LIBRARIES libScePad libkernel libc
     LABELS   unit
+)
+# Image codec PRX tests (docs/spec/image-codecs.md). Linking libc is required
+# so the Windows DWARF exception runtime is present for the death tests.
+portps5_add_gtest(guest_jpeg_enc_tests
+    SOURCES   tests/GuestJpegEnc.cpp
+    INCLUDES  ${CMAKE_CURRENT_SOURCE_DIR}
+    LIBRARIES libSceJpegEnc decoder_jpeg libkernel libc
+    LABELS    unit
+)
+portps5_add_gtest(guest_png_dec_tests
+    SOURCES   tests/GuestPngDec.cpp
+    INCLUDES  ${CMAKE_CURRENT_SOURCE_DIR}
+    LIBRARIES libScePngDec decoder_png libkernel libc
+    LABELS    unit
 )
 endif()

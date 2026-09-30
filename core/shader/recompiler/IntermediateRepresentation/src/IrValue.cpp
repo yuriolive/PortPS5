@@ -1,3 +1,7 @@
+// core/shader/recompiler/IntermediateRepresentation/src/IrValue.cpp
+// IrValue: the node type of the recompiler IR (opcode, type, immediates, register operand, argument and use lists).
+// Owned by IrProgram's value pool; values are neither copyable nor movable, so pointer identity is the node identity.
+// Not thread-safe: an IR program is built and rewritten by one compiler thread at a time.
 #include "IntermediateRepresentation/IrValue.hpp"
 #include <algorithm>
 #include <bit>
@@ -261,7 +265,9 @@ bool IrValue::operator==(const IrValue& other) const {
     if (this == &other) {
         return true;
     }
-    if (opcode != other.opcode || type != other.type || hasImmediate != other.hasImmediate) {
+    // flags carry instruction modifiers (memory cache bits, rounding and similar): two values that differ only
+    // in flags are different operations and must not be merged by value comparison.
+    if (opcode != other.opcode || type != other.type || flags != other.flags || hasImmediate != other.hasImmediate) {
         return false;
     }
     if (hasImmediate && immediateBits != other.immediateBits) {
