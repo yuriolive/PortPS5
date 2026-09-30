@@ -46,9 +46,18 @@ def build_lazy_import_elf():
     # JMPREL: one R_X86_64_JUMP_SLOT (7) against symbol 1, GOT slot at 0x1308.
     struct.pack_into("<QQq", image, 0x1340, 0x1308, (1 << 32) | 7, 0)
     tags = [
-        (5, 0x1000), (10, 14), (1, 5), (6, 0x1020), (11, 24),
-        (7, 0x1320), (8, 24), (9, 24),
-        (23, 0x1340), (2, 24), (20, 7), (3, 0x1300),
+        (5, 0x1000),
+        (10, 14),
+        (1, 5),
+        (6, 0x1020),
+        (11, 24),
+        (7, 0x1320),
+        (8, 24),
+        (9, 24),
+        (23, 0x1340),
+        (2, 24),
+        (20, 7),
+        (3, 0x1300),
         (0x6100003F, 48),  # DT_SCE_SYMTABSZ: 2 symbols, lets code analysis bound dynsym
         (0, 0),
     ]
@@ -56,8 +65,9 @@ def build_lazy_import_elf():
         struct.pack_into("<qQ", image, 0x1400 + index * 16, *tag)
     struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0, 0, 0, 0x1000, 0x1000, 0x1000)
     struct.pack_into("<IIQQQQQQ", image, 120, 1, 6, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)
-    struct.pack_into("<IIQQQQQQ", image, 176, 2, 6, 0x1400, 0x1400, 0x1400,
-                     len(tags) * 16, len(tags) * 16, 8)
+    struct.pack_into(
+        "<IIQQQQQQ", image, 176, 2, 6, 0x1400, 0x1400, 0x1400, len(tags) * 16, len(tags) * 16, 8
+    )
     return image
 
 
@@ -82,7 +92,7 @@ def rva_to_off(sections, rva):
     for va, vsize, roff, rsize in sections.values():
         if va <= rva < va + max(vsize, rsize):
             return roff + rva - va
-    raise AssertionError("RVA not in any section: %#x" % rva)
+    raise AssertionError(f"RVA not in any section: {rva:#x}")
 
 
 def dir64_targets(pe, sections, reloc_dir):
@@ -104,6 +114,7 @@ def dir64_targets(pe, sections, reloc_dir):
 
 
 def main():
+    """Relink the synthetic ELF with --lazy-binding and validate the PE relocations."""
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="portps5-lazy-got-") as directory:
         work = Path(directory)
@@ -113,7 +124,11 @@ def main():
         # check=False: the return code is asserted with full output below.
         result = subprocess.run(
             [str(relinker), "--windows", "--lazy-binding", str(source), str(output)],
-            capture_output=True, text=True, timeout=20, check=False)
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
         assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
         pe = output.read_bytes()
 
@@ -129,7 +144,8 @@ def main():
         # Every DIR64 slot must hold a preferred VA inside the image.
         for target, value in values.items():
             assert IMAGE_BASE <= value < IMAGE_BASE + size_of_image, (
-                "DIR64 slot %#x holds %#x, not a preferred-VA pointer" % (target, value))
+                f"DIR64 slot {target:#x} holds {value:#x}, not a preferred-VA pointer"
+            )
 
         # Exactly one slot (the lazy GOT slot) must point at a lazy stub in .entry.
         stub_slots = [t for t, v in values.items() if entry_lo <= v < entry_hi]
