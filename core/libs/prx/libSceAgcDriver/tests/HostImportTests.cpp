@@ -7,6 +7,12 @@
 #include "RecorderTestSupport.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/HostImport.hpp"
 #include <gtest/gtest.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using namespace AgcDriver::Graphics;
 using AgcDriverTest::AlignedBlock;
@@ -133,6 +139,11 @@ TEST_F(HostImportTest, InvalidAndUnmappedRangesReturnCodes) {
     EXPECT_EQ(imports->Bind(0, 16, GuestAccess::Read).status, BindStatus::InvalidRange);
     EXPECT_EQ(imports->Bind(~std::uint64_t{0} - 4, 64, GuestAccess::Read).status, BindStatus::InvalidRange);
     EXPECT_EQ(imports->Bind(0x10, 16, GuestAccess::Read).status, BindStatus::NotMapped);
+    // Rejected binds reserve nothing (scenario from sharpemu EmptyUploadDoesNotReserveStagingBytes).
+    const auto stats = imports->Stats();
+    EXPECT_EQ(stats.stagingBinds, 0u);
+    EXPECT_EQ(stats.stagingUploads, 0u);
+    EXPECT_EQ(stats.imports, 0u);
 }
 
 // Invariant: the staging cache is bounded: past the cap the least recently used copies are dropped, and
@@ -145,6 +156,86 @@ TEST_F(HostImportTest, StagingCacheDropsLeastRecentlyUsed) {
     ASSERT_EQ(imports->Bind(guest.Address(), 512, GuestAccess::Read).status, BindStatus::Ok);
     EXPECT_EQ(imports->Stats().stagingUploads, 5u) << "the oldest copy was dropped, so it re-uploads";
 }
+
+// The scenarios below are adapted from sharpemu's GPU buffer tests (GPL-2.0-or-later, tests/
+// SharpEmu.Libs.Tests/Gpu/Buffers/GuestBufferCacheTests.cs); only behaviour that has a counterpart in
+// this design is ported, re-expressed against HostImport, not copied.
+
+// Invariant (sharpemu UnalignedReadbackAcrossDownloadBatchesPreservesAdjacentGuestBytes): a staged write
+// back of an odd-offset, odd-length range changes exactly the bound bytes and leaves the adjacent guest
+// bytes (set to a sentinel) untouched.
+TEST_F(HostImportTest, UnalignedStagedWriteBackPreservesAdjacentBytes) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    std::memset(guest.Data(), 0xEE, 256);
+    const auto result = imports->Bind(guest.Address() + 3, 36, GuestAccess::Write);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    Fill(result.binding, 0x5A5A5A5A);
+    recorder->Sync();
+    for (std::size_t i = 0; i < 256; ++i) {
+        const auto expected = (i >= 3 && i < 3 + 36) ? std::byte{0x5A} : std::byte{0xEE};
+        ASSERT_EQ(guest.Data()[i], expected) << "byte " << i;
+    }
+}
+
+// Invariant (sharpemu MergedAllocationPreservesBothGpuWrittenRanges): two overlapping staged write binds
+// from successive batches both land, in submission order: the later batch wins the overlap and the
+// non-overlapping parts of both survive.
+TEST_F(HostImportTest, OverlappingStagedWritesLandInSubmissionOrder) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const auto first = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(first.status, BindStatus::Ok);
+    Fill(first.binding, 0x11111111);
+    recorder->Submit();
+    const auto second = imports->Bind(guest.Address() + 32, 64, GuestAccess::Write);
+    ASSERT_EQ(second.status, BindStatus::Ok);
+    Fill(second.binding, 0x22222222);
+    recorder->Sync();
+    for (std::size_t offset = 0; offset < 96; offset += 4) {
+        std::uint32_t value = 0;
+        std::memcpy(&value, guest.Data() + offset, 4);
+        ASSERT_EQ(value, offset < 32 ? 0x11111111u : 0x22222222u) << "offset " << offset;
+    }
+}
+
+// Invariant (sharpemu ReplacedBufferRemainsAliveUntilRecordedCopiesComplete): refreshing a staged range
+// while a batch still reads the old copy hands out a DIFFERENT buffer, so the in-flight batch never sees
+// its source overwritten.
+TEST_F(HostImportTest, StagingRefreshNeverReusesABufferAnUnfinishedBatchReads) {
+    MakeImports(0);
+    AlignedBlock guest(4096, 4096);
+    const auto before = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(before.status, BindStatus::Ok);
+    Fill(before.binding, 1);  // the unfinished open batch uses the first copy
+    tracker.generation = 2;
+    const auto after = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(after.status, BindStatus::Ok);
+    EXPECT_NE(after.binding.buffer, before.binding.buffer);
+    EXPECT_EQ(imports->Stats().stagingUploads, 2u);
+}
+
+#ifdef _WIN32
+// Invariant (sharpemu WrittenObtain_AcrossABackingGapIsRefusedEvenWhenBothEndsAreBacked): a write bind
+// whose range crosses an inaccessible page is refused as NotMapped even though both ends are mapped, and
+// the refusal changes no state: no pending write is noted and no completion is queued.
+TEST_F(HostImportTest, WriteAcrossAnUnmappedHoleIsRefusedWithoutSideEffects) {
+    MakeImports(0);
+    recorder->Activate();
+    constexpr std::size_t Page = 4096;
+    auto* base = static_cast<std::byte*>(VirtualAlloc(nullptr, 3 * Page, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    ASSERT_NE(base, nullptr);
+    DWORD previous = 0;
+    ASSERT_TRUE(VirtualProtect(base + Page, Page, PAGE_NOACCESS, &previous));
+    const auto address = reinterpret_cast<std::uint64_t>(base) + Page - 16;
+    const auto result = imports->Bind(address, 32 + Page, GuestAccess::Write);
+    EXPECT_EQ(result.status, BindStatus::NotMapped);
+    EXPECT_FALSE(recorder->PendingWriteOverlaps(address, 32));
+    EXPECT_FALSE(recorder->HasCompletions());
+    EXPECT_TRUE(imports->Stats().stagingBinds == 0);
+    VirtualFree(base, 0, MEM_RELEASE);
+}
+#endif
 
 // Invariant: a device with VK_EXT_external_memory_host and a budget imports the guest allocation itself
 // (no copy), and GPU stores land in guest memory directly; the tracker learns of them at completion.
