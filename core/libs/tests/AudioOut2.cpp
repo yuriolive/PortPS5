@@ -678,14 +678,17 @@ TEST(AudioOut2Tests, V1PushTimeoutRecordsStall) {
 TEST(AudioOut2Tests, QueueLevelNoDeviceHonorsRingHeadroom) {
     auto& mixer = AudioMixer::Get();
     mixer.Shutdown();
-    mixer.ForceWallClockForTesting();
-    mixer.PauseWallClockForTesting(true);
-    ASSERT_FALSE(mixer.HasDevice());
     AudioOut2ContextParam params{};
     params.num_grains = 256;
     params.queue_depth = 4;
     AudioOut2ContextHandle ctx{};
     ASSERT_EQ(sceAudioOut2ContextCreate(&params, nullptr, 0, &ctx), 0);
+    // ContextCreate registers a source, which re-runs Initialize() and reopens a
+    // device; drop it (and freeze retirement) only after creation so the test
+    // really exercises the no-device branch with no callback draining the ring.
+    mixer.ForceWallClockForTesting();
+    mixer.PauseWallClockForTesting(true);
+    ASSERT_FALSE(mixer.HasDevice());
     auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
     ASSERT_NE(context->source, nullptr);
     // Leave 128 frames of headroom: less than one 256-frame grain.
