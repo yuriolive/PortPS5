@@ -16,6 +16,7 @@
 
 #include <cstdarg>
 #include <cstdint>
+#include <cstddef>
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
@@ -297,4 +298,40 @@ TEST(WideFormatting, MuslIntegerFlagTable) {
         EXPECT_EQ(std::u16string(b), c.want);
         EXPECT_EQ(static_cast<std::size_t>(n), std::u16string(c.want).size());
     }
+}
+
+// Invariant (oracle: FreeBSD lib/libc/tests/stdio/printbasic_test.c, BSD-2): the integer length modifiers
+// j, t, z, l, ll, h and hh print full-width -1/max values, and INT_MIN/INTMAX_MIN print exactly.
+TEST(WideFormatting, FreeBsdIntegerLengthTable) {
+    char16_t b[64];
+    FormatWide(b, 64, u"%jd %ju", std::intmax_t{-1}, std::uintmax_t{UINT64_MAX});
+    EXPECT_EQ(std::u16string(b), u"-1 18446744073709551615");
+    FormatWide(b, 64, u"%td %tu %zd %zu", std::ptrdiff_t{-1}, std::size_t{SIZE_MAX}, std::ptrdiff_t{-1}, std::size_t{SIZE_MAX});
+    EXPECT_EQ(std::u16string(b), u"-1 18446744073709551615 -1 18446744073709551615");
+    FormatWide(b, 64, u"%ld %lu %lld", std::int64_t{-1}, std::uint64_t{UINT64_MAX}, std::int64_t{-1});
+    EXPECT_EQ(std::u16string(b), u"-1 18446744073709551615 -1");
+    FormatWide(b, 64, u"%hd %hu %hhd %hhu", -1, 65535, -1, 255);
+    EXPECT_EQ(std::u16string(b), u"-1 65535 -1 255");
+    FormatWide(b, 64, u"%d %jd", std::numeric_limits<int>::min(), std::numeric_limits<std::intmax_t>::min());
+    EXPECT_EQ(std::u16string(b), u"-2147483648 -9223372036854775808");
+}
+
+// Invariant (oracle: FreeBSD sscanf_test.c): %n reports characters consumed, and 64-bit length modifiers
+// (j, z, t, ll) store eight bytes into guest integers.
+TEST(Sscanf, FreeBsdCountAndWideLengths) {
+    int value = 0, consumed = -1;
+    EXPECT_EQ(sscanf_nid_postfix("0x1f rest", "%i%n", &value, &consumed), 1);
+    EXPECT_EQ(value, 31);
+    EXPECT_EQ(consumed, 4);
+    std::intmax_t j = 0x7777777777777777LL;
+    std::size_t z = 0x7777777777777777ULL;
+    std::ptrdiff_t t = 0x7777777777777777LL;
+    long long ll = 0x7777777777777777LL;
+    EXPECT_EQ(sscanf_nid_postfix("-5000000000 5000000001 -5000000002 5000000003", "%jd %zu %td %lld", &j, &z, &t, &ll), 4);
+    EXPECT_EQ(j, -5000000000LL);
+    EXPECT_EQ(z, 5000000001ULL);
+    EXPECT_EQ(t, -5000000002LL);
+    EXPECT_EQ(ll, 5000000003LL);
+    EXPECT_EQ(sscanf_nid_postfix("08", "%i", &value), 1);  // octal prefix stops at the 8
+    EXPECT_EQ(value, 0);
 }
