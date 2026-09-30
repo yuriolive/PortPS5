@@ -7,7 +7,7 @@ constraints:
   - MinGW-w64 GCC 15.2 (ucrt-posix-seh) is the only supported Windows compiler; MSVC cannot express sysv_abi and must not be used (docs/spec/build-toolchain.md).
   - Subsystem behavior or interface changes must update corresponding specs under docs/spec/ in the same PR (.agents/rules/docs-and-specs.md).
   - Hardware is described only as the generic reference tier; never name personal contributor machines (docs/PRD.md §4.4, .agents/rules/docs-and-specs.md).
-  - Out of scope for M0: AnyPS5 PR #5 runtime port (M1), gamepad input (M2), disk pipeline cache (M2), GPU driver split and indirect draws (M3).
+  - Out of scope for M0: the runtime port from AnyPS5 main (merged PR #5) (M1), gamepad input (M2), disk pipeline cache (M2), GPU driver split and indirect draws (M3).
 
 acceptance_criteria:
   - name: clean_clone_build_and_ctest_pass
