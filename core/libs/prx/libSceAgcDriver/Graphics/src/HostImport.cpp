@@ -193,11 +193,32 @@ BindResult HostImport::stage(std::uint64_t address, std::size_t bytes, GuestAcce
         result.status = BindStatus::NotMapped;
         return result;
     }
+    const auto key = std::make_pair(address, bytes);
+    auto found = stagings.find(key);
+    if (recorder.OpenWriteOverlaps(address, bytes)) {
+        // The producer is in the batch being recorded right now. Collect below would run the flush hook,
+        // which would end and submit that batch under the caller, who is still recording into it (the
+        // Recorder::Scope contract). Serve the exact staged copy the producer wrote (ordered by a
+        // barrier) or report that a Submit is needed first; never sync implicitly here.
+        if (found == stagings.end() || found->second->buffer == nullptr) {
+            result.status = BindStatus::OpenBatchWrites;
+            return result;
+        }
+        auto& entry = *found->second;
+        entry.lastUse = ++useClock;
+        recorder.Keep(entry.buffer);
+        result.binding.buffer = entry.buffer->Handle();
+        result.binding.bytes = bytes;
+        result.binding.address = context.bufferDeviceAddress ? entry.buffer->DeviceAddress() : 0;
+        ++stats.stagingBinds;
+        barrierAgainstOpenWrites();
+        afterBind(address, bytes, access, entry.buffer);
+        return result;
+    }
     // Collect first: it runs the flush hook, landing pending GPU writes (and their write-backs) before
     // the bytes below are read, then stamps CPU-dirty blocks.
     const auto generation = tracker.Collect(address, bytes);
-    const auto key = std::make_pair(address, bytes);
-    auto found = stagings.find(key);
+    found = stagings.find(key);
     const bool upload = found == stagings.end() || generation == 0 || found->second->generation != generation;
     try {
         if (found == stagings.end()) {
@@ -253,18 +274,32 @@ void HostImport::afterBind(std::uint64_t address, std::size_t bytes, GuestAccess
     // Noted first so a CPU read through the flush hook syncs from now on.
     recorder.NotePendingWrite(address, bytes);
     auto* trk = &tracker;
+    auto* owner = &recorder;
     if (staged == nullptr) {
         // Imported: the GPU wrote guest memory directly; only the tracker needs to learn about it.
         recorder.OnComplete([trk, address, bytes] { trk->MarkWritten(address, bytes); });
         return;
     }
     // Staged: write-back after the batch finished, bypassing the flush hook (it runs inside finish()).
-    recorder.OnComplete([trk, address, bytes, staged] {
+    recorder.OnComplete([trk, owner, address, bytes, staged] {
         GuestMemory::CheckRange(reinterpret_cast<const void*>(address), bytes, 1, true);
         std::memcpy(reinterpret_cast<void*>(address), staged->Bytes().data(), bytes);
         trk->MarkWritten(address, bytes);
-        Recorder::NoteWrittenBack(address, bytes);
+        // On the OWNING recorder, whether or not it is the active one: a completion label stored on
+        // the GPU decides from this ring whether the write-back overwrote it.
+        owner->NoteWrittenBackOn(address, bytes);
     });
+}
+
+void HostImport::barrierAgainstOpenWrites() {
+    // A recorded write to the range precedes this bind reads in the same command buffer: make it
+    // visible. A global memory barrier is cheap and also covers an import window that is a different
+    // buffer handle than the writer used.
+    const auto commands = recorder.Commands();
+    VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
 BindResult HostImport::Bind(std::uint64_t address, std::size_t bytes, GuestAccess access) {
@@ -278,8 +313,10 @@ BindResult HostImport::Bind(std::uint64_t address, std::size_t bytes, GuestAcces
     const Recorder::Scope scope(recorder);
     std::lock_guard lock(mutex);
     GuestBinding imported;
+    const bool openOverlap = recorder.OpenWriteOverlaps(address, bytes);
     if (tryImport(address, bytes, access, imported)) {
         result.binding = imported;
+        if (openOverlap) barrierAgainstOpenWrites();
         afterBind(address, bytes, access, nullptr);
         return result;
     }

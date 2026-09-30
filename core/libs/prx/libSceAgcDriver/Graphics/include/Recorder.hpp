@@ -177,7 +177,9 @@ public:
      * already reused. A label the GPU has no view of always stores. Requires a batch (open or in flight).
      */
     void AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool storedOnGpu);
-    /** @brief Records a CPU store of GPU results into guest memory so a completion label can see it. */
+    /** @brief Records a CPU store of GPU results into guest memory on THIS recorder (see AfterCompletions). */
+    void NoteWrittenBackOn(std::uint64_t address, std::size_t bytes);
+    /** @brief NoteWrittenBackOn of the active recorder; prefer the instance form when the owner is known. */
     static void NoteWrittenBack(std::uint64_t address, std::size_t bytes);
 
     /** @return When the open batch received its first label (nullopt: none pending). Lock-free. */

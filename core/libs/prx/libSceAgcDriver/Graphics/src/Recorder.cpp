@@ -486,12 +486,16 @@ void Recorder::AfterCompletions(std::uint64_t address, std::span<const std::byte
     }
 }
 
+void Recorder::NoteWrittenBackOn(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0) return;
+    std::lock_guard ringLock(writtenBackMutex);
+    writtenBack.push_back({++writtenBackSequence, address, address + bytes});
+    while (writtenBack.size() > WriteBackRing) writtenBack.pop_front();
+}
+
 void Recorder::NoteWrittenBack(std::uint64_t address, std::size_t bytes) {
     AGC_WITH_ACTIVE(recorder);
-    if (recorder == nullptr || bytes == 0) return;
-    std::lock_guard ringLock(recorder->writtenBackMutex);
-    recorder->writtenBack.push_back({++recorder->writtenBackSequence, address, address + bytes});
-    while (recorder->writtenBack.size() > WriteBackRing) recorder->writtenBack.pop_front();
+    if (recorder != nullptr) recorder->NoteWrittenBackOn(address, bytes);
 }
 
 bool Recorder::writtenBackSince(std::uint64_t sequence, std::uint64_t begin, std::uint64_t end) {
@@ -512,21 +516,41 @@ void Recorder::Submit() {
     workSinceSubmit_.store(0, std::memory_order_relaxed);
     if (open == nullptr) return;
     auto batch = std::move(open);
-    Check(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
-    VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submission.commandBufferCount = 1;
-    submission.pCommandBuffers = &batch->commands;
-    // The timeline reaches this batch's serial when it completes (see WaitSerial).
-    const std::uint64_t serial = submissions + 1;
-    VkTimelineSemaphoreSubmitInfoKHR timelineInfo{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
-    timelineInfo.signalSemaphoreValueCount = 1;
-    timelineInfo.pSignalSemaphoreValues = &serial;
-    if (timeline != VK_NULL_HANDLE) {
-        submission.pNext = &timelineInfo;
-        submission.signalSemaphoreCount = 1;
-        submission.pSignalSemaphores = &timeline;
+    try {
+        Check(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
+        VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submission.commandBufferCount = 1;
+        submission.pCommandBuffers = &batch->commands;
+        // The timeline reaches this batch serial when it completes (see WaitSerial).
+        const std::uint64_t serial = submissions + 1;
+        VkTimelineSemaphoreSubmitInfoKHR timelineInfo{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR};
+        timelineInfo.signalSemaphoreValueCount = 1;
+        timelineInfo.pSignalSemaphoreValues = &serial;
+        if (timeline != VK_NULL_HANDLE) {
+            submission.pNext = &timelineInfo;
+            submission.signalSemaphoreCount = 1;
+            submission.pSignalSemaphores = &timeline;
+        }
+        Check(context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submission, batch->fence), "vkQueueSubmit recorder");
+    } catch (...) {
+        // The batch never reached the GPU: undo what its notes published so nothing waits for it forever.
+        // Its completion labels will never land, its label entries would dangle, its command buffer and
+        // fence go back to the pool, and its writes leave the snapshot. The completions are dropped.
+        if (batch->completionLabelCount != 0) completionLabels_.fetch_sub(batch->completionLabelCount, std::memory_order_acq_rel);
+        {
+            std::lock_guard tableLock(labelMutex);
+            for (const auto dword : batch->labelDwords) {
+                const auto found = labels.find(dword);
+                if (found != labels.end() && found->second.batch == batch.get()) labels.erase(found);
+            }
+        }
+        release(*batch);
+        try {
+            publishPendingWrites();
+        } catch (...) {
+        }
+        throw;
     }
-    Check(context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submission, batch->fence), "vkQueueSubmit recorder");
     batch->submitted = true;
     batch->serial = ++submissions;
     inFlight.push_back(std::move(batch));

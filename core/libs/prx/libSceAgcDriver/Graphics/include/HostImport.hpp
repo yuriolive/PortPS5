@@ -37,6 +37,7 @@ enum class BindStatus {
     InvalidRange,  ///< empty range, null address or address overflow
     NotMapped,     ///< a page of the range is unmapped or lacks the needed permission
     OutOfMemory,   ///< neither an import nor a staging buffer could be created
+    OpenBatchWrites,  ///< the open batch writes part of the range and no exact staged copy exists: Submit, then retry
 };
 
 /** @brief A guest range as the GPU sees it. */
@@ -106,6 +107,7 @@ private:
     BindResult stage(std::uint64_t address, std::size_t bytes, GuestAccess access);
     bool evictFor(std::uint64_t needed);
     void destroy(Import& entry) noexcept;
+    void barrierAgainstOpenWrites();
     void afterBind(std::uint64_t address, std::size_t bytes, GuestAccess access, const std::shared_ptr<Buffer>& staged);
 
     Context context;

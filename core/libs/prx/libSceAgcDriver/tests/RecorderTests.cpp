@@ -15,6 +15,19 @@ using AgcDriverTest::VulkanTestDevice;
 
 namespace {
 
+// A device-function resolver that can make vkQueueSubmit fail, to exercise Submit's failure path.
+PFN_vkGetDeviceProcAddr realDeviceProc = nullptr;
+std::atomic<bool> failQueueSubmit{false};
+
+VKAPI_ATTR VkResult VKAPI_CALL FailingQueueSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
+    return VK_ERROR_DEVICE_LOST;
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL FaultInjectingDeviceProc(VkDevice device, const char* name) {
+    if (failQueueSubmit.load() && std::strcmp(name, "vkQueueSubmit") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&FailingQueueSubmit);
+    return realDeviceProc(device, name);
+}
+
 class RecorderTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -362,6 +375,40 @@ TEST_F(RecorderTest, TeardownSyncsAndDeactivates) {
     EXPECT_EQ(Recorder::Active(), nullptr);
     EXPECT_FALSE(Recorder::SnapshotWriteOverlaps(0x110000, 8));
     EXPECT_EQ(Recorder::WriteGeneration(), 0u);
+}
+
+// Review finding (PR #49, gitar): a failing vkQueueSubmit must not leak the batch accounting.
+// Invariant: after Submit throws, the batch's completion labels no longer count as pending, its label
+// entries and written ranges are gone, nothing is left open or in flight, and the recorder still works.
+TEST_F(RecorderTest, FailedSubmitUndoesLabelAccountingAndSnapshot) {
+    auto faulty = device.GetContext();
+    realDeviceProc = faulty.deviceProc;
+    faulty.deviceProc = &FaultInjectingDeviceProc;
+    Recorder::Options options;
+    options.timelineSemaphores = device.Timeline();
+    options.tracker = &tracker;
+    Recorder local(faulty, options);
+    local.Activate();
+    AgcDriverTest::AlignedBlock memory(4096, 4096);
+    const auto address = memory.Address();
+    local.Commands();
+    std::array<std::byte, 4> label{std::byte{1}};
+    local.AfterCompletions(address, label, 1, 0, false);
+    ASSERT_EQ(Recorder::PendingCompletionLabels(), 1u);
+    ASSERT_EQ(local.PendingLabels(), 1u);
+    ASSERT_TRUE(Recorder::SnapshotWriteOverlaps(address, 4));
+    failQueueSubmit = true;
+    EXPECT_ANY_THROW(local.Submit());
+    failQueueSubmit = false;
+    EXPECT_EQ(Recorder::PendingCompletionLabels(), 0u) << "a label that will never land must not keep workers reaping";
+    EXPECT_EQ(local.PendingLabels(), 0u);
+    EXPECT_FALSE(Recorder::SnapshotWriteOverlaps(address, 4));
+    EXPECT_TRUE(local.Idle());
+    // The pooled command buffer and fence were returned, so the recorder keeps working.
+    local.Commands();
+    EXPECT_EQ(local.SubmitAndEpoch(), 1u);
+    local.Sync();
+    EXPECT_TRUE(local.Idle());
 }
 
 // Invariant (concurrency): many threads noting writes, submitting and syncing through the flush hook

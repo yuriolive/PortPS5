@@ -237,6 +237,56 @@ TEST_F(HostImportTest, WriteAcrossAnUnmappedHoleIsRefusedWithoutSideEffects) {
 }
 #endif
 
+// Review finding (PR #49, gitar): a staged bind whose range the OPEN batch writes must not run the
+// flush hook, which would end and submit the batch the caller is still recording into. Invariant: an
+// exact staged copy is served with a barrier and the batch stays open; a partial overlap is reported as
+// OpenBatchWrites (Submit, then retry); neither submits anything.
+TEST_F(HostImportTest, StagedBindOfAnOpenBatchWriteDoesNotSubmitTheBatch) {
+    MakeImports(0);
+    recorder->Activate(&tracker);  // the flush hook is live: Collect would sync the open batch
+    AlignedBlock guest(4096, 4096);
+    const Recorder::Scope scope(*recorder);
+    const auto written = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(written.status, BindStatus::Ok);
+    Fill(written.binding, 0xABCD0123);
+    const auto reread = imports->Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(reread.status, BindStatus::Ok);
+    EXPECT_EQ(reread.binding.buffer, written.binding.buffer) << "the producer's own staged copy";
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+    const auto partial = imports->Bind(guest.Address() + 32, 64, GuestAccess::Read);
+    EXPECT_EQ(partial.status, BindStatus::OpenBatchWrites);
+    EXPECT_TRUE(recorder->Recording());
+    EXPECT_EQ(recorder->Submissions(), 0u);
+    recorder->Sync();
+    std::uint32_t value = 0;
+    std::memcpy(&value, guest.Data(), 4);
+    EXPECT_EQ(value, 0xABCD0123u) << "the fill ran exactly once, after the recording finished";
+    // After the Submit the retry succeeds through the normal (flushing) path.
+    EXPECT_EQ(imports->Bind(guest.Address() + 32, 64, GuestAccess::Read).status, BindStatus::Ok);
+}
+
+// Review finding (PR #49, gitar): the staged write-back must be recorded on the recorder that OWNS the
+// HostImport, not on whichever recorder is active (none here). Invariant: a GPU-stored completion label
+// inside a written-back range is re-stored after the write-back overwrote it.
+TEST_F(HostImportTest, StagedWriteBackIsNotedOnTheOwningRecorder) {
+    MakeImports(0);
+    ASSERT_EQ(Recorder::Active(), nullptr) << "this recorder is deliberately not activated";
+    AlignedBlock guest(4096, 4096);
+    const auto result = imports->Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(result.status, BindStatus::Ok);
+    Fill(result.binding, 0x0BADF00D);
+    std::array<std::byte, 4> label{std::byte{0x77}, std::byte{0}, std::byte{0}, std::byte{0}};
+    recorder->AfterCompletions(guest.Address(), label, 1, 0, true);
+    recorder->Sync();
+    std::uint32_t value = 0;
+    std::memcpy(&value, guest.Data(), 4);
+    EXPECT_EQ(value, 0x77u) << "the write-back overlapped the label, so the label is stored after it";
+    std::uint32_t rest = 0;
+    std::memcpy(&rest, guest.Data() + 4, 4);
+    EXPECT_EQ(rest, 0x0BADF00Du);
+}
+
 // Invariant: a device with VK_EXT_external_memory_host and a budget imports the guest allocation itself
 // (no copy), and GPU stores land in guest memory directly; the tracker learns of them at completion.
 TEST_F(HostImportTest, ImportedWritesLandInGuestMemoryDirectly) {
