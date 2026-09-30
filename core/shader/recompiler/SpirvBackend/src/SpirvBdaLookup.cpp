@@ -1,3 +1,7 @@
+// core/shader/recompiler/SpirvBackend/src/SpirvBdaLookup.cpp
+// Emits the get_bda_pointer helper used by guest-memory (DMA) accesses: a binary search over the host-provided
+// physical-address page table that returns a buffer-device-address pointer or reports a BdaAbi fault.
+// The table layout and fault codes are the BdaAbi.hpp contract shared with the driver; do not change one without the other.
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
@@ -18,7 +22,10 @@ void DefineGetBdaPointer(SpirvEmitterState& state) {
     };
     state.bdaPointerFunction = state.module.AllocateId();
     state.module.AddName(state.bdaPointerFunction, "get_bda_pointer");
-    state.module.AddFunction(spv::OpFunction, u64, state.bdaPointerFunction, spv::FunctionControlMaskNone, state.module.Type(spv::OpTypeFunction, u64, u64, u32, u32));
+    // DontInline: every guest memory access calls this binary search; letting drivers inline each call site
+    // multiplies compile time on shaders with hundreds of accesses (measured on a desktop driver at 20-50x), while
+    // the call overhead is small next to the search itself.
+    state.module.AddFunction(spv::OpFunction, u64, state.bdaPointerFunction, spv::FunctionControlDontInlineMask, state.module.Type(spv::OpTypeFunction, u64, u64, u32, u32));
     const auto address = state.module.AllocateId();
     const auto bytes = state.module.AllocateId();
     const auto instruction = state.module.AllocateId();

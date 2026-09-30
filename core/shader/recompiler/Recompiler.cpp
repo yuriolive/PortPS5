@@ -5,6 +5,7 @@
 // and invokes the SPIR-V backend emitter.
 #include "Recompiler.hpp"
 #include "CacheKey.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
@@ -175,7 +176,11 @@ struct SourceKeyHash {
 std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request) {
     static std::shared_mutex mutex;
     static std::unordered_map<std::vector<std::uint64_t>, std::shared_ptr<SourceEntry>, SourceKeyHash> sources;
-    thread_local std::vector<std::uint64_t> key;
+    // Scratch key buffer, one per thread. A plain `thread_local std::vector` would run its destructor from
+    // the C++ TLS exit callback, which is unsafe on threads that host guest code on Windows; HostThreadLocal
+    // is backed by FLS and frees the vector through the FLS callback instead (see libc HostThreadLocal.hpp).
+    struct SourceKeyStorage {};
+    auto& key = HostThreadLocal<std::vector<std::uint64_t>, SourceKeyStorage>();
     RecompileCacheKey::Build(request, key);
     std::shared_ptr<SourceEntry> source;
     {
