@@ -31,12 +31,16 @@
 // ---------------------------------------------------------------------------
 
 extern "C" {
-// Six locale/iostream ABI data exports (core/libs/prx/libc/src/LocaleSupport.cpp).
+// Locale/iostream ABI data exports (core/libs/prx/libc/src/LocaleSupport.cpp).
 extern std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix;
+extern std::uint64_t _ZNSt7collateIcE2idE_nid_postfix;
+extern std::uint64_t _ZNSt7collateIwE2idE_nid_postfix;
+extern std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix;
+extern std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[16];
+extern std::uint64_t _ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[12];
-extern std::uint64_t _ZNSt7collateIwE2idE_nid_postfix;
 extern std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix;
 }
 
@@ -83,9 +87,29 @@ TEST(LocaleNidHash, NumPutVtable) {
               "1kZFcktOm+s");
 }
 
+// collate<char>::id hashes to the title's 7brRfHVVAlI NID.
+TEST(LocaleNidHash, CollateCharId) {
+    ExpectNid("_ZNSt7collateIcE2idE", "7brRfHVVAlI");
+}
+
 // collate<wchar_t>::id hashes to the title's irGo1yaJ-vM NID.
 TEST(LocaleNidHash, CollateWcharId) {
     ExpectNid("_ZNSt7collateIwE2idE", "irGo1yaJ-vM");
+}
+
+// codecvt<char, char, mbstate_t>::id hashes to the title's eVFYZnYNDo0 NID.
+TEST(LocaleNidHash, CodecvtCharId) {
+    ExpectNid("_ZNSt7codecvtIcc9_MbstatetE2idE", "eVFYZnYNDo0");
+}
+
+// codecvt<char, char, mbstate_t> vtable hashes to the title's aK1Ymf-NhAs NID.
+TEST(LocaleNidHash, CodecvtCharVtable) {
+    ExpectNid("_ZTVSt7codecvtIcc9_MbstatetE", "aK1Ymf-NhAs");
+}
+
+// codecvt<wchar_t, char, mbstate_t>::id hashes to the title's FjZCPmK0SbA NID.
+TEST(LocaleNidHash, CodecvtWcharId) {
+    ExpectNid("_ZNSt7codecvtIwc9_MbstatetE2idE", "FjZCPmK0SbA");
 }
 
 // locale::_Id_cnt hashes to the title's H4fcpQOpc08 NID.
@@ -93,30 +117,41 @@ TEST(LocaleNidHash, LocaleIdCount) {
     ExpectNid("_ZNSt6locale2id7_Id_cntE", "H4fcpQOpc08");
 }
 
-// All six link with ABI sizes and zero-initialized placeholder values.
+// All locale ABI data symbols link with correct sizes and zero-initialized placeholder values.
 TEST(LocaleNidLinkage, AddressSizeAndZeroInit) {
     EXPECT_NE(&_ZNSt5ctypeIcE2idE_nid_postfix, nullptr);
     EXPECT_NE(&_ZNSt5ctypeIwE2idE_nid_postfix, nullptr);
+    EXPECT_NE(&_ZNSt7collateIcE2idE_nid_postfix, nullptr);
+    EXPECT_NE(&_ZNSt7collateIwE2idE_nid_postfix, nullptr);
+    EXPECT_NE(&_ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix, nullptr);
+    EXPECT_NE(&_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[0], nullptr);
+    EXPECT_NE(&_ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix, nullptr);
     EXPECT_NE(&_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix,
               nullptr);
     EXPECT_NE(&_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[0],
               nullptr);
-    EXPECT_NE(&_ZNSt7collateIwE2idE_nid_postfix, nullptr);
     EXPECT_NE(&_ZNSt6locale2id7_Id_cntE_nid_postfix, nullptr);
 
     EXPECT_EQ(sizeof(_ZNSt5ctypeIcE2idE_nid_postfix), 8u);
     EXPECT_EQ(sizeof(_ZNSt5ctypeIwE2idE_nid_postfix), 8u);
+    EXPECT_EQ(sizeof(_ZNSt7collateIcE2idE_nid_postfix), 8u);
+    EXPECT_EQ(sizeof(_ZNSt7collateIwE2idE_nid_postfix), 8u);
+    EXPECT_EQ(sizeof(_ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix), 8u);
+    EXPECT_EQ(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix), 16 * sizeof(std::uintptr_t));
+    EXPECT_EQ(sizeof(_ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix), 8u);
     EXPECT_EQ(sizeof(_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix),
               8u);
     EXPECT_EQ(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix),
               12 * sizeof(std::uintptr_t));
-    EXPECT_EQ(sizeof(_ZNSt7collateIwE2idE_nid_postfix), 8u);
     EXPECT_EQ(sizeof(_ZNSt6locale2id7_Id_cntE_nid_postfix), 4u);
 
     EXPECT_EQ(_ZNSt5ctypeIcE2idE_nid_postfix, 0u);
     EXPECT_EQ(_ZNSt5ctypeIwE2idE_nid_postfix, 0u);
-    EXPECT_EQ(_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix, 0u);
+    EXPECT_EQ(_ZNSt7collateIcE2idE_nid_postfix, 0u);
     EXPECT_EQ(_ZNSt7collateIwE2idE_nid_postfix, 0u);
+    EXPECT_EQ(_ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix, 0u);
+    EXPECT_EQ(_ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix, 0u);
+    EXPECT_EQ(_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix, 0u);
     EXPECT_EQ(_ZNSt6locale2id7_Id_cntE_nid_postfix, 0);
 }
 
