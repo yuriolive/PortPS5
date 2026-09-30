@@ -113,7 +113,7 @@ unsigned int APS5_VABI _Atomic_fetch_sub_4_nid_postfix(volatile unsigned int* ta
     return GccAtomicFetchSub(target, value);
 }
 
-/// MSVC-STL-style 4-byte weak compare-exchange used by the guest's <atomic>. Returns 1 on success, 0 on
+/// MSVC-STL-style 4-byte weak compare-exchange used by the guest's std::atomic. Returns 1 on success, 0 on
 /// failure (then `*expected` holds the current value). Memory orders are ignored: the implementation is
 /// always sequentially consistent, which is at least as strong as any order the guest requests.
 int APS5_VABI _Atomic_compare_exchange_weak_4_nid_postfix(volatile unsigned int* target, unsigned int* expected, unsigned int desired, int successOrder, int failureOrder) {
