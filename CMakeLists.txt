@@ -58,6 +58,8 @@ if(PORTPS5_COMPILE_WARNING_AS_ERROR)
 endif()
 
 add_subdirectory(core/shader/recompiler)
+add_subdirectory(core/Decoder/Jpeg)
+add_subdirectory(core/Decoder/Png)
 add_subdirectory(core/libs)
 add_subdirectory(core/relinker)
 
