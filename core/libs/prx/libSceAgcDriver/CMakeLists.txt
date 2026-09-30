@@ -64,6 +64,8 @@ add_library(libSceAgcDriver SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/SwapchainState.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/HostImport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetLayout.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ColorTargetTransfer.cpp
@@ -367,6 +369,25 @@ if(BUILD_TESTING)
         endif()
         set_tests_properties(${agcTestName} PROPERTIES LABELS "lavapipe")
     endforeach()
+
+    # Recorder and HostImport (portps5-6): GoogleTest on a real Vulkan device (lavapipe on hosted CI).
+    # Labelled 'lavapipe' like the other driver suites; tests skip themselves when no device exists.
+    portps5_add_gtest(agc_recorder_tests
+        SOURCES  ${CMAKE_CURRENT_SOURCE_DIR}/tests/RecorderTests.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/HostImportTests.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/HostImport.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferAddress.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BufferPool.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/GuestMemory.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                 ${CMAKE_SOURCE_DIR}/core/shader/recompiler
+                 ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+        LIBRARIES SDL2-static libc
+        LABELS   lavapipe
+    )
 
     # Hosted depth/stencil decode tests: synthetic register maps through DecodeState,
     # no GPU and no guest memory (draws use no colour target).
