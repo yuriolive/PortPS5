@@ -344,6 +344,13 @@ if(BUILD_TESTING)
         LIBRARIES libc libSceLibcInternal
         LABELS   unit
     )
+    # Wide formatting, wide stream output and the scanf family.
+    portps5_add_gtest(guest_wide_io_tests
+        SOURCES  tests/GuestWideIo.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
     # strndup/asprintf/operator new family/aligned_alloc over a test application heap.
     portps5_add_gtest(guest_heap_frontend_tests
         SOURCES  tests/GuestHeapFrontends.cpp
