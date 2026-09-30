@@ -12,10 +12,10 @@ PRD bars owned here: F3 (ATRAC9 plus the title's mixing path; at most 1 underrun
 
 File references are relative to `core/libs/prx/`.
 
-| Area | AnyPS5 `main` (`e06dbff`) | PR #5 (`29b4601`) |
+| Area | PortPS5 (forked from AnyPS5 `main@e06dbff`) | AnyPS5 `main@75a8668` (incl. merged PR #5) |
 |---|---|---|
 | AudioOut v1 | SDL queue API, one SDL device per guest port (`libSceAudioOut/src/AudioOut.cpp:107-125`), ~40 ms target latency, a 200 ms wait that clears the queue on timeout (`:28-30`, `queueAudio` from `:187`). A null buffer drains the queue (`queueAudio`): without a device the callers already pace on the wall clock, with a device a null buffer waits for the queue to empty. Unknown formats return the invalid-argument code; host audio failures abort through `Unsupported()`. All exports are `APS5_VABI` + `noexcept`. | Same design. A null buffer now waits for the queue to drain (`AudioOut.cpp:187-205`). |
-| AudioOut2 | 8 context + 4 port exports implemented from PR #5 (`AudioOut2Context.cpp`, `AudioOut2Port.cpp`): one SDL F32 stereo 48 kHz device per context, queue level from SDL queued bytes minus a 40 ms silence cushion, 250 ms overrun guard, 200 ms blocking-push timeout, fixed master gain 0.5 plus a hard clamp, ignored context attributes. Tracing is `debug.trace = ["audio"]` (no env switch). M1 telemetry: per-context and process `underruns` (push found the device queue empty) and `overrunDrops` (grain dropped past 250 ms), plus `AudioOut2LatencyMs` (device queue, or modelled grains with no device). | Implemented. One SDL F32 stereo 48 kHz device per context (`AudioOut2Context.cpp:92-113`). Queue level comes from SDL queued bytes minus a 40 ms silence cushion (`:30`, `:82-90`). Overrun guard at 250 ms drops grains (`:32`, `:133-136`). Blocking push gives up after 200 ms (`:34`, `:233`). Fixed master gain 0.5 plus a hard clamp (`:40`, `:127-130`). Context attributes are ignored (`:268-276`). |
+| AudioOut2 | 8 context + 4 port exports implemented from AnyPS5 main (merged PR #5) (`AudioOut2Context.cpp`, `AudioOut2Port.cpp`): one SDL F32 stereo 48 kHz device per context, queue level from SDL queued bytes minus a 40 ms silence cushion, 250 ms overrun guard, 200 ms blocking-push timeout, fixed master gain 0.5 plus a hard clamp, ignored context attributes. Tracing is `debug.trace = ["audio"]` (no env switch). M1 telemetry: per-context and process `underruns` (push found the device queue empty) and `overrunDrops` (grain dropped past 250 ms), plus `AudioOut2LatencyMs` (device queue, or modelled grains with no device). | Implemented. One SDL F32 stereo 48 kHz device per context (`AudioOut2Context.cpp:92-113`). Queue level comes from SDL queued bytes minus a 40 ms silence cushion (`:30`, `:82-90`). Overrun guard at 250 ms drops grains (`:32`, `:133-136`). Blocking push gives up after 200 ms (`:34`, `:233`). Fixed master gain 0.5 plus a hard clamp (`:40`, `:127-130`). Context attributes are ignored (`:268-276`). |
 | AudioOut2 ports | Port attribute id 0 = PCM pointer, id 1 = per-channel gain; ids 5, 8, 9 logged once per id when tracing, then ignored. Channel count from `data_format` bits 8-11 via `AudioOut2DecodeChannels`; unknown formats leave the port unrendered. 7.1 folds to stereo at -3 dB, LFE dropped (folding it in is M2 mixer work). `sampling_freq` stored for the M2 resampler; the M1 mix runs at 48 kHz. | Port attribute id 0 = PCM pointer, id 1 = per-channel gain; ids 5, 8, 9 ignored (`AudioOut2Port.cpp:16-20`, `:148-170`). Channel count comes from `data_format` bits 8-11 (`:22-26`). 7.1 folds to stereo at -3 dB, and LFE is dropped (`:38-62`). `sampling_freq` is stored but never used; the mix assumes 48 kHz (`:116`). Object ports are mixed as plain mono or stereo, with no position. |
 | AJM | ATRAC9 only (codec 1) via LibAtrac9 (`libSceAjm.native/src/Ajm.cpp`, static `atrac9` in its `CMakeLists.txt`). Other codecs log once and report `AJM_RESULT_CODEC_ERROR` per job. `sceAjmBatchStart` decodes synchronously; `sceAjmBatchWait` accepts and ignores its timeout. Tracing is `debug.trace = ["ajm"]`. All exports are `APS5_VABI` + `noexcept`. | ATRAC9 only (`CODEC_AT9 = 1`, `libSceAjm.native/src/Ajm.cpp:32`), via LibAtrac9 (`libSceAjm.native/CMakeLists.txt:3-18`). Other codecs log once and report `AJM_RESULT_CODEC_ERROR` per job (`Ajm.cpp:458-463`, `:402-406`). `sceAjmBatchStart` decodes synchronously on the calling thread. `sceAjmBatchWait` ignores its timeout (`:540-565`). |
 | NGS2, Audio3d, Audiodec | Throw-stubs: NGS2.native 27, Audio3d 7, Audiodec.native 6. Identical in both trees. | Same. |
@@ -34,7 +34,7 @@ Verified gaps closed in M2:
 ## Decision
 
 This follows the decision table in [README.md](README.md#subsystem-specs) §Audio:
-- **Adopt** PR #5's AudioOut2 and ATRAC9.
+- **Adopt** AnyPS5 main's AudioOut2 (merged PR #5) and ATRAC9.
 - Add codecs only as the M1 inventory requires them.
 - Implement object-port panning.
 - Use WASAPI shared mode behind SDL, with no exclusive mode in 1.0.
@@ -96,7 +96,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 
 | Milestone | Audio work |
 |---|---|
-| M1 | - [x] Port AudioOut2 and ATRAC9 from PR #5. Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
+| M1 | - [x] Port AudioOut2 and ATRAC9 from AnyPS5 main (merged PR #5). Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
 | M2 | - [x] Single host mixer with the resampler and the soft limiter. - [ ] TMNT proves the mixing path. Underrun bar enforced in the full run (needs a local title run with published results; unit tests alone do not close this). |
 | M3 | - [ ] Tomb Raider FMV audio within the A/V bar, jointly with [video-fmv.md](video-fmv.md). |
 | M4 | - [ ] Any codec or NGS2 surface that the inventory flags for Bugsnax. |

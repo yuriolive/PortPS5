@@ -82,7 +82,7 @@ inline constexpr std::uint64_t kWriteWatchBlockBytes = 65536ULL;
 inline constexpr std::uint64_t kPageStatePageBytes = 4096ULL;
 // Tracker metadata is sharded per 1 GiB of guest address so Collect on one
 // range never serializes against an unrelated range (spec: one tracker mutex
-// was PR #5's bottleneck).
+// was the bottleneck in AnyPS5 main (merged PR #5)).
 inline constexpr std::uint64_t kTrackerShardBytes = 1073741824ULL;
 
 /**
@@ -152,7 +152,7 @@ private:
  *
  * Collect performs one resetting GetWriteWatch pass per call and stamps
  * 64 KiB blocks with 64-bit generations from a single global monotonic
- * counter (never wraps in practice; PR #5's 32-bit counter could wrap in
+ * counter (never wraps in practice; AnyPS5 main's (merged PR #5) 32-bit counter could wrap in
  * ~12 h). Ranges the walk cannot cover (uncommitted pages, non-write-watch
  * memory, non-Windows builds, out-of-window addresses) report 0 ("unknown":
  * the caller compares bytes) and bump UnknownWalks for telemetry.

@@ -4,20 +4,20 @@ Status: draft v1 · 2026-09-27
 
 ## Scope
 
-Everything that places, protects, describes and tracks guest-visible memory: the libc arena and heap, the libkernel direct/flexible memory calls (`sceKernel*DirectMemory`, `*FlexibleMemory`, `mmap`/`mprotect`/`munmap`, `sceKernelVirtualQuery`, batch map), the allocation registry (leases, pins, generations, pin waiter), CPU write tracking, and the page-state cache the AGC driver reads. GPU-side caches that consume these facts are in [gpu-driver.md](gpu-driver.md). Paths are relative to `core/libs/prx/`; "main" is `e06dbff`, "PR5" is `29b4601`.
+Everything that places, protects, describes and tracks guest-visible memory: the libc arena and heap, the libkernel direct/flexible memory calls (`sceKernel*DirectMemory`, `*FlexibleMemory`, `mmap`/`mprotect`/`munmap`, `sceKernelVirtualQuery`, batch map), the allocation registry (leases, pins, generations, pin waiter), CPU write tracking, and the page-state cache the AGC driver reads. GPU-side caches that consume these facts are in [gpu-driver.md](gpu-driver.md). Paths are relative to `core/libs/prx/`; "main@e06dbff" is the pre-merge AnyPS5 main (old baseline). "main@75a8668" is the current AnyPS5 main and includes merged PR #5; its line numbers were re-checked there.
 
 ## Current state
 
-| Area | main | PR #5 |
+| Area | AnyPS5 main@e06dbff (pre-merge) | AnyPS5 main@75a8668 (incl. merged PR #5) |
 |---|---|---|
 | Placement | Anywhere the host chooses. Every mapping is a pagefile section mapped twice, a guest view plus a host alias (`libc/src/MemoryBackingWindows.cpp:122-155`, alias at 133, guest view at 143). | One reservation from `0x10_0000_0000`, 64–448 GiB, below `MapAreaEnd = 0xFC_0000_0000` (`libc/src/GuestArena.cpp:18-21`, constructor 86-107). `MEM_WRITE_WATCH` when possible, and a plain reservation when not. The `APS5_NO_WRITE_WATCH` switch is at line 95. |
 | Arena allocator | Heap chunks of 64 MiB, first-fit over a `std::map` free list (`libc/src/GuestHeapStorage.cpp:38-84`). | `Arena::Allocate` walks every used range: first-fit, O(n) per call (`GuestArena.cpp:43-55`). |
 | Heap | Every block is carved from a chunk under the tracking `recursive_mutex`. | `ArenaHeap`: 64 size classes from 32 B to 64 KiB, bump-allocated from 1 MiB spans with a mutex per class (`libc/src/GuestHeap.cpp:92-101`). Blocks over 64 KiB are 64 KiB-granular and kept in a committed `LargeCache` capped by `APS5_HEAP_CACHE_MIB`, default 4 GiB (123-178). Each block carries a 16-byte header (204-207). |
-| Registry | `GuestAllocations`: a `std::map` of `shared_ptr<const Range>`. A pin is inferred from `use_count() != 1`, and the mutation throws when pinned (`libc/src/GuestAllocations.cpp:142-151`). Protect and unmap copy the whole map (181-205). | Same structure under a plain `std::mutex`, plus a global `generation`, an `invalidator` and a `pinWaiter` (`GuestAllocations.cpp:31-33`). `RequireUnpinned` drops the lock, calls the waiter and retries, with a 60 s deadline and at most 10^6 idle rounds (136-190). `Add` and `Remove` record a change (122, 236), so **every guest malloc/free bumps the generation and runs the invalidator**. |
-| Write tracking | A vectored exception handler plus `VirtualProtect` re-arm per page (`libc/src/MemoryTrackingWindows.cpp:16-76`), with a registry under a `recursive_mutex` (`GuestMemoryTracking.cpp:26-30,67-78`). | Fault tracking deleted. The driver's `WriteTracker` calls `GetWriteWatch(WRITE_WATCH_FLAG_RESET)` in one pass and stamps a `uint32` generation per 64 KiB block (`libSceAgcDriver/Execution/src/GuestMemory.cpp:615-663,718-800`), with a per-thread epoch memo. One tracker mutex covers all of it. Uncommitted pages make the walk fail, and the caller falls back to comparing bytes (767-770). |
-| Page-state cache | — | `PageSpan`: 1 byte per 4 KiB page over the arena and main image, filled lazily from `VirtualQuery`, cleared by the invalidator, with a generation re-check against races (`GuestMemory.cpp:330-386,437-461,473-520`). |
-| Direct memory | `MapAligned` goes to the section backing (`libkernel/DirectMemory/DirectMemory.cpp:87`). `sceKernelVirtualQuery` returns the 16 KiB page around the address (`Export.cpp:93-103`). | `DoMapDirect` validates `physStart`, then maps **fresh anonymous memory**, so two mappings of one physical range do not share bytes (`DirectMemory.cpp:265-284`). The physical pool is `bool _used[884736]` with a linear scan (`MemoryPool.cpp:14-29,53`). Flexible memory has a 448 MiB budget (`Export.cpp:20,41-50`). `sceKernelVirtualQuery` scans a full lease linearly (`Export.cpp:156-192`). |
-| Errors | EINVAL-class errors throw `std::invalid_argument`. The intended return codes survive only as comments (`DirectMemory.cpp:131-160` in PR5; the same pattern appears in main). | Same. |
+| Registry | `GuestAllocations`: a `std::map` of `shared_ptr<const Range>`. A pin is inferred from `use_count() != 1`, and the mutation throws when pinned (`libc/src/GuestAllocations.cpp:142-151`). Protect and unmap copy the whole map (181-205). | Same structure under a plain `std::mutex`, plus a global `generation`, an `invalidator` and a `pinWaiter` (`GuestAllocations.cpp:34-36`). `RequireUnpinned` drops the lock, calls the waiter and retries, with a 60 s deadline and at most 10^6 idle rounds (184-234). `Add` and `Remove` record a change (170, 284), so **every guest malloc/free bumps the generation and runs the invalidator**. |
+| Write tracking | A vectored exception handler plus `VirtualProtect` re-arm per page (`libc/src/MemoryTrackingWindows.cpp:16-76`), with a registry under a `recursive_mutex` (`GuestMemoryTracking.cpp:26-30,67-78`). | Fault tracking deleted. The driver's `WriteTracker` calls `GetWriteWatch(WRITE_WATCH_FLAG_RESET)` in one pass and stamps a `uint32` generation per 64 KiB block (`libSceAgcDriver/Execution/src/GuestMemory.cpp:618-664,718-802`), with a per-thread epoch memo. One tracker mutex covers all of it. Uncommitted pages make the walk fail, and the caller falls back to comparing bytes (767-770). |
+| Page-state cache | — | `PageSpan`: 1 byte per 4 KiB page over the arena and main image, filled lazily from `VirtualQuery`, cleared by the invalidator, with a generation re-check against races (`GuestMemory.cpp:334-387,437-461,473-523`). |
+| Direct memory | `MapAligned` goes to the section backing (`libkernel/DirectMemory/DirectMemory.cpp:87`). `sceKernelVirtualQuery` returns the 16 KiB page around the address (`Export.cpp:93-103`). | `DoMapDirect` validates `physStart`, then maps **fresh anonymous memory**, so two mappings of one physical range do not share bytes (`DirectMemory.cpp:318-337`). The physical pool is `bool _used[884736]` (13824 MiB in 16 KiB pages) with a linear scan (`MemoryPool.cpp:7,15-31,69-75,85`), plus an `_ranges` map that records each allocated block. Flexible memory has a 448 MiB budget (`Export.cpp:26,83-92`). `sceKernelVirtualQuery` scans a full lease linearly (`Export.cpp:208-267`). |
+| Errors | EINVAL-class errors throw `std::invalid_argument`. The intended return codes survive only as comments (`DirectMemory.cpp:166-194,268,289` on main@75a8668; the same pattern appears in main@e06dbff). | Same. |
 
 ## Decision
 
@@ -27,15 +27,15 @@ Per the decision table in [README.md](README.md#subsystem-specs): **adopt** `Gue
 - **Replace** use-count pins with explicit pin counts.
 - **Replace** the per-malloc registry entries.
 - **Move** page-state ownership from the driver into this subsystem.
-- **Drop** main's fault tracker and double-mapped sections as the default path.
+- **Drop** main@e06dbff's fault tracker and double-mapped sections as the default path.
 - Return SCE error codes instead of throwing.
 
 ## Target design
 
-**Layout.** Keep the PR5 reservation and the ascending first-fit order. The arena header comment says titles index tables by absolute address, so allocation order is part of the contract.
+**Layout.** Keep the AnyPS5 main (merged PR #5) reservation and the ascending first-fit order. The arena header comment says titles index tables by absolute address, so allocation order is part of the contract.
 
 - Guest page size is 16 KiB (`PS5_PAGE_SIZE`). Host commit granularity is 4 KiB inside the arena.
-- A fixed mapping outside the arena returns `SCE_KERNEL_ERROR_ENOMEM` and is logged. PR5's 64 KiB-granular `VirtualAlloc` fallback (`DirectMemory.cpp:86-87`) is removed.
+- A fixed mapping outside the arena returns `SCE_KERNEL_ERROR_ENOMEM` and is logged. AnyPS5 main's 64 KiB-granular `VirtualAlloc` fallback (`DirectMemory.cpp:90-91`) is removed.
 
 **Arena allocator.** Free extents live in an address-ordered balanced tree. Each node is augmented with the largest free extent in its subtree, the same technique as Linux `rb_subtree_gap`. The search descends to the lowest-address extent that is at least `bytes + align - 16 KiB`, then checks alignment. That gives exactly the first-fit result in O(log n). Free coalesces with both neighbours. A buddy allocator is rejected because it changes address order and rounds sizes up.
 
@@ -45,7 +45,7 @@ u64 FirstFit(u64 bytes, u64 align);   // O(log n), == reference linear scan
 void Free(u64 base, u64 bytes);        // coalesce left/right, fix maxInSubtree up the path
 ```
 
-**Heap.** Keep the PR5 size classes and spans.
+**Heap.** Keep the AnyPS5 main (merged PR #5) size classes and spans.
 
 - The registry records **spans** (1 MiB) and large blocks, not individual mallocs.
 - Freeing a small block never waits on pins. Its memory stays committed, so a GPU read of a freed block sees stale bytes, never a fault.
@@ -62,9 +62,9 @@ void Unpin(PinToken) noexcept;                    // pins--, WakeByAddressAll(&p
 u64 Generation();                                 // bumped only by map/unmap/protect/decommit
 ```
 
-- `RequireUnpinned` keeps the PR5 contract: the waiter is called with the lock released, then the scan restarts. It waits with `WaitOnAddress` on `pins` instead of `yield`.
+- `RequireUnpinned` keeps the AnyPS5 main (merged PR #5) contract: the waiter is called with the lock released, then the scan restarts. It waits with `WaitOnAddress` on `pins` instead of `yield`.
 - A 60 s deadline breach goes to `Unsupported()` with a dump of the pinning submissions, instead of a throw ([threading.md](threading.md) §error policy).
-- `sceKernelVirtualQuery` becomes a `lower_bound` plus an optional next-range step. It keeps PR5's answer shape: the registered allocation extent and the protection bits.
+- `sceKernelVirtualQuery` becomes a `lower_bound` plus an optional next-range step. It keeps AnyPS5 main's (merged PR #5) answer shape: the registered allocation extent and the protection bits.
 
 **Direct memory.** The physical pool becomes the same extent tree over `[0, 13.5 GiB)`.
 
@@ -97,8 +97,8 @@ struct IWriteTracker {
 
 | Implementation | Mechanism | Used for |
 |---|---|---|
-| `WriteWatchTracker` | PR5's single resetting `GetWriteWatch` pass | Arena (default) |
-| `ProtectTracker` | main's VEH + `VirtualProtect` | Aliased section views |
+| `WriteWatchTracker` | AnyPS5 main's (merged PR #5) single resetting `GetWriteWatch` pass | Arena (default) |
+| `ProtectTracker` | main@e06dbff's VEH + `VirtualProtect` | Aliased section views |
 | `NullTracker` | Always reports "unknown" | Non-Windows, tracker unavailable |
 
 - Block granularity stays at 64 KiB, and generations widen to 64 bits (see Failure modes).
@@ -123,11 +123,11 @@ struct IWriteTracker {
 
 | Failure | Handling |
 |---|---|
-| Arena reservation fails (address space taken below 1 TiB) | Log and abort at start-up. The PR5 `malloc` fallback (`GuestHeap.cpp:184-190`) is removed because it breaks the address contract. |
+| Arena reservation fails (address space taken below 1 TiB) | Log and abort at start-up. The AnyPS5 main (merged PR #5) `malloc` fallback (`GuestHeap.cpp:184-190`) is removed because it breaks the address contract. |
 | Arena or flexible budget exhausted | `SCE_KERNEL_ERROR_ENOMEM` to the guest, plus a log line with usage. |
 | Invalid length, alignment or protection | `SCE_KERNEL_ERROR_EINVAL` return, never a throw. |
 | Pin never released | Waiter rounds, then a 60 s deadline, then `Unsupported()` with the holders named. |
-| 32-bit block generation wraps. PR5 `WriteTracker::generation` is a `std::atomic<uint32_t>`, bumped on every collect. The rate is an inference: at about 10^5 collects/s it wraps in about 12 h. | 64-bit generations. |
+| 32-bit block generation wraps. AnyPS5 main@75a8668 `WriteTracker::generation` is a `std::atomic<uint32_t>` (`GuestMemory.cpp:636`), bumped on every collect (757). The rate is an inference: at about 10^5 collects/s it wraps in about 12 h. | 64-bit generations. |
 | `GetWriteWatch` fails on uncommitted pages | Return "unknown", the caller compares bytes, and a counter is incremented. |
 | Physical alias created after the GPU imported the range | Unpin, re-import through the section window, bump `mapGen`. |
 | Global generation churn from malloc | Removed: heap blocks no longer touch the registry. |
@@ -168,6 +168,6 @@ struct IWriteTracker {
 
 1. Do any gate titles map one physical direct range twice? The M1 import inventory plus the alias counter will answer this. If none do, the section window stays dormant.
 2. Can a `MEM_WRITE_WATCH` reservation coexist with placeholder splitting? This is unverified, and it decides where the alias window lives.
-3. Does any title rely on `sceKernelDirectMemoryQuery` returning real extents? PR5 returns a single page (`Export.cpp:95-105`).
-4. Is a 64 KiB block granularity too coarse for per-job label slots? PR5 notes slots 0x20 apart (`GuestMemory.cpp:628-630`). Decide from profiles.
-5. Sync assessment (PR #28): upstream `GuestArena` (`libc/src/GuestArena.cpp`, `include/GuestArena.hpp`) was trial-ported and reverted. Verdict: a raw port cannot land — the O(n) first-fit scan (`GuestArena.cpp:43-55` upstream) contradicts the extent-tree decision below, `throw std::runtime_error` sites break the no-throw rule (a guest `catch(...)` swallows host exceptions), the file is unwired, and there are no file headers. It returns with the M1 extent-tree port (adapted, return codes, headers). `HostThreadLocal.hpp` stays: it compiles and its GTest balance suite is green.
+3. Does any title rely on `sceKernelDirectMemoryQuery` returning real extents? AnyPS5 main@75a8668 returns the recorded block from its pool `_ranges` map and a single page only for unrecorded offsets (`Export.cpp:136-153`, `MemoryPool.cpp:46-54`).
+4. Is a 64 KiB block granularity too coarse for per-job label slots? AnyPS5 main@75a8668 notes slots 0x20 apart (`GuestMemory.cpp:628-630`). Decide from profiles.
+5. Sync assessment (PR #28): upstream `GuestArena` (`libc/src/GuestArena.cpp`, `include/GuestArena.hpp`) was trial-ported and reverted. Verdict: a raw port cannot land — the O(n) first-fit scan (`GuestArena.cpp:43-55` on AnyPS5 main@75a8668) contradicts the extent-tree decision below, `throw std::runtime_error` sites break the no-throw rule (a guest `catch(...)` swallows host exceptions), the file is unwired, and there are no file headers. It returns with the M1 extent-tree port (adapted, return codes, headers). `HostThreadLocal.hpp` stays: it compiles and its GTest balance suite is green.
