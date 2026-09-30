@@ -117,3 +117,6 @@ cookies.txt
 
 .env
 .env.local
+
+# Claude Code shared project settings (beans prime hook)
+!.claude/settings.json

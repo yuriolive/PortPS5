@@ -38,6 +38,7 @@
 ## PR Checklist
 
 - [ ] **Legal boundary:** No Sony keys, firmware, SDK headers, decryption code, game dumps, shader bytecode, saves, or game footage attached or committed ([rules/legal-boundary.md](.agents/rules/legal-boundary.md)).
+- [ ] **Beans:** Bean(s) solved by this PR are ticked, marked `completed` and archived (`beans archive`) in this PR. Bean IDs: <!-- e.g. portps5-w3s8, or N/A -->
 - [ ] **No title hacks in core:** No title-specific branches or title-ID checks in `core/`; game-specific options live strictly in `config/games/<titleId>.toml` ([rules/no-title-hacks.md](.agents/rules/no-title-hacks.md)).
 - [ ] **ABI conventions:** Host exports called by guest code use `APS5_VABI` and `noexcept` ([rules/cpp-style.md](.agents/rules/cpp-style.md)).
 - [ ] **Specs in sync:** If subsystem behaviour, interfaces, or decisions changed, the corresponding specs under `docs/spec/` are updated in this PR ([rules/docs-and-specs.md](.agents/rules/docs-and-specs.md)).
