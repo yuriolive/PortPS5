@@ -267,7 +267,7 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
 
 1. Can a despecialised generic variant stand in once a source hits the variant cap?
 2. Does any wave32 program run on a host whose subgroup is fixed wider than 32?
-3. Follow-up to PR #36 (bean portps5-8r22, ex-beads portps5-52): `EmitGetShaderBase`
+3. Follow-up to PR #36 (bean portps5-habc): `EmitGetShaderBase`
    (`SpirvBackend/src/SpirvModuleEmitter.cpp:1052`) still emits constant zero, so
    SPIR-V consumers of an `s_getpc_b64` value see offset-only while the
    SRT/resource-tracker path (via `MakeRuntime` with `request.shader.codeAddress`)
