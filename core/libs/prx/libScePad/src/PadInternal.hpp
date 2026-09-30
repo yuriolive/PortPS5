@@ -53,9 +53,15 @@ public:
 
     // Test hook: direct manipulation of slots for deterministic unit testing
     void TestSetSlotConnected(int slot, bool connected);
-    // Test hook: return a slot to its freshly-constructed state (closed, no
-    // controller, connectedCount back to its initial value) so singleton state
-    // does not leak between tests.
+    /**
+     * @brief Test hook: return a slot to its freshly-constructed state.
+     *
+     * Closes the slot, drops any controller, and restores connectedCount, the
+     * connected flag and the timestamp baseline so singleton state does not leak
+     * between tests.
+     *
+     * @param slot Slot index 0..PAD_MAX_SLOTS-1; out-of-range values are ignored.
+     */
     void TestResetSlot(int slot);
 
 private:

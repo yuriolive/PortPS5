@@ -329,6 +329,14 @@ void PadManager::TestSetSlotConnected(int slot, bool connected) {
     }
 }
 
+/**
+ * Restores `slot` to its constructed state (closed, no controller, initial
+ * connectedCount, zeroed timestamp baseline). Test-only: production code never
+ * resets a slot. Thread-safe (takes the manager mutex). Out-of-range slots are
+ * ignored. The timestamp is zeroed because ReadState advances it monotonically
+ * from max(process time, lastTimestamp), so a stale value would leak one test's
+ * timestamp sequence into the next.
+ */
 void PadManager::TestResetSlot(int slot) {
     if (slot < 0 || slot >= PAD_MAX_SLOTS) return;
     std::lock_guard lock(mutex);
@@ -336,6 +344,7 @@ void PadManager::TestResetSlot(int slot) {
     s.opened = false;
     s.controllerPresent = false;
     s.controllerInput = {};
+    s.lastTimestamp = 0;
     // Slot 0 is the always-present keyboard/mouse pad (count 1); others start at 0.
     s.connected = (slot == 0);
     s.connectedCount = static_cast<std::uint8_t>(slot == 0 ? 1 : 0);
