@@ -22,6 +22,14 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ApplicationProcessParameters.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/JumpBuffer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Formatting.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/FormattingWide.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/FormattingChecked.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/WideConversion.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/BoundsChecked.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HeapExtras.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/MiscExtras.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
