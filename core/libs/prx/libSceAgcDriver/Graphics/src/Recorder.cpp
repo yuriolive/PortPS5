@@ -16,6 +16,7 @@
 //  - Kept objects and completion closures are destroyed after the thread's outermost Scope ended.
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -47,21 +48,25 @@ struct DeferredBatch {
     std::vector<std::shared_ptr<void>> kept;
     std::vector<std::function<void()>> completions;
 };
-// A raw pointer, not a thread_local std::vector: a thread_local with a non-trivial destructor runs at
-// thread exit through the host libc's TLS hooks (libc's tls_atexit_callback), which corrupted the
-// vector's storage when a worker thread exited. The pointer is trivially destructible; the list is
-// heap-allocated on first use and freed by DestroyDeferred when the outermost Scope ends, so a thread
-// never exits with a list (every finish() happens inside a Scope).
-thread_local std::vector<DeferredBatch>* deferredBatches = nullptr;
+// The per-thread list of finished batches whose objects still have to be destroyed. HostThreadLocal (FLS
+// cleanup on Windows) instead of a thread_local std::vector: a thread_local with a non-trivial destructor
+// ran at thread exit through libc's TLS hooks and corrupted the vector's storage when a worker exited
+// (AnyPS5 e424b6b hit the same crash in the PR #5 Recorder).
+struct DeferredBatchesTag {};
+std::vector<DeferredBatch>& DeferredBatches() { return HostThreadLocal<std::vector<DeferredBatch>, DeferredBatchesTag>(); }
 
 void DestroyDeferred() noexcept {
-    // Detached first: a destructor that opened a Scope of its own must find no list.
-    const std::unique_ptr<std::vector<DeferredBatch>> releasing(std::exchange(deferredBatches, nullptr));
-    if (releasing == nullptr) return;
-    for (auto& batch : *releasing) {
-        // Completion closures first (their captures hold some of the objects), then the objects.
-        batch.completions.clear();
-        batch.kept.clear();
+    try {
+        // Moved out first: a destructor that opened a Scope of its own must find the list empty.
+        auto releasing = std::move(DeferredBatches());
+        DeferredBatches().clear();
+        for (auto& batch : releasing) {
+            // Completion closures first (their captures hold some of the objects), then the objects.
+            batch.completions.clear();
+            batch.kept.clear();
+        }
+    } catch (...) {
+        // Slot exhaustion only (HostThreadLocal debt); nothing to release then.
     }
 }
 
@@ -690,8 +695,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait) {
     }
     // Completion closures and kept objects are destroyed when the outermost Scope of this thread ends,
     // never under a recorder hold (their destructors may be expensive and take their own locks).
-    if (deferredBatches == nullptr) deferredBatches = new std::vector<DeferredBatch>;
-    deferredBatches->push_back({std::move(batch->kept), std::move(batch->completions)});
+    DeferredBatches().push_back({std::move(batch->kept), std::move(batch->completions)});
     batch->kept.clear();
     batch->completions.clear();
     // The batch's label entries leave the table (a later label to the same dword already replaced its

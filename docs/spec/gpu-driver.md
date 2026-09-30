@@ -26,7 +26,7 @@ Shader translation is in [shader-recompiler.md](shader-recompiler.md). Persisten
 - Depth/stencil is rejected (`Graphics/src/State.cpp:152`).
 - The graphics pipeline cache keys on the full SPIR-V bytes and keeps 128 entries (`Graphics/src/GraphicsPipelineCache.cpp:90-98,129`).
 
-**Landed in PortPS5 (portps5-6, M1 Lane A):** `Graphics/include/Recorder.hpp` + `Graphics/src/Recorder.cpp` and `Graphics/include/HostImport.hpp` + `Graphics/src/HostImport.cpp`, adapted from AnyPS5 `8a69fefe` (PR #5):
+**Landed in PortPS5 (portps5-6, M1 Lane A):** `Graphics/include/Recorder.hpp` + `Graphics/src/Recorder.cpp` and `Graphics/include/HostImport.hpp` + `Graphics/src/HostImport.cpp`, adapted from AnyPS5 `8a69fefe` (PR #5, since merged into AnyPS5 `main`, whose `Recorder` has moved on with read tracking and later fixes; this port is based on `8a69fefe`):
 
 | Piece | Behaviour | Differs from PR #5 |
 |---|---|---|
