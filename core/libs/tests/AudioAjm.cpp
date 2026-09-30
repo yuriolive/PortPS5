@@ -19,6 +19,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
+#include <thread>
 #include <vector>
 
 #include "SceTypes.hpp"
@@ -260,5 +263,38 @@ TEST(AudioAjmTests, MalformedBatchAborts) {
         "sceAjmBatchStart: invalid job bytes"
     );
 
+    EXPECT_EQ(sceAjmFinalize(context), 0);
+}
+
+// Verifies concurrent decoder-instance creation hands out unique live ids.
+// Ported from SharpEMU Audio/AjmExportsTests.ConcurrentInstanceCreates_ProduceUniqueLiveIds
+// (GPL-2.0-or-later, used under GPL-2.0 terms; registry-shape and generation
+// specifics from the original have no equivalent here and are not ported).
+TEST(AudioAjmTests, ConcurrentInstanceCreates) {
+    std::uint32_t context = 0;
+    ASSERT_EQ(sceAjmInitialize(0, &context), 0);
+    constexpr int kThreads = 8;
+    constexpr int kPerThread = 16;
+    std::mutex idsLock;
+    std::set<std::uint32_t> ids;
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; t++) {
+        threads.emplace_back([&]() {
+            for (int i = 0; i < kPerThread; i++) {
+                std::uint32_t instance = 0;
+                EXPECT_EQ(sceAjmInstanceCreate(context, AJM_CODEC_AT9, 0, &instance), 0);
+                EXPECT_NE(instance, 0u);
+                std::lock_guard lock(idsLock);
+                ids.insert(instance);
+            }
+        });
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    EXPECT_EQ(ids.size(), static_cast<std::size_t>(kThreads * kPerThread));
+    for (auto instance : ids) {
+        EXPECT_EQ(sceAjmInstanceDestroy(context, instance), 0);
+    }
     EXPECT_EQ(sceAjmFinalize(context), 0);
 }

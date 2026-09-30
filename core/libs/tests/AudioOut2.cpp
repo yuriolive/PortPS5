@@ -363,6 +363,103 @@ TEST(AudioOut2Tests, AudioOutV1) {
     EXPECT_EQ(sceAudioOutClose(handle), 0);
 }
 
+// Verifies one Outputs batch submits every port in the batch: both ports'
+// grains reach the mixer and sum in the callback. Ported from SharpEMU
+// Audio/AudioOutExportsTests.SubmitsEveryPortInTheBatch (GPL-2.0-or-later,
+// used under GPL-2.0 terms; guest-memory fault isolation from the original
+// has no equivalent here and is not ported).
+TEST(AudioOut2Tests, V1BatchSubmitsEveryPort) {
+    auto& mixer = AudioMixer::Get();
+    mixer.Shutdown();
+    ASSERT_TRUE(mixer.Initialize());
+    mixer.ForceWallClockForTesting();
+    // Freeze retirement so staged grains survive verbatim until observed.
+    mixer.PauseWallClockForTesting(true);
+    const int first = sceAudioOutOpen(0, 0, 0, 256, 48000, 4);
+    const int second = sceAudioOutOpen(0, 0, 0, 256, 48000, 4);
+    ASSERT_GT(first, 0);
+    ASSERT_GT(second, 0);
+    ASSERT_NE(first, second);
+    std::vector<float> pcmA(256 * 2, 0.25f);
+    std::vector<float> pcmB(256 * 2, 0.25f);
+    AudioOutOutputParam params[2]{};
+    params[0].handle = first;
+    params[0].ptr = pcmA.data();
+    params[1].handle = second;
+    params[1].ptr = pcmB.data();
+    EXPECT_EQ(sceAudioOutOutputs(params, 2), 256);
+    std::vector<float> out(256 * 2, 0.0f);
+    AudioMixerTestAccess::Process(mixer, out.data(), 256);
+    for (float sample : out) {
+        // Both grains submitted: 0.25 + 0.25 sums to exactly 0.5.
+        EXPECT_FLOAT_EQ(sample, 0.5f);
+    }
+    EXPECT_EQ(sceAudioOutClose(first), 0);
+    EXPECT_EQ(sceAudioOutClose(second), 0);
+    mixer.Shutdown();
+    mixer.PauseWallClockForTesting(false);
+}
+
+// Verifies S16 stereo guest PCM converts to mixer float with exact half-scale
+// mapping, full-scale headroom without hard clipping, and volume scaling.
+// Ported from SharpEMU Audio/AudioPcmConversionTests (GPL-2.0-or-later, used
+// under GPL-2.0 terms; direction adapted: our pipeline converts S16 guest PCM
+// up to F32 for the mixer). NaN sanitization from the original is not ported:
+// it would need new mixer behavior, which is out of scope.
+TEST(AudioOut2Tests, V1S16StereoConversionAndVolume) {
+    auto& mixer = AudioMixer::Get();
+    mixer.Shutdown();
+    ASSERT_TRUE(mixer.Initialize());
+    mixer.ForceWallClockForTesting();
+    mixer.PauseWallClockForTesting(true);
+    const int handle = sceAudioOutOpen(0, 0, 0, 256, 48000, 1);
+    ASSERT_GT(handle, 0);
+    // Half scale maps exactly: 16384 / 32768 = 0.5.
+    std::vector<std::int16_t> block(256 * 2, 0);
+    for (std::uint32_t i = 0; i < 256; i++) {
+        block[i * 2 + 0] = 16384;
+        block[i * 2 + 1] = -16384;
+    }
+    EXPECT_EQ(sceAudioOutOutput(handle, block.data()), 256);
+    std::vector<float> out(256 * 2, 0.0f);
+    AudioMixerTestAccess::Process(mixer, out.data(), 256);
+    for (std::uint32_t i = 0; i < 256; i++) {
+        EXPECT_FLOAT_EQ(out[i * 2 + 0], 0.5f);
+        EXPECT_FLOAT_EQ(out[i * 2 + 1], -0.5f);
+    }
+    // Full scale stays inside (-1, 1) with headroom instead of hard clipping.
+    std::fill(block.begin(), block.end(), INT16_MAX);
+    EXPECT_EQ(sceAudioOutOutput(handle, block.data()), 256);
+    AudioMixerTestAccess::Process(mixer, out.data(), 256);
+    for (float sample : out) {
+        EXPECT_GT(sample, 0.9f);
+        EXPECT_LT(sample, 1.0f);
+    }
+    std::fill(block.begin(), block.end(), INT16_MIN);
+    EXPECT_EQ(sceAudioOutOutput(handle, block.data()), 256);
+    AudioMixerTestAccess::Process(mixer, out.data(), 256);
+    for (float sample : out) {
+        EXPECT_GT(sample, -1.0f);
+        EXPECT_LT(sample, -0.9f);
+    }
+    // Half volume halves the converted amplitude: 0.5 * 0.5 = 0.25.
+    int vols[2] = {16384, 16384};
+    EXPECT_EQ(sceAudioOutSetVolume(handle, 0x3, vols), 0);
+    std::fill(block.begin(), block.end(), 0);
+    for (std::uint32_t i = 0; i < 256; i++) {
+        block[i * 2 + 0] = 16384;
+        block[i * 2 + 1] = 16384;
+    }
+    EXPECT_EQ(sceAudioOutOutput(handle, block.data()), 256);
+    AudioMixerTestAccess::Process(mixer, out.data(), 256);
+    for (float sample : out) {
+        EXPECT_FLOAT_EQ(sample, 0.25f);
+    }
+    EXPECT_EQ(sceAudioOutClose(handle), 0);
+    mixer.Shutdown();
+    mixer.PauseWallClockForTesting(false);
+}
+
 // The consolidated host device owns queue timing even though the obsolete
 // per-context device field remains zero. Missing sources still use the model.
 TEST(AudioOut2Tests, QueueLevelUsesMixerSourceWithHostDevice) {
@@ -382,6 +479,9 @@ TEST(AudioOut2Tests, QueueLevelUsesMixerSourceWithHostDevice) {
     while (!AudioMixerTestAccess::Acquire(*context->source)) std::this_thread::yield();
     std::vector<AudioFrame> frames(AUDIO_MIXER_TARGET_CUSHION_FRAMES + 512);
     const bool pushed = context->source->PushStereo48k(frames.data(), frames.size());
+    // Re-pause before releasing: the push unpaused the source, and the live
+    // dummy callback would otherwise drain the grain before the asserts below.
+    context->source->SetPaused(true);
     AudioMixerTestAccess::Release(*context->source);
     ASSERT_TRUE(pushed);
     EXPECT_EQ(context->device, 0u);

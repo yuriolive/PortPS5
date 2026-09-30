@@ -88,6 +88,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
   - Death tests (`EXPECT_DEATH`): verify that malformed AJM batches trigger an immediate abort via `Unsupported()` rather than corrupting audio ring buffers.
 - **Ported Ecosystem Test Suites:**
   - [x] **KytyPS5 `AudioOut2PortTests`:** port lifecycle stress (slot reuse, table growth, concurrent create), destroy-releases-ports, unknown-format skip, late-read grains, and depth-1 queue backpressure (`core/libs/tests/AudioOut2KytyPorts.cpp`; adapted: single mixer with no per-port devices, 1/2/8 channels only, late PCM read at push time, unbounded port table, non-blocking opens).
+  - [x] **SharpEMU audio suites:** v1 batch fan-out to every port and S16 conversion endpoints/volume (`AudioOut2Tests.V1BatchSubmitsEveryPort`, `V1S16StereoConversionAndVolume` in `core/libs/tests/AudioOut2.cpp`); AJM concurrent instance creation (`AudioAjmTests.ConcurrentInstanceCreates` in `core/libs/tests/AudioAjm.cpp`). Register-marshalling trampoline tests, generation-specific registries, ACM codecs, and NaN sanitization have no equivalent surface here and are not ported.
 - **Driverless mixer test:** a dummy SDL audio driver consumes at a fixed rate. It asserts 0 underruns over 10 simulated minutes at a steady push rate, and that exactly N underruns are counted when N gaps are injected.
 - **Local regression:** every gate run reports `audio_underruns`. The pass is ≤ 1 per 10 minutes, pro-rated over the run.
 

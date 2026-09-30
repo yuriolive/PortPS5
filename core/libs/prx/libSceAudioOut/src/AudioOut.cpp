@@ -233,8 +233,13 @@ static void queueAudio(const Port& port, const void* data) {
     // for it, so the push cannot be rejected while this producer holds the
     // source lock (consumers only free space). Without this, a wait satisfied
     // by a partial drain would be followed by a silent drop that still reports
-    // success. Staged grains larger than the ceiling can never fit; they are
-    // attempted once and counted as overrun drops by the push.
+    // success. A staged grain larger than the ceiling can never fit: attempt it
+    // once so the drop is counted, then return instead of spinning the full
+    // timeout while re-recording overrun drops.
+    if (stagedFrames > AUDIO_MIXER_CEILING_FRAMES) {
+        source->PushStereo48k(staged.data(), stagedFrames);
+        return;
+    }
     const std::uint32_t roomTarget = stagedFrames < AUDIO_MIXER_CEILING_FRAMES
         ? std::min(AUDIO_MIXER_TARGET_CUSHION_FRAMES,
                    AUDIO_MIXER_CEILING_FRAMES - stagedFrames)
