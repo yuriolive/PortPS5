@@ -36,6 +36,12 @@
       }
     },
     {
+      "name": "default",
+      "displayName": "Default",
+      "description": "Default developer configure preset (alias to dev)",
+      "inherits": "dev"
+    },
+    {
       "name": "ci",
       "displayName": "CI",
       "description": "Hosted CI (inherits dev, warnings as errors for PortPS5 targets)",
@@ -136,6 +142,15 @@
       "name": "dev",
       "displayName": "All Local Dev Tests",
       "description": "Runs all tests in development",
+      "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "default",
+      "displayName": "Default Test Preset",
+      "description": "Default developer test preset (all tests)",
       "configurePreset": "dev",
       "output": {
         "outputOnFailure": true

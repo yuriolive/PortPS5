@@ -25,7 +25,7 @@ Out of scope: PM4 parsing, descriptor upload and pipeline creation ([gpu-driver.
 | 1 | Decode | `RdnaInstructionDecoder` (`Recompiler.cpp:66-67`). About 560 `RdnaOpcode` entries (grep count). An unknown opcode throws at translation (`Translation/src/DispatchInstructions.cpp:19`). | SMEM with a VCC base; f16 conversion opcode fix (`87911b3`) | Keep. Add per-opcode coverage counters for the corpus. |
 | 2 | CFG | `GraphBuilder` (`Recompiler.cpp:69-70`) | none | Keep. |
 | 3 | Structurize | `Structurizer::Structurize` (`ControlFlow/src/Structurizer.cpp:581-627`). It has 11 `throw` sites (lines 476, 593, 600, 603, 621, 819, 829, 843, 858, 862, 875). Irreducible control flow is flagged at :765 and rejected at :875. Block cloning is disabled (:476). | identical file | Add a goto-elimination fallback (§Target design 1). |
-| 4 | Translate | `InstructionTranslator` (`Recompiler.cpp:93`), then `ValidateProgram(program, false)` (`Translation/src/InstructionTranslator.cpp:438`) | saveexec order (`Translation/src/ControlFlowInstructions.cpp:18-31`), `v_movrels`/`v_movreld` lowering (:243-270) | Port both fixes and remove their env switches. |
+| 4 | Translate | `InstructionTranslator` (`Recompiler.cpp:93`), then `ValidateProgram(program, false)` (`Translation/src/InstructionTranslator.cpp:438`) | saveexec order (`Translation/src/ControlFlowInstructions.cpp:18-31`), `v_movrels`/`v_movreld` lowering (:243-270) | Port both fixes and remove their env switches. The saveexec order and per-lane EXEC bit are ported (PortPS5 lane E, no env switch); see [Upstream ports, lane E](#upstream-ports-lane-e). |
 | 5 | SSA | Braun-style construction: sealing in `IrBlock.hpp:32-45`, `TryRemoveTrivialPhi` at `Optimization/src/SsaBuilder/SsaPass.cpp:103` | none | Keep. Add synthetic flag variables (§1). |
 | 6 | Cleanup | `ConstantFolder`, `ResolveControlFlowIdentities`, `DeadCodeEliminator`, `ReadLaneEliminator` (`Recompiler.cpp:98-113`). `SharedMemoryBarrierInserter` is a 10-line stub that nothing calls. | ReadLaneEliminator +92 lines | Keep. Delete the stub. |
 | 7 | SRT and resource tracking | `SrtWalker::BuildPlan` and `ResourceTracker::Track` (`Recompiler.cpp:115-121`) | flat-slot classes (`SrtFlatSlotClasses.cpp`, new); `pureFlatSlots` (`IrMetadata/ResourcePlan.hpp:66`) | Port. |
@@ -48,12 +48,42 @@ Other facts:
   across boundaries. `Deserialize.cpp` remains an unbuilt standalone diagnostic.
 - **Tests.** Recompiler-owned test targets (both in ctest):
   - `recompiler_fixes_tests` (label `unit`): saveexec order, atomic-zero, `v_movrels`/`v_movreld`, wave-LDS barriers;
+  - `recompiler_ported_instruction_tests` (label `unit`): decode, translate and *interpret* hand-assembled synthetic
+    instructions against the RDNA2 ISA pseudo-code (lane E ports below);
   - `recompiler_golden_tests` (label `golden`, `ctest --preset golden`): the synthetic corpus
     coverage gate plus wave32/wave64 replay of every case (see Tests below).
   The driver tests that touch the recompiler are:
   - `agc_shader_memory_tests`, which is in ctest and checks the serializer round-trip and the cache policy;
   - `agc_driver_recompiler_tests`, which is built but not registered.
 - **glslang.** `tests/DummyShaders.cpp` is compiled into the recompiler static library and pulls glslang in as a link dependency (`CMakeLists.txt:136,158-162`). Nothing references it outside the file, so the static archive probably drops it *(inferred)*.
+
+### Upstream ports, lane E
+
+Shader-recompiler small fixes reviewed against the public RDNA2 ISA and ported from AnyPS5 `main`
+(PortPS5 branch `feat/port-shader-small`). Every ported item has a semantic test in
+`recompiler_ported_instruction_tests` that decodes the synthetic instruction, translates it and executes the
+emitted IR against an independent C++ statement of the ISA pseudo-code. No game data is involved.
+
+| Upstream | Decision | Notes |
+|---|---|---|
+| `730de17` V_PERM_B32 | PORT | Byte select over `{S0:S1}`: sel 0-7 byte, 8-11 sign of bytes 1/3/5/7, 12 zero, >=13 0xff. Tested for all 256 selector values in each byte position. |
+| `80a64cc` IR value equality | PORT | `IrValue::operator==` now compares `flags`. |
+| `87911b3` saveexec order, atomic-zero, cache keys, env switches | PORT ADAPTED (saveexec only) | Source is read before the old EXEC is written to D (aliased `vcc, vcc` form), and the per-lane EXEC bit is the lane's own bit of the new mask. The upstream `APS5_SAVEEXEC_WRITE_FIRST` switch is dropped. f16 widening/narrowing opcode direction fix also ported (see `4ea1209`). Atomic-zero rewrite, per-function pass list, probes and `APS5_*` reads: SKIP (see Open questions 8-9). |
+| `198b43c` 64-bit saveexec | PORT | S_OR/S_XOR/S_ANDN2_SAVEEXEC_B64 (SOP1 0x25-0x27). ANDN2 is `S0 & ~EXEC`. |
+| `2e398be` S_CMOV_B32, S_BCNT0_I32_B32, S_FF0_I32_B32 | PORT | SCC untouched by cmov/ff0; bcnt0 sets SCC = (count != 0). |
+| `f7f60b4` S_SEXT_I32_I8/I16 | PORT | Sign extension of the low byte/halfword, SCC untouched. |
+| `86401fe` S_BREV_B64, S_ASHR_I64 | PORT ADAPTED | Dword swap plus per-dword bit reverse; arithmetic shift count is `S1[5:0]`, SCC = (D != 0). Adapted: a 32-bit *literal* source of the signed `s_ashr_i64` is sign-extended (the B64 bitwise ops zero-extend), and all sources are read before the destination/SCC write (aliasing), per hardware-validated expectations in the KytyPS5 suite. |
+| `e2c426f` S_BITCMP0/1_B64 | PORT | Bit index is `S1[5:0]`. |
+| `24c163b` S_CLAUSE | PORT | No-op scheduling hint. |
+| `28bfe77` SDWA selectors on V_BFREV_B32 / V_FFBH_U32 | PORT | Decoder rule plus a diagnostic that names selector, opcode and pc. |
+| `5fdcd57` widen 64-bit constants | PORT ADAPTED | Literal zero-extends (except the signed `s_ashr_i64`, which sign-extends), integer inline sign-extends, float inline becomes the double. 1/(2*pi) uses the exact double constant (`0x3fc45f306dc9c883`), not the widened float. |
+| `4ea1209` f16 inline constants and VOP3 f16 op_sel | PORT ADAPTED | Adds the f16 widening/narrowing conversion opcode fix from `87911b3` (the translator used the wrong direction, so every f16 read was rejected by the IR builder). Unknown constants throw `std::invalid_argument`, not `runtime_error`. |
+| `d9ac21c` s_getpc_b64 absolute address | SKIP | Already in tree (`5d6c2881`, `SGetpcB64AddsShaderBaseToNextPc`). Its AGC driver test is outside this lane. |
+| `8cef034` compiler thread-local storage | PORT ADAPTED | The recompiler's `thread_local` objects with destructors (`getSource` key vector, and the vertex/pixel/compute input-info scratch in `ShaderInputInfoBuilder`; `ShaderVertexInputInfo` is not trivially destructible) move to `HostThreadLocal`. The upstream `CacheKey.hpp` / `SrtDescriptorEvaluation.cpp` sites do not exist here. The hazard (a TLS-exit destructor on a guest-hosting thread) cannot be provoked on hosted CI, so the test is a per-thread-isolation regression guard. |
+| `5a257be` S_CBRANCH_CDBG* | PORT | Never taken on a retail wave; emits no IR and does not split the CFG, so a debugger stub placed past `s_endpgm` stays unreachable (SharpEmu `Gen5ShaderDecoderBoundaryTests` expectation). |
+| `8e66145` MIMG UNORM / `_a` aliases / LOD clamp / VOP3 carry-in / MRT export format | PORT ADAPTED (two parts) | Ported: UNORM accepted on non-sampling MIMG ops (the ISA requires it on stores and atomics), and VOP3 `v_add/sub/subrev_co_ci_u32` carry/borrow-in from the src2 SGPR pair. Deferred: `_a` sample aliases (not verifiable from the public ISA), LOD clamp (needs `shaderResourceMinLod` plumbing), MRT export component masks. |
+| `bb60336` disk-cache keys | SKIP | `ShaderDiskCache` does not exist in this tree (pipeline cache is M2). |
+| `5693c77` BDA lookup not inlined | PORT | `get_bda_pointer` carries the `DontInline` function control. |
 
 ## Decision
 
@@ -184,6 +214,10 @@ Other facts:
     from upstream `d9ac21c`): PC-relative data behind the shader's own code resolves to the real
     data instead of near-zero, and relocated copies keep sharing one variant
     (`SGetpcB64AddsShaderBaseToNextPc`).
+  - [x] Lane E instruction ports (`recompiler_ported_instruction_tests`): V_PERM_B32, scalar cmov/bcnt0/ff0/sext/brev64/ashr64/bitcmp64,
+    64-bit saveexec family and aliased-source/per-lane-EXEC ordering, S_CLAUSE and debug branches, SDWA on bfrev/ffbh,
+    64-bit constant widening, f16 inline constants and op_sel, VOP3 carry-in, MIMG UNORM, BDA lookup `DontInline`,
+    IR value flag equality.
   - [x] Stage gate: `SharedMemoryBarrierInserter` inserts barriers only for compute, mesh, and
     tessellation-control stages (Workgroup execution scope is invalid elsewhere), covered by
     `Wave64VertexStageSkipsBarrierInsertion` and `TessellationControlStageInsertsBarrier`.
@@ -254,3 +288,11 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
    split the region with an intermediate reconvergence (barrier at the intermediate merge, which all lanes
    execute) and re-diverge on the same condition for the read. Loop-carried LDS ordering across iterations
    of a divergently-controlled loop is likewise deferred to M3 (it needs loop-latch uniformity analysis).
+8. Lane E follow-ups not ported: 64-bit *floating-point* operands with a literal constant take the literal as the
+   high dword of the double (low dword zero) on hardware, while `readU32Pair` zero-extends it (correct for integer
+   operands only); it needs the consuming opcode's type. `s_bcnt0_i32_b64`, `s_ff0_i32_b64` and the `_b32` forms of
+   `s_or/xor/andn2_saveexec` are still undecoded. Upstream's `_a` sample aliases, `_cl` LOD clamp and MRT export
+   component masks (`8e66145`) need ISA verification and device-feature plumbing first.
+9. Upstream's buffer-atomic zero-identity rewrite (`87911b3`: add/sub/or/xor of 0 become an atomic load or nothing)
+   was tuned to one title's access pattern and is data-dependent at run time; it stays out until a general
+   justification (mechanism, measurements and a memory-ordering argument) exists.

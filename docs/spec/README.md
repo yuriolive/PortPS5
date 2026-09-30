@@ -33,6 +33,7 @@ The guest's x86-64 code is not recompiled. The relinker rewrites the decrypted E
 |---|---|---|
 | [relinker.md](relinker.md) | ELF→PE relinker, NIDs, `--to-intel` | Keep. Adopt the SSE4a lowering from AnyPS5 `main` (merged PR #5). Replace linear-sweep scanning. |
 | [guest-memory.md](guest-memory.md) | Guest address space, heap, write tracking | Adopt GuestArena/GuestHeap behind an `IWriteTracker` interface. |
+| [libc.md](libc.md) | libc replacement: mspace, heap front-ends, strings, formatting, lifecycle | Port AnyPS5's general libc additions; codes instead of throws, guest errno, System V callbacks. |
 | [threading.md](threading.md) | pthread, umtx, sync, time | Replace with futex words on `WaitOnAddress`. |
 | [gpu-driver.md](gpu-driver.md) | AGC / PM4 / Vulkan | Adopt Recorder, host import and GPU detile. Redesign capture. Split into modules. |
 | [shader-recompiler.md](shader-recompiler.md) | RDNA2 → SSA IR → SPIR-V | Keep. Add a structurizer fallback, a subgroup-size path and tests. |
@@ -41,6 +42,7 @@ The guest's x86-64 code is not recompiled. The relinker rewrites the decrypted E
 | [video-fmv.md](video-fmv.md) | In-game video, AvPlayer | Keep running the title's own decoders. Use general write tracking. |
 | [input.md](input.md) | Pad, keyboard, mouse | Keep SDL. Add mapping and hot-plug. |
 | [save-data.md](save-data.md) | Save data and dialogs | Adopt from AnyPS5 `main` (merged PR #5). Replace silent dialog stubs. |
+| [image-codecs.md](image-codecs.md) | JPEG/PNG codecs, `libSceJpegEnc`, `libScePngDec` | Shared stb-backed host codec layer under `core/Decoder`; no throws; unsupported modes abort. |
 | [configuration.md](configuration.md) | Per-game TOML, env-switch migration | Replace env switches with typed TOML. |
 | [build-toolchain.md](build-toolchain.md) | CMake, MinGW GCC, CI build, conventions | Keep a pinned GCC 15.2. Move to C++23. GoogleTest dependency pin. |
 | [verification.md](verification.md) | CI, test framework, local regression, full runs, results JSON | GoogleTest/GMock adoption, death/perturbation testing, hosted CI without a GPU, plus local results. |
