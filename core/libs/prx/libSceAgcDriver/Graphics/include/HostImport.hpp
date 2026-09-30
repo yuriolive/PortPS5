@@ -51,6 +51,7 @@ struct GuestBinding {
     bool imported = false;             ///< true: the guest allocation itself; false: a staging copy
 };
 
+/** @brief Outcome of HostImport::Bind: a status and, for BindStatus::Ok, the binding. */
 struct BindResult {
     BindStatus status = BindStatus::Ok;
     GuestBinding binding;
@@ -76,12 +77,17 @@ struct HostImportStats {
     std::uint64_t importedBytes = 0;   ///< currently imported
 };
 
+/**
+ * @brief Binds guest byte ranges as GPU buffers, by host import or staging copy (see the file header).
+ */
 class HostImport {
 public:
     /**
+     * @brief Creates the importer over a recorder and a write tracker.
      * @param context Device handles; externalMemoryHost/hostImportAlignment gate imports.
      * @param recorder Receives write notes, completions and Keep'd staging buffers.
      * @param tracker Generations (Collect), page state and GPU-write reports; must outlive this object.
+     * @param options Import budget and staging-cache size.
      */
     HostImport(const Context& context, Recorder& recorder, PortPS5::GuestMemory::IWriteTracker& tracker, const HostImportOptions& options);
     ~HostImport();
@@ -95,17 +101,24 @@ public:
      * write of the open batch, and its results reach guest memory (staging: a write-back completion;
      * import: directly, with MarkWritten at completion). The caller must hold a Recorder::Scope while
      * it records work using the binding.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range; 0 is InvalidRange.
+     * @param access Whether the GPU only reads the range or may write it.
      * @return Status (never throws for bad guest ranges) and, for Ok, the binding.
      */
     BindResult Bind(std::uint64_t address, std::size_t bytes, GuestAccess access);
 
-    /** @return A snapshot of the counters. */
+    /**
+     * @brief Reads the counters.
+     * @return A snapshot of the counters.
+     */
     HostImportStats Stats() const;
 
 private:
     struct Import;
     struct Staging;
     bool tryImport(std::uint64_t address, std::size_t bytes, GuestAccess access, GuestBinding& out);
+    BindResult bindLocked(std::uint64_t address, std::size_t bytes, GuestAccess access);
     BindResult stage(std::uint64_t address, std::size_t bytes, GuestAccess access);
     bool evictFor(std::uint64_t needed);
     void destroy(Import& entry) noexcept;

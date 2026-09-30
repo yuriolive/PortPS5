@@ -327,12 +327,14 @@ bool HostImport::openWritesOnlyFromStaging(std::uint64_t address, std::size_t by
 }
 
 void HostImport::barrierAgainstOpenWrites() {
-    // A recorded write to the range precedes this bind reads in the same command buffer: make it
-    // visible. A global memory barrier is cheap and also covers an import window that is a different
-    // buffer handle than the writer used.
+    // A global read/write memory dependency over everything recorded or submitted before it. Used to
+    // make an earlier recorded write visible to this bind's reads, and (Bind, GuestAccess::Write) to
+    // order this bind's writes after earlier READS of a reused buffer: pipeline barrier scopes include
+    // earlier submissions on the queue, which a bare submission order does not give. A global barrier is
+    // cheap and also covers an import window that is a different buffer handle than the earlier user.
     const auto commands = recorder.Commands();
     VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
@@ -347,6 +349,16 @@ BindResult HostImport::Bind(std::uint64_t address, std::size_t bytes, GuestAcces
     // Recorder lock, so taking them in the other order on another thread would deadlock.
     const Recorder::Scope scope(recorder);
     std::lock_guard lock(mutex);
+    result = bindLocked(address, bytes, access);
+    // A write bind may reuse a buffer that unfinished GPU work still reads (a cached staging copy whose
+    // generation did not move, or an existing import window): order the caller's writes, recorded after
+    // this point, behind everything before it. Recorded before the caller's commands, so it is in front.
+    if (result.status == BindStatus::Ok && access == GuestAccess::Write) barrierAgainstOpenWrites();
+    return result;
+}
+
+BindResult HostImport::bindLocked(std::uint64_t address, std::size_t bytes, GuestAccess access) {
+    BindResult result;
     GuestBinding imported;
     const bool openOverlap = recorder.OpenWriteOverlaps(address, bytes);
     // An import reads guest memory directly, but a staged writer reaches guest memory only when its batch

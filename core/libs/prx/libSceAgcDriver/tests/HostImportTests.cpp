@@ -21,6 +21,25 @@ using AgcDriverTest::VulkanTestDevice;
 
 namespace {
 
+// Counts vkCmdPipelineBarrier calls (forwarding to the real one) to check where HostImport orders work.
+PFN_vkGetDeviceProcAddr hostImportRealProc = nullptr;
+PFN_vkCmdPipelineBarrier hostImportRealBarrier = nullptr;
+std::atomic<int> hostImportBarriers{0};
+
+VKAPI_ATTR void VKAPI_CALL CountBarrier(VkCommandBuffer commands, VkPipelineStageFlags source, VkPipelineStageFlags destination, VkDependencyFlags flags, std::uint32_t memoryCount, const VkMemoryBarrier* memory, std::uint32_t bufferCount, const VkBufferMemoryBarrier* buffers, std::uint32_t imageCount, const VkImageMemoryBarrier* images) {
+    // The end-of-batch HOST barrier is not a device ordering barrier; count only device-to-device ones.
+    if ((destination & VK_PIPELINE_STAGE_HOST_BIT) == 0) ++hostImportBarriers;
+    hostImportRealBarrier(commands, source, destination, flags, memoryCount, memory, bufferCount, buffers, imageCount, images);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL CountingProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkCmdPipelineBarrier") == 0) {
+        hostImportRealBarrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(hostImportRealProc(device, name));
+        return reinterpret_cast<PFN_vkVoidFunction>(&CountBarrier);
+    }
+    return hostImportRealProc(device, name);
+}
+
 class HostImportTest : public ::testing::Test {
 protected:
     void SetUp() override {
@@ -367,6 +386,34 @@ TEST_F(HostImportTest, OpenBatchFastPathRefusesWritesNotedDirectlyOnTheRecorder)
     EXPECT_EQ(imports->Bind(guest.Address(), 64, GuestAccess::Read).status, BindStatus::OpenBatchWrites);
     EXPECT_TRUE(recorder->Recording());
     EXPECT_EQ(recorder->Submissions(), 0u);
+}
+
+// Review finding (PR #49, coderabbit): a write bind may reuse a buffer earlier GPU work still reads (a
+// cached staging copy whose generation did not move), and submission order alone does not order the
+// writes after those reads. Invariant: every write bind records a device memory dependency in the open
+// batch, in front of the caller's writes; a read bind of an untouched range records none.
+TEST_F(HostImportTest, WriteBindOrdersItsWritesAfterEarlierReads) {
+    auto counting = device.GetContext();
+    hostImportRealProc = counting.deviceProc;
+    counting.deviceProc = &CountingProc;
+    Recorder::Options options;
+    options.timelineSemaphores = device.Timeline();
+    options.tracker = &tracker;
+    Recorder local(counting, options);
+    HostImportOptions importOptions;  // budget 0: staging, where the copy is reused across binds
+    HostImport localImports(counting, local, tracker, importOptions);
+    AlignedBlock guest(4096, 4096);
+    hostImportBarriers = 0;
+    const Recorder::Scope scope(local);
+    const auto read = localImports.Bind(guest.Address(), 64, GuestAccess::Read);
+    ASSERT_EQ(read.status, BindStatus::Ok);
+    EXPECT_EQ(hostImportBarriers.load(), 0) << "a read of an untouched range needs no ordering";
+    local.Submit();  // the batch that reads the copy is now in flight
+    const auto write = localImports.Bind(guest.Address(), 64, GuestAccess::Write);
+    ASSERT_EQ(write.status, BindStatus::Ok);
+    EXPECT_EQ(write.binding.buffer, read.binding.buffer) << "the unchanged generation reuses the copy the earlier batch reads";
+    EXPECT_GE(hostImportBarriers.load(), 1) << "the write must be ordered behind the earlier read";
+    local.Sync();
 }
 
 // Invariant: a device with VK_EXT_external_memory_host and a budget imports the guest allocation itself

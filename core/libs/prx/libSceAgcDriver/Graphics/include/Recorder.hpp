@@ -90,11 +90,20 @@ public:
      * failure. The caller must hold a Scope while it records into the returned buffer.
      */
     VkCommandBuffer Commands();
-    /** @return Whether a batch is open (unsubmitted). */
+    /**
+     * @brief Tells whether a batch is open.
+     * @return Whether a batch is open (unsubmitted).
+     */
     bool Recording() const;
-    /** @return Whether nothing is open and nothing is in flight. */
+    /**
+     * @brief Tells whether the recorder has no work.
+     * @return Whether nothing is open and nothing is in flight.
+     */
     bool Idle() const;
-    /** @return Whether recorded work still has completion actions to run. */
+    /**
+     * @brief Tells whether completion actions are pending.
+     * @return Whether recorded work still has completion actions to run.
+     */
     bool HasCompletions() const;
 
     /**
@@ -107,13 +116,30 @@ public:
     /** @brief Runs @p action when the open batch completed, in submission order (CPU write-backs). */
     void OnComplete(std::function<void()> action);
 
-    /** @brief Notes that the open batch will write [address, address + bytes). */
+    /**
+     * @brief Notes that the open batch will write a guest range.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     */
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
-    /** @brief Notes several [begin, end) ranges and publishes the snapshot once. */
+    /**
+     * @brief Notes several written ranges and publishes the snapshot once.
+     * @param ranges Half-open [begin, end) guest ranges; empty ones are skipped.
+     */
     void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
-    /** @return Whether the open or an in-flight batch writes the range. */
+    /**
+     * @brief Tells whether recorded work writes a range.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     * @return Whether the open or an in-flight batch writes the range.
+     */
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
-    /** @return Whether an already SUBMITTED (in-flight) batch writes the range; the open batch is ignored. */
+    /**
+     * @brief Tells whether a submitted batch writes a range.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     * @return Whether an already SUBMITTED (in-flight) batch writes the range; the open batch is ignored.
+     */
     bool InFlightWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     /**
      * @brief Finishes (waits for and completes) the newest in-flight batch that writes the range and all
@@ -121,16 +147,32 @@ public:
      * it is safe for a caller that is still recording into the open batch.
      */
     void SyncInFlightWrites(std::uint64_t address, std::size_t bytes);
-    /** @return How many write notes of the OPEN batch overlap the range (one per NotePendingWrite call). */
+    /**
+     * @brief Counts the open batch write notes over a range.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     * @return How many write notes of the OPEN batch overlap the range (one per NotePendingWrite call).
+     */
     std::size_t OpenWriteCount(std::uint64_t address, std::size_t bytes) const;
-    /** @return Whether the OPEN (unsubmitted) batch writes the range: a wait on it must submit first. */
+    /**
+     * @brief Tells whether the open batch writes a range.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     * @return Whether the OPEN (unsubmitted) batch writes the range: a wait on it must submit first.
+     */
     bool OpenWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
 
     /** @brief Ends and submits the open batch without waiting (no-op when none is open). */
     void Submit();
-    /** @return Serial of the newest submitted batch after submitting the open one; 0 if none ever was. */
+    /**
+     * @brief Submits the open batch and reports the newest serial.
+     * @return Serial of the newest submitted batch after submitting the open one; 0 if none ever was.
+     */
     std::uint64_t SubmitAndEpoch();
-    /** @return Whether WaitSerial is usable (timeline semaphore exists). */
+    /**
+     * @brief Tells whether WaitSerial is usable.
+     * @return Whether a timeline semaphore exists.
+     */
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
     /**
      * @brief Waits until every batch up to @p serial completed on the GPU, WITHOUT the Recorder lock.
@@ -155,9 +197,15 @@ public:
     void SyncThrough(std::uint64_t address, std::size_t bytes, bool waitUnlocked = false);
     /** @brief Completes batches whose fences already signaled. @return Whether nothing is in flight. */
     bool Reap();
-    /** @return Number of batches submitted so far (the newest serial). */
+    /**
+     * @brief Reports how many batches were submitted.
+     * @return Number of batches submitted so far (the newest serial).
+     */
     std::uint64_t Submissions() const;
-    /** @return Serial of the newest batch known finished (completions ran); 0 when none. */
+    /**
+     * @brief Reports the newest finished serial.
+     * @return Serial of the newest batch known finished (completions ran); 0 when none.
+     */
     std::uint64_t CompletedSerial() const;
 
     /**
@@ -165,17 +213,33 @@ public:
      *
      * A WAIT_REG_MEM whose submission was stamped BEFORE the label was recorded may take the value from
      * the table instead of waiting for the GPU. Entries leave the table with their batch.
-     * @param stamp Record-order stamp (the driver's event serial); @param queue recording queue id.
+     * @param address First guest byte of the label.
+     * @param bytes The label bytes; one table entry per whole 4-byte dword.
+     * @param stamp Record-order stamp (the driver's event serial).
+     * @param queue Recording queue id.
      */
     void NoteLabel(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue);
     /**
-     * @return The 4- or 8-byte value the table holds when every dword is present with a stamp newer than
-     * @p afterStamp; @p queue receives the recording queue of the first dword. nullopt otherwise.
+     * @brief Looks up a pending label value without waiting for the GPU.
+     * @param address First guest byte; must be 4-byte aligned.
+     * @param bytes 4 or 8; other sizes never match.
+     * @param afterStamp Only entries with a newer stamp are trusted.
+     * @param queue Receives the recording queue of the first dword.
+     * @return The 4- or 8-byte value the table holds when every dword is present with a newer stamp;
+     * nullopt otherwise.
      */
     std::optional<std::uint64_t> PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, std::uint32_t& queue) const;
-    /** @return Number of tracked label dwords. */
+    /**
+     * @brief Counts tracked label dwords.
+     * @return Number of tracked label dwords.
+     */
     std::size_t PendingLabels() const;
-    /** @return Whether any tracked label dword lies inside [address, address + bytes). */
+    /**
+     * @brief Tells whether a tracked label lies in a range.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     * @return Whether any tracked label dword lies inside [address, address + bytes).
+     */
     bool PendingLabelIn(std::uint64_t address, std::size_t bytes) const;
     /**
      * @brief Stores a label behind pending completions, after every earlier write-back (submission order).
@@ -185,29 +249,69 @@ public:
      * into the batch (host import), so the completion re-stores them only when a write-back noted by
      * NoteWrittenBack overlapped the range since; storing unconditionally could overwrite memory the game
      * already reused. A label the GPU has no view of always stores. Requires a batch (open or in flight).
+     * @param address First guest byte of the label (4-byte aligned, writable guest memory).
+     * @param bytes The label bytes.
+     * @param stamp Record-order stamp of the label.
+     * @param queue Recording queue id.
+     * @param storedOnGpu Whether the GPU already stored the same bytes (see above).
      */
     void AfterCompletions(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool storedOnGpu);
-    /** @brief Records a CPU store of GPU results into guest memory on THIS recorder (see AfterCompletions). */
+    /**
+     * @brief Records a CPU store of GPU results into guest memory on THIS recorder (see AfterCompletions).
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     */
     void NoteWrittenBackOn(std::uint64_t address, std::size_t bytes);
-    /** @brief NoteWrittenBackOn of the active recorder; prefer the instance form when the owner is known. */
+    /**
+     * @brief NoteWrittenBackOn of the active recorder; prefer the instance form when the owner is known.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     */
     static void NoteWrittenBack(std::uint64_t address, std::size_t bytes);
 
-    /** @return When the open batch received its first label (nullopt: none pending). Lock-free. */
+    /**
+     * @brief Reports when the open batch received its first label.
+     * @return The time (nullopt: none pending). Lock-free.
+     */
     static std::optional<std::chrono::steady_clock::time_point> PendingLabelSince();
-    /** @return Counter bumped by every note of a pending write; lets a poller learn a producer recorded. */
+    /**
+     * @brief Reads the counter bumped by every pending-write note.
+     * @return Counter value; lets a poller learn a producer recorded.
+     */
     static std::uint64_t WriteGeneration();
-    /** @return Labels waiting in completion actions (the CPU must reap their batch for them to land). */
+    /**
+     * @brief Counts labels waiting in completion actions.
+     * @return Labels the CPU must reap their batch for.
+     */
     static std::uint64_t PendingCompletionLabels();
-    /** @return Dispatches and draws recorded since the last submit (see CountRecordedWork). */
+    /**
+     * @brief Counts dispatches and draws recorded since the last submit.
+     * @return The count (see CountRecordedWork).
+     */
     static std::uint64_t RecordedWorkSinceSubmit();
     /** @brief Counts one recorded dispatch or draw so callers can bound a batch's size. */
     static void CountRecordedWork();
-    /** @return Whether the lock-free pending-write snapshot of the active recorder overlaps the range. */
+    /**
+     * @brief Checks the lock-free pending-write snapshot of the active recorder.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     * @return Whether the snapshot overlaps the range.
+     */
     static bool SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes);
-    /** @brief PendingLabel of the active recorder using only the label-table mutex. */
+    /**
+     * @brief PendingLabel of the active recorder using only the label-table mutex.
+     * @param address First guest byte of the range.
+     * @param bytes Length of the range in bytes; 0 is an empty range.
+     * @param afterStamp Only stamps newer than this are trusted.
+     * @param queue Receives the recording queue of the first dword.
+     * @return The label value, or nullopt.
+     */
     static std::optional<std::uint64_t> LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, std::uint32_t& queue);
 
-    /** @return The active recorder (see Activate), or nullptr. Not safe to dereference across a teardown. */
+    /**
+     * @brief Returns the active recorder.
+     * @return The active recorder (see Activate), or nullptr. Not safe to dereference across a teardown.
+     */
     static Recorder* Active();
     /**
      * @brief Makes this the active recorder and registers the flush hook on the tracker.
