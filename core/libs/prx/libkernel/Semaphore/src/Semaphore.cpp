@@ -17,7 +17,7 @@ KernelSemaPrivate::KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCou
 
 extern "C" {
 
-/** @copydoc sceKernelCreateSema (see Semaphore.hpp for parameters and return codes). */
+/** Implements sceKernelCreateSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt) {
  (void)opt;
  if (sem == nullptr || name == nullptr || attr > 2 || init < 0 || max <= 0 || init > max) {
@@ -51,7 +51,7 @@ int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
  return KERNEL_SEMA_OK;
 }
 
-/** @copydoc sceKernelPollSema */
+/** Implements sceKernelPollSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
  if (sem == nullptr || need <= 0) {
   APS5_INVALID_ARG_EX;
@@ -65,7 +65,7 @@ int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
  return KERNEL_SEMA_OK;
 }
 
-/** @copydoc sceKernelSignalSema */
+/** Implements sceKernelSignalSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
  if (sem == nullptr || count <= 0) {
   APS5_INVALID_ARG_EX;
@@ -80,7 +80,7 @@ int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
  return KERNEL_SEMA_OK;
 }
 
-/** @copydoc sceKernelWaitSema */
+/** Implements sceKernelWaitSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) {
  if (sem == nullptr || need <= 0) {
   APS5_INVALID_ARG_EX;
