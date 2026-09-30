@@ -21,6 +21,8 @@ struct PadSlotState {
     PadVibrationParam vibration{};
     PadLightBarParam lightBar{};
     bool motionSensorEnabled = false;
+    bool controllerPresent = false;   // a physical SDL controller owns this slot
+    PadInputState controllerInput;    // latest controller sample for this slot
 };
 
 class PadManager {
@@ -39,6 +41,9 @@ public:
     int ResetLightBar(int handle);
 
     void PublishInput(const PadInputState& input);
+    // Controller source for `slot` (0..3). Merged with keyboard/mouse on slot 0.
+    void PublishControllerInput(int slot, const PadInputState& input);
+    void SetControllerConnected(int slot, bool connected);
     void ReportInputFailure(std::exception_ptr error);
 
     // Test hook: direct manipulation of slots for deterministic unit testing

@@ -210,3 +210,17 @@ portps5_add_gtest(savedata_dialog_non_native_tests
     LABELS unit
 )
 target_compile_definitions(savedata_dialog_non_native_tests PRIVATE SAVE_DATA_DIALOG_NON_NATIVE)
+
+# SDL game controller -> scePadRead translation (synthetic samples, no device)
+portps5_add_gtest(pad_controller_input_tests
+    SOURCES
+        input/ControllerInputTests.cpp
+    LIBRARIES
+        libScePad libkernel libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+        ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)

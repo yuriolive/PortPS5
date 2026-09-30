@@ -1,6 +1,7 @@
 #include "PadInternal.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -52,9 +53,11 @@ int PadManager::Open(int userId, int type, int index, int& outHandle) {
     if (!initialized) {
         InitializeInternal();
     }
-    // Only slot 0 is currently wired to host input in 1.0 (PRD single player / keyboard-mouse virtual pad).
-    // Disallow opening higher slots until multi-device InputHub is attached, preventing handles with no input stream.
-    if (index != 0) {
+    // Slot 0 is always backed by the keyboard/mouse virtual pad. Higher slots
+    // only have an input stream while a physical controller occupies them, so
+    // opening one without a controller would hand out a dead handle.
+    if (index < 0 || index >= PAD_MAX_SLOTS ||
+        (index != 0 && !slots[static_cast<std::size_t>(index)].connected)) {
         return PAD_ERROR_RESOURCE_ALLOCATION_FAILED;
     }
     const bool personalPort = (type == PAD_PORT_TYPE_STANDARD || type == PAD_PORT_TYPE_SPECIAL);
@@ -126,23 +129,44 @@ int PadManager::ReadState(int handle, PadData* data) {
         ++slot.lastTimestamp;
     }
 
-    if (handle == 1) {
-        // Slot 0 merges hostInputState
-        slot.lastData.buttons = hostInputState.buttons;
-        slot.lastData.left_stick_x = hostInputState.sticks[0];
-        slot.lastData.left_stick_y = hostInputState.sticks[1];
-        slot.lastData.right_stick_x = hostInputState.sticks[2];
-        slot.lastData.right_stick_y = hostInputState.sticks[3];
-        slot.lastData.analog_buttons_l2 = (hostInputState.buttons & 0x100) != 0 ? 255 : 0;
-        slot.lastData.analog_buttons_r2 = (hostInputState.buttons & 0x200) != 0 ? 255 : 0;
-        if (hostInputState.touchLeft || hostInputState.touchRight) {
-            slot.lastData.buttons |= 0x100000;
-            slot.lastData.touch_data_touch_num = 1;
-            slot.lastData.touch_data_touch0_x = hostInputState.touchRight ? 1440 : 480;
-            slot.lastData.touch_data_touch0_y = 471;
-        } else {
-            slot.lastData.touch_data_touch_num = 0;
+    // Merge sources into the guest-visible sample. Slot 0 = keyboard/mouse
+    // virtual pad + controller; slots 1..3 = controller only.
+    // Merge rules (docs/spec/input.md §Failure modes): buttons OR, sticks take
+    // the value furthest from centre, triggers take the larger value.
+    PadInputState merged;
+    if (handle == 1) merged = hostInputState;
+    if (slot.controllerPresent) {
+        const PadInputState& c = slot.controllerInput;
+        merged.buttons |= c.buttons;
+        for (std::size_t i = 0; i < merged.sticks.size(); ++i) {
+            const int dm = std::abs(static_cast<int>(merged.sticks[i]) - 128);
+            const int dc = std::abs(static_cast<int>(c.sticks[i]) - 128);
+            if (dc > dm) merged.sticks[i] = c.sticks[i];
         }
+        merged.triggers = c.triggers;
+        merged.analogTriggers = true;
+    }
+    slot.lastData.buttons = merged.buttons;
+    slot.lastData.left_stick_x = merged.sticks[0];
+    slot.lastData.left_stick_y = merged.sticks[1];
+    slot.lastData.right_stick_x = merged.sticks[2];
+    slot.lastData.right_stick_y = merged.sticks[3];
+    // Keyboard has no analog triggers: synthesise 0/255 from the digital bits.
+    // A controller's analog value wins, but a keyboard R2 still forces 255.
+    const auto kbTrigger = [&](std::uint32_t bit) { return (merged.buttons & bit) != 0 ? 255 : 0; };
+    slot.lastData.analog_buttons_l2 = static_cast<std::uint8_t>(
+        merged.analogTriggers ? std::max<int>(merged.triggers[0], handle == 1 && (hostInputState.buttons & 0x100) ? 255 : 0)
+                              : kbTrigger(0x100));
+    slot.lastData.analog_buttons_r2 = static_cast<std::uint8_t>(
+        merged.analogTriggers ? std::max<int>(merged.triggers[1], handle == 1 && (hostInputState.buttons & 0x200) ? 255 : 0)
+                              : kbTrigger(0x200));
+    if (handle == 1 && (hostInputState.touchLeft || hostInputState.touchRight)) {
+        slot.lastData.buttons |= 0x100000;
+        slot.lastData.touch_data_touch_num = 1;
+        slot.lastData.touch_data_touch0_x = hostInputState.touchRight ? 1440 : 480;
+        slot.lastData.touch_data_touch0_y = 471;
+    } else {
+        slot.lastData.touch_data_touch_num = 0;
     }
 
     slot.lastData.connected = slot.connected;
@@ -249,6 +273,33 @@ void PadManager::PublishInput(const PadInputState& input) {
     hostInputState = input;
 }
 
+void PadManager::PublishControllerInput(int slot, const PadInputState& input) {
+    if (slot < 0 || slot >= PAD_MAX_SLOTS) return;
+    std::lock_guard lock(mutex);
+    if (failure) std::rethrow_exception(failure);
+    auto& s = slots[static_cast<std::size_t>(slot)];
+    s.controllerInput = input;
+    s.controllerPresent = true;
+}
+
+void PadManager::SetControllerConnected(int slot, bool connected) {
+    if (slot < 0 || slot >= PAD_MAX_SLOTS) return;
+    std::lock_guard lock(mutex);
+    if (failure) std::rethrow_exception(failure);
+    auto& s = slots[static_cast<std::size_t>(slot)];
+    if (connected == s.controllerPresent) return;
+    s.controllerPresent = connected;
+    s.controllerInput = {};
+    if (connected) {
+        // connectedCount increments on every (re)connect (spec §State model).
+        ++s.connectedCount;
+        s.connected = true;
+    } else if (slot != 0) {
+        // Slot 0 keeps reporting the keyboard/mouse virtual pad.
+        s.connected = false;
+    }
+}
+
 void PadManager::ReportInputFailure(std::exception_ptr error) {
     if (!error) return;
     std::lock_guard lock(mutex);
@@ -288,4 +339,12 @@ extern "C" void PadPublishInput_nid_postfix(const PadInputState& input) {
 
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {
     Pad::PadManager::Get().ReportInputFailure(error);
+}
+
+extern "C" void PadPublishControllerInput_nid_postfix(int slot, const PadInputState& input) {
+    Pad::PadManager::Get().PublishControllerInput(slot, input);
+}
+
+extern "C" void PadSetControllerConnected_nid_postfix(int slot, bool connected) {
+    Pad::PadManager::Get().SetControllerConnected(slot, connected);
 }

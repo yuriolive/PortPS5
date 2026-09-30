@@ -23,7 +23,7 @@ References are relative to the AnyPS5 tree. Both trees are identical here unless
 
 | Area | Verified state |
 |---|---|
-| Physical controllers | **None.** Neither tree references `SDL_GameController`, `SDL_Joystick` or XInput anywhere under `core/`. The top-level `CMakeLists.txt:26-28` forces `SDL_JOYSTICK`, `SDL_HAPTIC` and `SDL_HIDAPI` off, and `:29` forces `SDL_SENSOR` off. |
+| Physical controllers | **SDL GameController wired (this PR).** `libSceVideoOut/src/PadInput.cpp` opens controllers on `SDL_CONTROLLERDEVICEADDED` (lowest free slot 0..3), polls them every window-loop tick and publishes via `PadPublishControllerInput_nid_postfix`; `libScePad/include/ControllerMapping.hpp` holds the pure button/axis translation. Historical note on the upstream state: **None.** Neither tree references `SDL_GameController`, `SDL_Joystick` or XInput anywhere under `core/`. The top-level `CMakeLists.txt:26-28` forces `SDL_JOYSTICK`, `SDL_HAPTIC` and `SDL_HIDAPI` off, and `:29` forces `SDL_SENSOR` off. |
 | Keyboard/mouse → pad | A compile-time table of 33 bindings (`core/libs/prx/libScePad/include/InputMapping.hpp:17-51`): WASD for the left stick, TFGH for the right stick, mouse-left = Square, mouse-right = R2, wheel = D-pad up/down, middle-click toggles mouse-look, F11 toggles fullscreen. Mouse-look polls every 33 ms at a fixed sensitivity (`:13-15`). |
 | Event plumbing | Events are read in the VideoOut window loop (`libSceVideoOut/src/VideoOutDriver.cpp:432-446` in PR #5), then `PadInput::HandleEvent` / `publish` run (`libSceVideoOut/src/PadInput.cpp:23-135`). `APS5_NO_PAD_INPUT` drops keys and buttons (`PadInput.cpp:31-34`). |
 | `scePadOpen` | Accepts index 0 only and returns a constant handle (`libScePad/Export.cpp:77-88`). |
@@ -101,6 +101,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
   - [x] Button OR-merging and stick displacement arbitration rules (`PadHapticsTests.cpp`).
   - [x] Radial and axial dead-zone mathematics and clamp boundaries (`PadHapticsTests.cpp`).
+  - [x] Controller button/axis/trigger translation, slot merge with keyboard, and per-slot connect/disconnect through `scePadRead` (`tests/input/ControllerInputTests.cpp`, synthetic samples, no device).
   - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
   - [ ] TOML controller binding parsing and rejection of invalid identifiers.
   - [x] Monotonic timestamp advancement invariants on sequential `scePadRead` calls (`PadHapticsTests.cpp`).
@@ -132,3 +133,13 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 - Do any gate titles need a second local player (TMNT supports co-op)? 1.0 gates single-player only. A second slot works in the design but is not gated.
 - Gyro through `SDL_SENSOR`: the PRD puts only haptics and adaptive triggers out of scope. Does any gate title need motion?
 - Should rumble on XInput stay on by default? It adds no DualSense-specific behaviour.
+
+## Controller polling (implemented)
+
+- Attach: `SDL_CONTROLLERDEVICEADDED` -> `SDL_GameControllerOpen` -> lowest free slot; `REMOVED` frees it. A fifth controller is ignored.
+- Buttons: A/B/X/Y = Cross/Circle/Square/Triangle, START = Options, shoulders = L1/R1, stick clicks = L3/R3, D-pad, touchpad click = TouchPad bit.
+- Sticks: -32768..32767 -> 0..255 (centre 128) with a radial dead zone from `[input] deadzone` (default 0.08), rescaled so output starts at 0 at the zone edge.
+- Triggers: 0..32767 -> 0..255 in `analog_buttons_l2/r2`; the digital L2/R2 bit is raised above 30/255.
+- Slot 0 merge: buttons OR, sticks furthest from centre, keyboard R2/L2 still force 255.
+- `debug.ignore_host_input`: controllers are never attached while it is set. On window focus loss every attached controller publishes neutral state.
+- Slots 1..3 can be opened with `scePadOpen` only while a controller occupies them.

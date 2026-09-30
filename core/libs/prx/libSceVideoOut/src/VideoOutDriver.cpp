@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <bit>
 #include <chrono>
 #include <limits>
@@ -179,6 +180,11 @@ VideoOutDriver::VideoOutDriver() {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
         throw std::runtime_error(std::string("SDL_InitSubSystem(VIDEO) failed: ") + SDL_GetError());
     }
+    // Controller support is optional: a failure (e.g. no HID backend) leaves the
+    // keyboard/mouse virtual pad working, so warn and continue rather than throw.
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) < 0) {
+        std::fprintf(stderr, "VideoOut: SDL game controller init failed (%s); keyboard/mouse only\n", SDL_GetError());
+    }
     try {
         AgcDriverWaitIdle_nid_postfix();
         presentThread = std::jthread([this](std::stop_token token) { presentLoop(token); });
@@ -195,6 +201,7 @@ VideoOutDriver::VideoOutDriver() {
             flipQueue->changed.notify_all();
             presentThread.join();
         }
+        SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
         SDL_QuitSubSystem(SDL_INIT_VIDEO);
         throw;
     }
@@ -227,6 +234,7 @@ void VideoOutDriver::Shutdown() {
         AgcDriverReleaseWindow_nid_postfix(window.Handle());
         window.Destroy();
     }
+    SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
     stopped = true;
     std::lock_guard lock(flipQueue->mutex);
