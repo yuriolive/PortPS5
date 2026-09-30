@@ -55,7 +55,7 @@ KytyPS5 provides extensive C++ subsystem test suites covering core kernel primit
 | `SyncOnAddressTests.cpp` | `tests/kernel/SyncOnAddressTests.cpp` | `Wait32`, `Wait64`, `Wake`, misalignment rejection, timeouts, concurrent wakeups. |
 | `EventQueueLifetimeTests.cpp` | `tests/kernel/EventQueueLifetimeTests.cpp` | Event queues, filters (`EVFILT_READ`, `EVFILT_TIMER`, `EVFILT_USER`), duplicate events, concurrent destruction. |
 | `VirtualMemoryAllocationTests.cpp` | `tests/memory/VirtualMemoryAllocationTests.cpp` | 16 KB pages, memory protection flags, memory pools, direct memory mapping, fibers, red zone patching. |
-| `MemoryTrackerTests.cpp` | `tests/memory/MemoryTrackerTests.cpp` | Dirty tracking, page protection transitions, range sets. |
+| `MemoryTrackerTests.cpp` | `tests/memory/MemoryTrackerTests.cpp` | Partial port onto `GuestMemoryTracking::Watch`: range validation, page rounding, protection and fault resolution, invalidate, resolver contract (death tests), concurrency. Kyty's dirty-ownership upload/download model and `RangeSet` are not ported. |
 | `KernelFileSystemTests.cpp` | `tests/kernel/KernelFileSystemTests.cpp` | Descriptor renames while open, mount point isolation (`/savedata0`), path canonicalization. |
 | `SaveDataMemoryTests.cpp` | `tests/kernel/SaveDataMemoryTests.cpp` | User slots, memory setup, crash-safe save mounts, unmount safety. |
 | `SaveDataMountTests.cpp` | `tests/filesystem/SaveDataMountTests.cpp` | `/savedata0` mount: create/write/fsync/read round trip, mkdir, `..` and `:` containment (EACCES), unmounted fails ENOENT, title id sanitising. |

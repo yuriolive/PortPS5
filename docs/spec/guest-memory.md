@@ -146,7 +146,8 @@ struct IWriteTracker {
   - Death tests (`EXPECT_DEATH`): verify that memory allocation attempts violating the 1 TiB boundary contract fail cleanly without memory corruption.
 - **Ported Ecosystem Test Suites:**
   - **KytyPS5 `VirtualMemoryAllocationTests`:** 16 KB page rounding, direct-memory allocations (`sceKernelAllocateDirectMemory`), alignment constraints, protection transitions (`PROT_READ`, `PROT_WRITE`, `PROT_EXEC`), and out-of-memory error codes (`SCE_KERNEL_ERROR_ENOMEM`).
-  - **KytyPS5 `MemoryTrackerTests`:** write-watch tracking mechanics, multi-threaded dirty-page collecting, generation advancement, and aliased memory tracking.
+  - **KytyPS5 `MemoryTrackerTests`:** ported in behaviour onto `GuestMemoryTracking::Watch` (`tests/memory/MemoryTrackerTests.cpp`): range validation, page rounding, protection and fault resolution, invalidate on unmap, the resolver-must-release and no-re-entry contracts (death tests), and concurrent publication and resolution.
+    - [ ] Not ported, no counterpart yet: dirty-page collecting, generation advancement and aliased-memory tracking. They need the `IWriteTracker` implementation (`Collect`, `MarkWritten`), which is still `NullTracker` only.
   - **FreeBSD 12 `mmap`/`mprotect` Suites:** POSIX address-space layout and page-permission semantics.
   - **Wine / Proton Virtual Memory Suites:** Win32 `VirtualAlloc`/`VirtualProtect`/`GetWriteWatch` state transitions under concurrent queries.
 - **Microbenchmarks:**
