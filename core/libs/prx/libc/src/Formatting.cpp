@@ -191,31 +191,35 @@ int APS5_VABI sprintf_nid_postfix(VA_ARGS) {
 
 #endif
 
-/// sscanf: parses `rdi` (the input string) according to the format in `rsi`, storing through the guest
-/// pointers that follow. Returns the number of assigned items or EOF on early input failure; on Windows a
-/// malformed format or more than ScanfArguments::MaxPointers conversions gives EOF with errno EINVAL.
-/// The VA_ARGS register parameters rebuild the System V register save area by hand (see libc_printf).
-/// Windows note: the rebuilt structure is marshalled by LibcDetail::ScanfArguments because the host vsscanf
-/// would otherwise interpret the System V struct as a host va_list and crash (regression test Sscanf in
-/// core/libs/tests/GuestWideIo.cpp).
-int APS5_VABI sscanf_nid_postfix(VA_ARGS) {
-    LibcDetail::RegSaveArea regs;
-    LibcDetail::FillRegSaveArea(regs, rdx, rcx, r8, r9, 0, 0,
-        xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7);
-    LibcDetail::VaListLayout layout;
-    std::va_list* va = LibcDetail::BuildVaList(layout, regs, 0u,
-        reinterpret_cast<void*>(overflow_arg_area));
+/// sscanf: parses `str` according to `format`, storing through the guest pointers that follow. Returns the
+/// number of assigned items, 0 on a matching failure, or EOF on input failure before the first conversion;
+/// on Windows a malformed format or more than ScanfArguments::MaxPointers conversions gives EOF/EINVAL.
+/// Implemented as a real variadic function so the compiler builds the complete System V va_list, including
+/// the stack overflow area. The previous VA_ARGS register-parameter version rebuilt the list by hand and took
+/// the overflow area from the value of the fifth argument, so sscanf with more than four conversions stored
+/// through garbage (musl libc-test sscanf "%i %i %o %x %x"; regression test Sscanf.ManyConversions).
+/// Windows additionally marshals the pointers through LibcDetail::ScanfArguments because the host vsscanf
+/// can not consume a System V va_list.
+int APS5_VABI sscanf_nid_postfix(const char* str, const char* format, ...) {
 #ifdef _WIN32
-    const LibcDetail::ScanfArguments scan(reinterpret_cast<const char*>(rsi), reinterpret_cast<const void*>(va));
-    if (!scan.Ok()) { *__error_nid_postfix() = 22; return EOF; }
-    const auto* p = scan.Pointers();
-    return std::sscanf(reinterpret_cast<const char*>(rdi), scan.Format(), APS5_SCANF_SPREAD(p));
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    int result = EOF;
+    const LibcDetail::ScanfArguments scan(format, args);
+    if (scan.Ok()) {
+        const auto* p = scan.Pointers();
+        result = std::sscanf(str, scan.Format(), APS5_SCANF_SPREAD(p));
+    } else {
+        *__error_nid_postfix() = 22;
+    }
+    __builtin_sysv_va_end(args);
+    return result;
 #else
-    return std::vsscanf(
-        reinterpret_cast<const char*>(rdi),
-        reinterpret_cast<const char*>(rsi),
-        *va
-    );
+    std::va_list args;
+    va_start(args, format);
+    const int result = std::vsscanf(str, format, args);
+    va_end(args);
+    return result;
 #endif
 }
 

@@ -70,9 +70,11 @@ GoogleTest, label `unit`, no game data: `mspace_tests` (contract, overflow regre
 - [x] Wide formatting, wide stream output, scanf on all hosts.
 - [x] Bounds-checked strings, allocating strings, operator new/delete family.
 - [ ] `reallocalign` of an existing block (needs an allocator usable-size query).
-- [ ] Apply the same width/precision cap to the narrow Windows formatter (`WindowsFormatting.hpp`).
+- [x] Width/precision cap in the narrow Windows formatter (`WindowsFormatting.hpp`).
 
 ## Open questions
 
 - When the replacement table pointer itself is null (not just all-empty), should the application heap fall back to the guest heap? Only the all-empty table is handled today.
 - Sony's exact constraint-handler behaviour for the `_s` printf variants is not modelled; they follow host snprintf truncation.
+- The Windows host scanf accepts a short `%Nc` field (`sscanf("hello, world
+", "%8c%8c")` returns 2, C and FreeBSD return 1). Fixing it needs an own scanf engine; not done.

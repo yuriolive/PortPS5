@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <exception>
 #include <filesystem>
 #include <limits>
 
@@ -279,3 +280,22 @@ TEST_F(StdioExtras, FgetposFsetposRoundTrip) {
     EXPECT_EQ(fsetpos_nid_postfix(stream, nullptr), -1);
     EXPECT_EQ(fclose_nid_postfix(stream), 0);
 }
+
+#ifdef _WIN32
+// Invariant (regression, Windows narrow formatter): a hostile literal or star width/precision is rejected
+// (the formatter throws invalid_argument) instead of reaching the host snprintf, which overflows its stack
+// for huge widths. Sane widths still format.
+TEST(CheckedPrintf, NarrowFormatterRejectsHugeWidths) {
+    char buffer[16];
+    EXPECT_EQ(sprintf_s_nid_postfix(buffer, sizeof(buffer), "%5d", 7), 5);
+    bool threw = false;
+    try { sprintf_s_nid_postfix(buffer, sizeof(buffer), "%99999999999d", 7); } catch (const std::exception&) { threw = true; }
+    EXPECT_TRUE(threw);
+    threw = false;
+    try { sprintf_s_nid_postfix(buffer, sizeof(buffer), "%*d", std::numeric_limits<int>::min(), 7); } catch (const std::exception&) { threw = true; }
+    EXPECT_TRUE(threw);
+    threw = false;
+    try { sprintf_s_nid_postfix(buffer, sizeof(buffer), "%.99999999999f", 1.0); } catch (const std::exception&) { threw = true; }
+    EXPECT_TRUE(threw);
+}
+#endif

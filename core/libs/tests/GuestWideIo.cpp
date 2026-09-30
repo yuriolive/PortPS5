@@ -17,7 +17,9 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <string>
 
@@ -219,4 +221,80 @@ TEST(Sscanf, AssignsThroughGuestPointers) {
     EXPECT_EQ(big, -9000000000LL);
     EXPECT_STREQ(word, "hello");
     EXPECT_EQ(sscanf_nid_postfix("zzz", "%d", &number), 0);
+}
+
+// Invariant (regression, behaviour oracle musl libc-test sscanf.c): sscanf with more than four conversions
+// must store through every pointer. The old register-parameter implementation took its va_list overflow
+// area from the fifth argument's value, so conversions 5+ wrote through garbage.
+TEST(Sscanf, ManyConversions) {
+    int a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0;
+    EXPECT_EQ(sscanf_nid_postfix("011 0x100 11 0x100 100 7 8", "%i %i %o %x %x %d %d", &a, &b, &c, &d, &e, &f, &g), 7);
+    EXPECT_EQ(a, 9);
+    EXPECT_EQ(b, 256);
+    EXPECT_EQ(c, 9);
+    EXPECT_EQ(d, 256);
+    EXPECT_EQ(e, 256);
+    EXPECT_EQ(f, 7);
+    EXPECT_EQ(g, 8);
+}
+
+// Invariant (oracle: musl sscanf.c): return values distinguish partial match, no match and input failure;
+// %8c does not skip or terminate, %2d limits digits, and %* suppresses assignment.
+TEST(Sscanf, ReturnValueSemantics) {
+    int x = 0, y = 0, z = 0;
+    EXPECT_EQ(sscanf_nid_postfix("20 xyz", "%d %d\n", &x, &y), 1);
+    EXPECT_EQ(sscanf_nid_postfix("xyz", "%d %d\n", &x, &y), 0);
+    EXPECT_EQ(sscanf_nid_postfix("", "%d %d\n", &x, &y), EOF);
+    EXPECT_EQ(sscanf_nid_postfix(" 12345 6", "%2d%d%d", &x, &y, &z), 3);
+    EXPECT_EQ(x, 12);
+    EXPECT_EQ(y, 345);
+    EXPECT_EQ(z, 6);
+    char a[16]{}, b[16]{};
+#ifndef _WIN32
+    // The Windows host scanf accepts a short %8c field (returns 2); C and FreeBSD require exactly 8 chars.
+    // Known divergence, see docs/spec/libc.md Open questions.
+    EXPECT_EQ(sscanf_nid_postfix("hello, world\n", "%8c%8c", a, b), 1);
+#endif
+    EXPECT_EQ(sscanf_nid_postfix("hello, world\n", "%8c", a), 1);
+    EXPECT_EQ(std::memcmp(a, "hello, w", 8), 0);
+    EXPECT_EQ(sscanf_nid_postfix("56789 0123 56a72", "%2d%d%*d %[0123456789]\n", &x, &y, a), 3);
+    EXPECT_EQ(x, 56);
+    EXPECT_EQ(y, 789);
+    EXPECT_STREQ(a, "56");
+}
+
+// Invariant (oracle: musl swprintf.c): swprintf truncation returns -1 with a terminated prefix and no
+// overrun; %lc and %s (UTF-8) decode to single UTF-16 units; a null/zero buffer fails.
+TEST(WideFormatting, MuslSwprintfEdges) {
+    char16_t b[8];
+    std::fill(std::begin(b), std::end(b), u'x');
+    EXPECT_EQ(FormatWide(b, 4, u"%d", 123456), -1);
+    EXPECT_EQ(std::u16string(b), u"123");
+    EXPECT_EQ(b[5], u'x');
+    EXPECT_EQ(FormatWide(b, 2, u"%lc", 0xc0), 1);
+    EXPECT_EQ(b[0], 0xc0);
+    EXPECT_EQ(FormatWide(b, 2, u"%lc", 0x20ac), 1);
+    EXPECT_EQ(b[0], 0x20ac);
+    EXPECT_EQ(FormatWide(b, 3, u"%s", "\xc3\x80!"), 2);
+    EXPECT_EQ(b[0], 0xc0);
+    EXPECT_EQ(FormatWide(b, 2, u"%.1s", "\xc3\x80!"), 1);
+    EXPECT_EQ(b[0], 0xc0);
+    EXPECT_EQ(FormatWide(nullptr, 0, u"%d", 123456), -1);
+}
+
+// Invariant (oracle: musl snprintf.c integer table): flag/precision combinations, notably that precision 0
+// with value 0 prints nothing (except "%#.0o"), and width/flags are still honoured.
+TEST(WideFormatting, MuslIntegerFlagTable) {
+    char16_t b[32];
+    struct Case { const char16_t* fmt; int v; const char16_t* want; };
+    const Case cases[] = {
+        {u"%04d", 12, u"0012"}, {u"%.3d", 12, u"012"}, {u"%-3d", 12, u"12 "}, {u"%+- 5d", 12, u"+12  "},
+        {u"%0-5d", 12, u"12   "}, {u"%.0d", 0, u""}, {u"%#.0o", 0, u"0"}, {u"%#.0x", 0, u""},
+        {u"%02.0d", 0, u"  "}, {u"% .0d", 0, u" "}, {u"%+.0d", 0, u"+"}, {u"%#x", 63, u"0x3f"}, {u"%X", 63, u"3F"},
+    };
+    for (const auto& c : cases) {
+        const int n = FormatWide(b, 32, c.fmt, c.v);
+        EXPECT_EQ(std::u16string(b), c.want);
+        EXPECT_EQ(static_cast<std::size_t>(n), std::u16string(c.want).size());
+    }
 }

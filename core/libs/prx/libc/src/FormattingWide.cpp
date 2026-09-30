@@ -213,6 +213,7 @@ std::u16string FormatWide(const char16_t* format, VaList* source) {
                 if (length == "h") value = static_cast<unsigned short>(value);
                 if (length == "hh") value = static_cast<unsigned char>(value);
             } else value = args.Next<unsigned long long>();
+            LibcDetail::FixAlternateOctalZero(spec, static_cast<char>(conversion), value);  // "%#.0o" of 0 is "0"
             AppendNumber(out, spec + "ll" + static_cast<char>(conversion), value);
         } else if (In(conversion, "aAeEfFgG")) {
             if (length == "L") AppendNumber(out, spec + "L" + static_cast<char>(conversion), args.Next<long double>());

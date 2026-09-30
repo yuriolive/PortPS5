@@ -1,3 +1,6 @@
+// Printf-family formatter for hosts whose va_list is not System V (Windows): reads guest arguments straight
+// from the System V va_list structure and formats through the host snprintf one conversion at a time.
+// Malformed or unsupported conversions throw std::invalid_argument; callers map that to their error path.
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSFORMATTING_HPP
 
@@ -100,6 +103,30 @@ public:
     int Count() const { return static_cast<int>(count); }
 };
 
+// Largest width/precision accepted by the narrow formatter. The host snprintf (MinGW) sizes scratch space from
+// the width on the stack, so a guest-controlled huge width crashes the process; larger values are rejected
+// like any other malformed conversion (same limit as FormattingWide.cpp).
+inline int CheckFieldWidth(long long value) {
+    if (value > 65536) throw std::invalid_argument("Format width or precision too large");
+    return static_cast<int>(value);
+}
+
+// Reads a decimal field from `format`, bounded by CheckFieldWidth, and returns its canonical text.
+inline std::string ReadBoundedNumber(const char*& format) {
+    long long value = 0;
+    while (*format >= '0' && *format <= '9') value = CheckFieldWidth(value * 10 + (*format++ - '0'));
+    return std::to_string(value);
+}
+
+// The host (MinGW) printf prints nothing for "%#.0o" with value 0, but C (and FreeBSD/musl) require "0": the
+// alternate-form octal prefix counts as the digit. Raising an explicit precision of 0 to 1 gives the same text.
+inline void FixAlternateOctalZero(std::string& spec, char conversion, unsigned long long value) {
+    if (conversion != 'o' || value != 0 || spec.find('#') == std::string::npos) return;
+    const auto dot = spec.find('.');
+    if (dot == std::string::npos) return;
+    if (spec.find_first_not_of('0', dot + 1) == std::string::npos) spec.replace(dot + 1, std::string::npos, "1");
+}
+
 inline int FormatWindows(char* buffer, size_t size, const char* format, const void* source, std::string* complete = nullptr) {
     if (!format || !source) throw std::invalid_argument("Null formatting argument");
     FormatArguments args(source);
@@ -120,19 +147,19 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             ++format;
             const int width = args.Next<int>();
             if (width < 0) spec += '-';
-            spec += std::to_string(width < 0 ? -static_cast<long long>(width) : width);
+            spec += std::to_string(CheckFieldWidth(width < 0 ? -static_cast<long long>(width) : width));
         } else {
-            while (*format >= '0' && *format <= '9') spec += *format++;
+            if (*format >= '0' && *format <= '9') spec += ReadBoundedNumber(format);
         }
         if (*format == '.') {
             ++format;
             if (*format == '*') {
                 ++format;
                 const int precision = args.Next<int>();
-                if (precision >= 0) spec += "." + std::to_string(precision);
+                if (precision >= 0) spec += "." + std::to_string(CheckFieldWidth(precision));
             } else {
                 spec += '.';
-                while (*format >= '0' && *format <= '9') spec += *format++;
+                spec += ReadBoundedNumber(format);
             }
         }
         std::string length;
@@ -163,6 +190,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
                 if (length == "h") value = static_cast<unsigned short>(value);
                 if (length == "hh") value = static_cast<unsigned char>(value);
             } else value = args.Next<unsigned long long>();
+            FixAlternateOctalZero(spec, conversion, value);
             output.Value(spec + "ll" + conversion, value);
         } else if (std::strchr("aAeEfFgG", conversion)) {
             if (length == "L") {
