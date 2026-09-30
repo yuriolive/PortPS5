@@ -1,3 +1,7 @@
+// core/shader/recompiler/Translation/src/TranslationContext/OperandAccess.cpp
+// Operand read/write for TranslationContext: turns RdnaOperand (SGPR, VGPR, VCC/EXEC, constants, SDWA/DPP
+// modifiers) into IR values and back, including source modifiers. Reads are emitted at their program position,
+// so a read issued after a write to the same register observes the new value.
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
 #include <array>
@@ -113,7 +117,7 @@ IrValue* TranslationContext::readOperand(const RdnaOperand& operand, IrType type
         return &ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&applyBitSourceModifiers(operand, readRawU32(operand)).Value()});
     }
     if (type == IrType::F16) {
-        const IrU16 bits(ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&applyBitSourceModifiers(operand, readRawU32(operand)).Value()}));
+        const IrU16 bits(ir.Emit(IrOpcode::ConvertU16U32, IrType::U16, {&readF16SourceBits(operand).Value()}));
         return &ir.Emit(IrOpcode::BitCastF16U16, IrType::F16, {&bits.Value()});
     }
     if (type == IrType::U1) {

@@ -194,6 +194,22 @@ portps5_add_gtest(config_cross_prx_tests
     LABELS
         unit
 )
+
+# Guest locale and C++ iostream facet ABI verification (ctype, collate, num_put, _Id_cnt)
+portps5_add_gtest(guest_locale_tests
+    SOURCES
+        libc/GuestLocaleTests.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/Sha1.cpp
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/src/NidCompute.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+        ${CMAKE_SOURCE_DIR}/core/libs/nid/include
+    LABELS
+        unit
+)
 # Python unit tests for tools/check_comments.py — verifies the comment
 # policy linter logic (Rules 1-3) in isolation with no game data required.
 portps5_add_test(check_comments_unit_tests

@@ -1,4 +1,10 @@
+// core/shader/recompiler/RdnaDecoder/src/RdnaVectorOpDecoder.cpp
+// Decoder for the RDNA2 vector formats VOP1, VOP2, VOP3, VOP3P and VOPC, including the SDWA and DPP modifier
+// dwords and the per-opcode modifier rules (which opcodes accept which SDWA selectors, op_sel, abs/neg, clamp).
+// A form that is not supported is rejected with std::invalid_argument rather than decoded with wrong semantics.
+// Pure function of the code words; thread-safe.
 #include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include <cstdio>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -355,6 +361,8 @@ constexpr VectorOpcodeInfo vop3Opcodes[] = {
     {0x311u, RdnaOpcode::VPackB32F16},
     {0x314u, RdnaOpcode::VLshlrevB16},
     {0x319u, RdnaOpcode::VSubrevI32},
+    // V_PERM_B32 (VOP3 opcode 0x344, RDNA2 ISA): byte permute of {S0, S1} selected by S2.
+    {0x344u, RdnaOpcode::VPermB32},
     {0x345u, RdnaOpcode::VXadU32},
     {0x346u, RdnaOpcode::VLshlAddU32},
     {0x347u, RdnaOpcode::VAddLshlU32},
@@ -728,6 +736,9 @@ constexpr Vop1SdwaRule vop1SdwaRules[] = {
     {RdnaOpcode::VCvtF32Ubyte0, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VNotB32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VFfblB32, sdwaSelAll(), 0, 0, false},
+    // Like V_FFBL_B32: the SDWA source field feeds the 32-bit operation, the result stays a full dword.
+    {RdnaOpcode::VFfbhU32, sdwaSelAll(), 0, 0, false},
+    {RdnaOpcode::VBfrevB32, sdwaSelAll(), 0, 0, false},
     {RdnaOpcode::VCvtF32F16, sdwaSelWords() | sdwaSelFull(), 0, 0, true},
     {RdnaOpcode::VCvtF16F32, sdwaSelAll(), sdwaSelWords(), sdwaSelAll(), true},
     {RdnaOpcode::VCvtF16U16, sdwaSelWords() | sdwaSelFull(), sdwaSelWords(), sdwaSelWords() | sdwaSelFull(), false},
@@ -795,7 +806,10 @@ void validateVop1Sdwa(const RdnaInstruction& instruction, std::uint32_t destinat
         throw std::invalid_argument("VOP1 SDWA destination selector is not supported");
     }
     if (!isVop1SdwaSourceSupported(instruction.op, sourceSelector, sourceNegate, sourceAbsolute)) {
-        throw std::invalid_argument("VOP1 SDWA source selector is not supported");
+        // Name the selector, opcode and pc so an unsupported SDWA form is diagnosable from the log alone.
+        char text[96];
+        std::snprintf(text, sizeof(text), "VOP1 SDWA source selector %u of opcode 0x%x at pc 0x%x is not supported", sourceSelector, instruction.opcodeId, instruction.programCounter);
+        throw std::invalid_argument(text);
     }
 }
 

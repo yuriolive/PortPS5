@@ -101,7 +101,7 @@ Build presets name the `relinker` and `libs` targets explicitly, so that patched
 
 | Label | Runs in | Members |
 |---|---|---|
-| `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, AnyPS5 main's (merged PR #5) `amd64_only_*`, ported Kyty kernel/sync/event suites |
+| `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, libc extras (`guest_lifecycle`, `guest_wide_io`, `guest_libc_extras`, `guest_heap_frontend`, `application_heap_default`), `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, AnyPS5 main's (merged PR #5) `amd64_only_*`, ported Kyty kernel/sync/event suites |
 | `golden` | hosted `recompiler-golden` | `recompiler_golden_tests` (coverage gate + wave32/64 replay) and `agc_shader_replay --golden` over `core/shader/recompiler/tests/golden/corpus/` (M1) |
 | `lavapipe` | hosted `driver-lavapipe` | driver tests that need a Vulkan device (M1) |
 | `stress` | local / nightly CI | multithreaded futex/umtx concurrency perturbation tests |
