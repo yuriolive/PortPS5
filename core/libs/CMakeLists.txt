@@ -344,6 +344,20 @@ if(BUILD_TESTING)
         LIBRARIES libc libSceLibcInternal
         LABELS   unit
     )
+    # strndup/asprintf/operator new family/aligned_alloc over a test application heap.
+    portps5_add_gtest(guest_heap_frontend_tests
+        SOURCES  tests/GuestHeapFrontends.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
+    # Application heap fallback when the title supplies no allocator replacements.
+    portps5_add_gtest(application_heap_default_tests
+        SOURCES  tests/ApplicationHeapDefault.cpp
+        INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+        LIBRARIES libc
+        LABELS   unit
+    )
     add_executable(guest_memory_tests tests/GuestMemory.cpp)
     target_include_directories(guest_memory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_memory_tests PRIVATE libkernel libc)
