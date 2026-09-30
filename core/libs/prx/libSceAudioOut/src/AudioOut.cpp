@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -40,6 +41,10 @@ static constexpr int PORT_TYPE_AUX = 127;
 static constexpr int PORTS_MAX = 32;
 static constexpr int DEFAULT_VOLUME = 32768;
 static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
+// Total budget for pacing and pushing one grain: waits resolve as the ring
+// drains, and a stuck consumer falls back to a counted overrun drop instead
+// of hanging the guest.
+static constexpr std::uint32_t PUSH_TIMEOUT_MS = 200;
 
 // Guest error codes observed on this path: -2144993276 is the invalid-argument
 // code (returned for null pointers), -2144993277 the invalid-handle code.
@@ -214,11 +219,25 @@ static void queueAudio(const Port& port, const void* data) {
     std::vector<AudioFrame> stereoFrames;
     convertAndDownmix(port, data, stereoFrames);
 
-    // Pace against the 40 ms target cushion to prevent runaway queuing
-    source->WaitUntilQueuedAtMost(AUDIO_MIXER_TARGET_CUSHION_FRAMES, 200);
-
-    // Push into the source ring (automatically resamples if freq != 48000)
-    source->PushAndResample(stereoFrames.data(), port.samplesNum);
+    // Wait until a whole grain fits under the ring ceiling, then push. The
+    // target leaves room for this grain so the push cannot be rejected while
+    // this producer holds the source lock (consumers only free space). Without
+    // this, a wait satisfied by a partial drain would be followed by a silent
+    // drop that still reports success. Grains larger than the ceiling can never
+    // fit; they are attempted once and counted as overrun drops by the push.
+    const std::uint32_t roomTarget = port.samplesNum < AUDIO_MIXER_CEILING_FRAMES
+        ? std::min(AUDIO_MIXER_TARGET_CUSHION_FRAMES,
+                   AUDIO_MIXER_CEILING_FRAMES - port.samplesNum)
+        : 0u;
+    const auto pushStart = std::chrono::steady_clock::now();
+    while (true) {
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - pushStart).count();
+        if (elapsedMs >= PUSH_TIMEOUT_MS) break;
+        source->WaitUntilQueuedAtMost(roomTarget,
+            static_cast<std::uint32_t>(PUSH_TIMEOUT_MS - elapsedMs));
+        if (source->PushAndResample(stereoFrames.data(), port.samplesNum)) break;
+    }
 }
 
 static bool portTypeValid(int type) {

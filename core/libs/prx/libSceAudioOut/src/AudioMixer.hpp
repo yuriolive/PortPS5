@@ -212,7 +212,7 @@ public:
     bool PushStereo48k(const AudioFrame* frames, std::uint32_t count);
     bool PushAndResample(const AudioFrame* frames, std::uint32_t inCount);
 
-<    /**
+    /**
      * @brief Waits until queued frames drop to or below targetFrames.
      *
      * Pumps the wall-clock fallback each iteration so a no-device ring drains
@@ -279,6 +279,15 @@ public:
     void ForceWallClockForTesting() noexcept;
 
     /**
+     * @brief Freezes wall-clock retirement for deterministic tests.
+     *
+     * While paused, PumpWallClock retires nothing, so queued audio persists
+     * until an explicit SimulateCallback/ProcessCallback drains it. Production
+     * never pauses; tests pair this with ForceWallClockForTesting.
+     */
+    void PauseWallClockForTesting(bool paused) noexcept;
+
+    /**
      * @brief Direct callback processing for simulated tests and headless verification.
      * @param framesNeeded Frames to consume; zero advances the wall-clock fallback.
      * Stop the host device with ForceWallClockForTesting before simulation.
@@ -319,6 +328,8 @@ private:
 
     std::chrono::steady_clock::time_point m_lastWallClockTime;
     std::mutex m_wallClockMutex;
+    // Test-only freeze for deterministic orchestration tests; production never sets it.
+    std::atomic<bool> m_wallClockPaused{false};
 };
 
 extern "C" {

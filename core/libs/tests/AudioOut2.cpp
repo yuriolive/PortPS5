@@ -413,6 +413,9 @@ TEST(AudioOut2Tests, V1PacingReleasesTableAndPinsSourceAcrossClose) {
         SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
         ASSERT_TRUE(mixer.Initialize());
         mixer.ForceWallClockForTesting();
+        // Freeze retirement so queued grains persist until explicit drains;
+        // without this, real-time fallback pumps would consume them mid-test.
+        mixer.PauseWallClockForTesting(true);
         const int handle = sceAudioOutOpen(0, 0, 0, 4096, 48000, 4);
         ASSERT_GT(handle, 0);
         auto& oldSource = AudioMixerTestAccess::FirstSource(mixer);
@@ -461,6 +464,9 @@ TEST(AudioOut2Tests, V1SingleAndBatchProducersSharePacingLock) {
     SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
     ASSERT_TRUE(mixer.Initialize());
     mixer.ForceWallClockForTesting();
+    // Freeze retirement so queued grains persist until explicit drains;
+    // without this, real-time fallback pumps would consume them mid-test.
+    mixer.PauseWallClockForTesting(true);
     const int handle = sceAudioOutOpen(0, 0, 0, 4096, 48000, 4);
     ASSERT_GT(handle, 0);
     std::vector<float> pcm(4096 * 2, 0.25f);

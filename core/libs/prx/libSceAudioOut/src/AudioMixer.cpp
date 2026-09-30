@@ -358,13 +358,22 @@ void AudioMixer::SimulateCallback(std::uint32_t framesNeeded) {
 }
 
 void AudioMixer::UpdateWallClockFallback() {
+    // Test freeze for deterministic orchestration: queued audio persists until
+    // an explicit SimulateCallback/ProcessCallback drains it.
+    if (m_wallClockPaused.load(std::memory_order_acquire)) return;
     std::lock_guard lock(m_wallClockMutex);
     if (m_device != 0) return;
     const auto now = std::chrono::steady_clock::now();
     const auto elapsed = now - m_lastWallClockTime;
     const double elapsedSec = std::chrono::duration<double>(elapsed).count();
     // 64-bit count: the previous 32-bit cast wrapped after ~24.8 h of fallback play.
-    const auto framesToRetire = static_cast<std::uint64_t>(elapsedSec * AUDIO_MIXER_SAMPLE_RATE);
+    // Clamp negatives: a pump running on another thread can read a tick slightly
+    // earlier than the stored anchor (unsynchronized timestamp counters), and an
+    // unchecked cast would wrap to ~2^64 frames, draining every ring at once and
+    // poisoning the anchor far into the future so all later pumps drain too.
+    const auto framesToRetire = elapsedSec > 0.0
+        ? static_cast<std::uint64_t>(elapsedSec * AUDIO_MIXER_SAMPLE_RATE)
+        : 0ULL;
 
     if (framesToRetire > 0) {
         // Pop at most one ring capacity: no source ring holds more than that,
@@ -386,6 +395,10 @@ void AudioMixer::UpdateWallClockFallback() {
 
 void AudioMixer::PumpWallClock() noexcept {
     UpdateWallClockFallback();
+}
+
+void AudioMixer::PauseWallClockForTesting(bool paused) noexcept {
+    m_wallClockPaused.store(paused, std::memory_order_release);
 }
 
 void AudioMixer::AudioCallback(void* userdata, Uint8* stream, int len) {
