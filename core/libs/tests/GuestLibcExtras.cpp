@@ -321,6 +321,8 @@ TEST_F(StdioExtras, PositionFunctionsRejectBadStreams) {
     ASSERT_EQ(fclose_nid_postfix(stream), 0);
 }
 
+// NOTE: on Windows this passes even without the explicit check (the ScanfArguments path and the UCRT invalid-parameter
+// handler both yield EOF/EINVAL); the check exists for hosts whose vsscanf has undefined behaviour on null.
 // Invariant (review regression): sscanf with a null string or format returns EOF/EINVAL rather than invoking
 // undefined behaviour in the host scanf.
 TEST(Sscanf, NullArgumentsAreRejected) {
