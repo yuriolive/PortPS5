@@ -241,14 +241,14 @@ TEST_F(SaveDataMountTest, SymlinkOutOfContainerIsDenied) {
     const auto outside = TempDir() / "outside";
     std::filesystem::create_directories(outside);
     std::error_code ec;
-    std::filesystem::create_directory_symlink(outside, Container() / "link", ec);
 #ifdef _WIN32
-    // Symlinks need a privilege on Windows; an NTFS junction (reparse point) does not and
-    // exercises the same escape.
-    if (ec) {
-        const std::string cmd = "cmd /c mklink /J \"" + (Container() / "link").string() + "\" \"" + outside.string() + "\" >nul";
-        if (std::system(cmd.c_str()) == 0) ec.clear();
-    }
+    // Windows: an NTFS junction (reparse point) needs no privilege and exercises the same
+    // escape. The libstdc++ symlink API is avoided on purpose: it needs a privilege locally
+    // and the CI run of this test hung when that API succeeded on the elevated runner.
+    const std::string cmd = "cmd /c mklink /J \"" + (Container() / "link").string() + "\" \"" + outside.string() + "\" >nul 2>nul";
+    if (std::system(cmd.c_str()) != 0) ec = std::make_error_code(std::errc::operation_not_permitted);
+#else
+    std::filesystem::create_directory_symlink(outside, Container() / "link", ec);
 #endif
     if (ec) GTEST_SKIP() << "cannot create directory symlink: " << ec.message();
     EXPECT_EQ(sceKernelOpen("/savedata0/link/leak.bin", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_WRONLY, 0666), Sce(EACCES));
