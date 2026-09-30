@@ -15,6 +15,7 @@
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/LocaleSupport.hpp"
 
 namespace {
 
@@ -89,13 +90,24 @@ std::fpos_t _ZSt4_Fpz_nid_postfix{};
 // every title, hence no title-specific branch).
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;  // ctype<char>::id (Cv+zC4EjGMA).
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;  // ctype<wchar_t>::id (VmqsS6auJzo).
+std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;  // collate<char>::id (7brRfHVVAlI).
+std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;  // collate<wchar_t>::id (irGo1yaJ-vM).
+std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;  // codecvt<char, char, mbstate_t>::id (eVFYZnYNDo0).
+std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[16]{};  // codecvt<char, char, mbstate_t> vtable (aK1Ymf-NhAs).
+std::uint64_t _ZNSt7codecvtIwc9_MbstatetE2idE_nid_postfix = 0;  // codecvt<wchar_t, char, mbstate_t>::id (FjZCPmK0SbA).
 std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix =
     0;  // num_put id (E14mW8pVpoE).
 std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[12]{};  // num_put vtable (1kZFcktOm+s).
-std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;  // collate<wchar_t>::id (irGo1yaJ-vM).
 std::int32_t _ZNSt6locale2id7_Id_cntE_nid_postfix = 0;  // locale::_Id_cnt (H4fcpQOpc08).
 
 const std::locale* _ZSt21_sceLibcClassicLocale_nid_postfix = &std::locale::classic();
+
+alignas(16) unsigned char _ZSt4cout_nid_postfix[0x400]{};
+alignas(16) unsigned char _ZSt4cerr_nid_postfix[0x400]{};
+alignas(16) unsigned char _ZSt3cin_nid_postfix[0x400]{};
+alignas(16) unsigned char _ZSt5wcout_nid_postfix[0x400]{};
+alignas(16) unsigned char _ZSt5wcerr_nid_postfix[0x400]{};
+alignas(16) unsigned char _ZSt4wcin_nid_postfix[0x400]{};
 
 /// Destructs std::ios_base instance.
 void APS5_VABI _ZNSt8ios_baseD2Ev_nid_postfix(std::ios_base* self) {
@@ -118,6 +130,11 @@ const std::locale* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {
     thread_local std::locale locale;
     locale = std::locale();
     return &locale;
+}
+
+/// Obtains character collation category facet pointer.
+void APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(const std::locale::facet**, const std::locale*) {
+    NotImplemented_nid_no_patch("collate<char>::_Getcat");
 }
 
 /// Obtains wide collation category facet pointer.
