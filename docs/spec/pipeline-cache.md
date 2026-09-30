@@ -10,20 +10,20 @@ Translation itself is in [shader-recompiler.md](shader-recompiler.md). Pipeline 
 
 ## Current state
 
-Neither tree persists anything. Every structure below lives in process memory only. File references are to PR #5 (`29b4601`) unless marked `main`.
+Neither tree persists anything. Every structure below lives in process memory only. File references are to AnyPS5 `main@75a8668` (includes merged PR #5) unless marked `main@e06dbff` (pre-merge main).
 
 | Layer | What exists | Where |
 |---|---|---|
-| Source key | `RecompileCacheKey::Build` covers the stage, the code (PR #5: size plus a 64-bit `HashCode`, verified word by word, see `Recompiler.cpp:231-233`; `main`: every code word), wave size, user-data base and count, the compute/pixel/vertex stage info, `SpirvTarget` (Vulkan/SPIR-V version, subgroup size, `bdaAbiVersion`, capabilities, extensions, limits), and `DebugProbeActive()`. | `core/shader/recompiler/CacheKey.hpp:13-34,172-185` |
-| Source entry | `SourceEntry` holds the code, the `IrResourcePlan`, a `planFailure` memo, and the variants. Entries sit in a static `unordered_map` keyed by the source key, with buckets for hash collisions. | `Recompiler.cpp:180-195,222-273` |
-| Variant | `CompiledVariant` holds a `ResourceSpecialization`, the `BindingLayout` and the SPIR-V. Lookup is a **linear scan** over `sameLayout` and specialisation equality. `variantId` is a **process-local atomic counter**. | `Recompiler.cpp:163-169,304,360-381` |
-| Result memo | 256 entries per source, LRU, keyed by `variantId ^ snapshotHash` (the descriptor words, the flattened SRT, the user data, the uniform fill, the V# fields). | `Recompiler.cpp:408,441-479,484-546` |
-| Graphics pipelines | `CachedPipeline` builds a byte key from the device handle, per-stage `variantId`, vertex input, `LayoutKey`, blend/raster state, and mesh or tessellation configuration. The cache is LRU with 256 entries. | `libSceAgcDriver/Graphics/src/Pipeline.cpp:282-346,414-462` |
-| Compute pipelines | Keyed by `(variantId << 1) \| push`. | `libSceAgcDriver/Execution/src/VulkanDevice.cpp:2822,2991` |
+| Source key | `RecompileCacheKey::Build` covers the stage, the code (`main@75a8668`: size plus a 64-bit `HashCode`, verified word by word, see `Recompiler.cpp:232-234`; `main@e06dbff`: every code word), wave size, user-data base and count, the compute/pixel/vertex stage info, `SpirvTarget` (Vulkan/SPIR-V version, subgroup size, `bdaAbiVersion`, capabilities, extensions, limits), and `DebugProbeActive()`. | `core/shader/recompiler/CacheKey.hpp:13-35,173-187` |
+| Source entry | `SourceEntry` holds the code, the `IrResourcePlan`, a `planFailure` memo, and the variants. Entries sit in a static `unordered_map` keyed by the source key, with buckets for hash collisions. | `Recompiler.cpp:180-195,222-274` |
+| Variant | `CompiledVariant` holds a `ResourceSpecialization`, the `BindingLayout` and the SPIR-V. Lookup is a **linear scan** over `sameLayout` and specialisation equality. `variantId` is a **process-local atomic counter**. | `Recompiler.cpp:163-169,304,360-382` |
+| Result memo | 256 entries per source, LRU, keyed by `variantId ^ snapshotHash` (the descriptor words, the flattened SRT, the user data, the uniform fill, the V# fields). | `Recompiler.cpp:409,439-480,484-547` |
+| Graphics pipelines | `CachedPipeline` builds a byte key from the device handle, per-stage `variantId`, vertex input, `LayoutKey`, blend/raster state, and mesh or tessellation configuration. The cache is LRU with 256 entries. | `libSceAgcDriver/Graphics/src/Pipeline.cpp:282-347,414-462` |
+| Compute pipelines | Keyed by `(variantId << 1) \| push`. | `libSceAgcDriver/Execution/src/VulkanDevice.cpp:2925,3232` |
 | `VkPipelineCache` | Created **with no initial data** and never serialised. Every pipeline is created through it. | `libSceAgcDriver/Graphics/include/PipelineCache.hpp:10-13`; `Pipeline.cpp:162` |
-| `main` graphics | Keyed on the full SPIR-V bytes, 128 entries. | `main` `Graphics/src/GraphicsPipelineCache.cpp:90-98,129` |
+| `main@e06dbff` graphics | Keyed on the full SPIR-V bytes, 128 entries. | `main@e06dbff` `Graphics/src/GraphicsPipelineCache.cpp:90-98,129` |
 | Request format | `RequestSerializer` produces base64 with magic `0x41505335` and version 2. It **includes the captured guest memory regions**. | `core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp:478,659-693` |
-| Replay | `agc_shader_replay` replays the `shader_<addr>.req` files that `dumpRequest` wrote when `APS5_DUMP_SHADERS` was set. | `libSceAgcDriver/tools/ShaderReplay.cpp:98-120`; `Driver.cpp:1594` |
+| Replay | `agc_shader_replay` replays the `shader_<addr>.req` files that `dumpRequest` wrote when `APS5_DUMP_SHADERS` was set. | `libSceAgcDriver/tools/ShaderReplay.cpp:98-120`; `Driver.cpp:1663` |
 
 Nothing reads `pipelineCacheUUID`, `driverUUID` or `deviceUUID`. Because `variantId` is process-local, today's pipeline keys cannot be persisted.
 
@@ -43,13 +43,13 @@ As agreed in the decision table in [README.md](README.md#subsystem-specs) §Pipe
 | `SourceKey` | The `RecompileCacheKey` fields without `DebugProbeActive()`, with a 128-bit code hash in place of `HashCode`. |
 | `VariantKey` | `SourceKey`, `ResourceSpecialization`, and the `BindingLayout` fields that `sameLayout` compares. |
 | `SpirvHash` | The emitted SPIR-V words. They identify the variant in every pipeline key. |
-| `PipelineKey` | PR #5's `pipelineKey` fields, with `SpirvHash` per stage in place of `variantId` and without `context.device`. Compute: `SpirvHash`, the push flag and the set layout. |
+| `PipelineKey` | AnyPS5 main's (merged PR #5) `pipelineKey` fields, with `SpirvHash` per stage in place of `variantId` and without `context.device`. Compute: `SpirvHash`, the push flag and the set layout. |
 
 `RecompilerVersion` combines a hash of the recompiler's sources, computed by CMake at build time (see [build-toolchain.md](build-toolchain.md)), with `kCacheEpoch`, a manually bumped schema number for format or semantic changes the source hash cannot see.
 
 **In-memory variant index.** `SourceEntry::variants` becomes a map keyed by the same `VariantKey`, with an LRU bound, which delivers the "bounded hash-indexed variants" item ([shader-recompiler.md](shader-recompiler.md) §Target design 3).
 
-**Failures are never cached.** A recompile or plan failure logs once with the program hash and aborts via `Unsupported()`, in every mode. PR #5's `planFailure` memo is not ported and no failure record exists on disk. The result memo is unchanged, because it depends on per-frame snapshot values that are never persisted.
+**Failures are never cached.** A recompile or plan failure logs once with the program hash and aborts via `Unsupported()`, in every mode. AnyPS5 main's (merged PR #5) `planFailure` memo is not ported and no failure record exists on disk. The result memo is unchanged, because it depends on per-frame snapshot values that are never persisted.
 
 **On-disk layout.** Each file is append-only, and each record is framed as `{u32 tag, u32 length, u128 key, payload, u64 xxh3}`.
 

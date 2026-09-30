@@ -231,7 +231,7 @@ std::uint64_t WriteWatchTracker::StampRangeLocked(std::uint64_t address, std::ui
             }
         }
         // 64-bit global counter never wraps in practice (spec failure mode:
-        // PR #5's 32-bit generation wrapped in ~12 h at 1e5 collects/s). One
+        // AnyPS5 main's (merged PR #5) 32-bit generation wrapped in ~12 h at 1e5 collects/s). One
         // counter for all shards keeps multi-shard ranges sound: any fresh
         // stamp exceeds every prior stamp, so MaxGenLocked can never hide a
         // write behind a stale generation from another shard.
