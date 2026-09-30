@@ -41,6 +41,7 @@ The guest's x86-64 code is not recompiled. The relinker rewrites the decrypted E
 | [video-fmv.md](video-fmv.md) | In-game video, AvPlayer | Keep running the title's own decoders. Use general write tracking. |
 | [input.md](input.md) | Pad, keyboard, mouse | Keep SDL. Add mapping and hot-plug. |
 | [save-data.md](save-data.md) | Save data and dialogs | Adopt from AnyPS5 `main` (merged PR #5). Replace silent dialog stubs. |
+| [image-codecs.md](image-codecs.md) | JPEG/PNG codecs, `libSceJpegEnc`, `libScePngDec` | Shared stb-backed host codec layer under `core/Decoder`; no throws; unsupported modes abort. |
 | [configuration.md](configuration.md) | Per-game TOML, env-switch migration | Replace env switches with typed TOML. |
 | [build-toolchain.md](build-toolchain.md) | CMake, MinGW GCC, CI build, conventions | Keep a pinned GCC 15.2. Move to C++23. GoogleTest dependency pin. |
 | [verification.md](verification.md) | CI, test framework, local regression, full runs, results JSON | GoogleTest/GMock adoption, death/perturbation testing, hosted CI without a GPU, plus local results. |
