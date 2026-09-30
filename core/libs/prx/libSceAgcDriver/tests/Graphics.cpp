@@ -1,3 +1,6 @@
+// Mock-Vulkan driver tests for AGC graphics state decode, pipeline and draw recording.
+// Runs as a standalone executable (lavapipe-labelled ctest); no GPU, guest memory or game
+// data is used. Legacy harness: new cases belong in GoogleTest targets.
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -110,7 +113,20 @@ void stateTests() {
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "target zero");
     queue = makeState();
     queue.context[0x200] = 2;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "depth");
+    Require(AgcDriver::Graphics::DecodeState(queue).depthStencil.depthTestEnable, "Z_ENABLE was lost");
+    // CB_TARGET_MASK nibble 0 is RT0's R,G,B,A write enables; each bit must reach the Vulkan
+    // colorWriteMask unchanged so a disabled channel never writes the target surface.
+    constexpr VkColorComponentFlags channels[] = {VK_COLOR_COMPONENT_R_BIT, VK_COLOR_COMPONENT_G_BIT, VK_COLOR_COMPONENT_B_BIT, VK_COLOR_COMPONENT_A_BIT};
+    for (std::uint32_t mask = 1; mask < 16; ++mask) {
+        queue = makeState();
+        queue.context[0x8e] = mask;
+        VkColorComponentFlags expected = 0;
+        for (std::uint32_t bit = 0; bit < 4; ++bit) if ((mask >> bit) & 1u) expected |= channels[bit];
+        Require(AgcDriver::Graphics::DecodeState(queue).blend.colorWriteMask == expected, "CB_TARGET_MASK channel mapping changed");
+    }
+    queue = makeState();
+    queue.context[0x8e] = 0;
+    Require(!AgcDriver::Graphics::DecodeState(queue).hasColorTarget, "an empty target mask must disable the colour target");
     queue = makeState();
     queue.context[0x10f] = 0x7fc00000;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite");

@@ -6,16 +6,16 @@ Status: draft v1 · 2026-09-27 · Owner: PortPS5 maintainer
 
 PortPS5 converts a user-supplied, already-decrypted PS5 game dump into a native Windows executable plus replacement system libraries. It runs the game's own x86-64 code directly on the host CPU, links it against high-level reimplementations of the PS5 system libraries, and translates the GPU workload to Vulkan. There is no emulator process and no CPU emulation.
 
-PortPS5 is a GPL-2.0-only hard fork of [AnyPS5](https://github.com/boykopovar/AnyPS5) `main`. It selectively adopts the architecture from AnyPS5 PR #5 (the Demon's Souls boot work) and rejects that PR's title-specific workarounds.
+PortPS5 is a GPL-2.0-only hard fork of [AnyPS5](https://github.com/boykopovar/AnyPS5) `main`. It selectively adopts the architecture from AnyPS5 PR #5 (the Demon's Souls boot work, merged into AnyPS5 `main` as `7656458`) and rejects that work's title-specific workarounds.
 
 ## 2. Problem
 
 - PS5 titles cannot run on PC unless the publisher ships a port.
 - Existing PS5 translation projects are research-grade. AnyPS5 reaches Demon's Souls' intro cinematic, but:
-  - the path there relies on per-title kernel matching and about 300 `APS5_*` environment switches (PR #5; `main` has none);
-  - there is no CI;
-  - on `main`, guest locking is serialized through a process-global mutex (PR #5 removes that lock);
-  - depth/stencil is rejected, and indirect draws exist only in PR #5, as a CPU record-reading fallback;
+  - the path there relies on per-title kernel matching and about 300 `APS5_*` environment switches (AnyPS5 `main` after the PR #5 merge; `main@e06dbff` had none);
+  - `main@e06dbff` had no CI (`main@75a8668` builds and runs `ctest` in `.github/workflows/build.yml`);
+  - on `main@e06dbff`, guest locking was serialized through a process-global mutex (merged PR #5 removes that lock);
+  - depth/stencil is rejected, and indirect draws did not exist on `main@e06dbff`; merged PR #5 adds them with a CPU record-reading fallback;
   - there is no gamepad input (XInput/DualSense), and all AvPlayer exports throw.
 - Nobody has shown a PS5 title completed start-to-credits.
 
