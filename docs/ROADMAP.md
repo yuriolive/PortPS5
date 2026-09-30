@@ -25,8 +25,8 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 
 **Scope**
 - [ ] Port from PR #5 onto the fork, without its title-specific code:
-  - [ ] the Recorder;
-  - [ ] host import with a staging fallback;
+  - [x] the Recorder (adapted `Recorder` landed in `Graphics/`, portps5-6; driver wiring is tracked in `docs/spec/gpu-driver.md`);
+  - [x] host import with a staging fallback (`HostImport`, portps5-6);
   - [x] GPU detile;
   - [ ] GuestArena/GuestHeap behind `IWriteTracker`;
   - [x] `--to-intel` SSE4a lowering;
