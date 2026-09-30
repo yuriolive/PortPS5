@@ -6,29 +6,29 @@ Status: draft v1 · 2026-09-27
 
 The libkernel synchronization surface: `scePthread*` and POSIX `pthread_*` (mutexes, condition variables, rwlocks, once, TSD); event flags, semaphores and `_umtx_op`; `libSceFiber` as it interacts with locks; thread creation, stacks, TLS, priority and affinity; the scheduler tick, sleeps and clocks; and the error policy for these calls.
 
-Paths are relative to `core/libs/prx/`. "main" means `e06dbff`; "PR5" means `29b4601`.
+Paths are relative to `core/libs/prx/`. "main@e06dbff" is the pre-merge AnyPS5 main (old baseline). "main@75a8668" is the current AnyPS5 main and includes merged PR #5; its line numbers were re-checked there.
 
 ## Current state
 
-| Area | main | PR #5 |
+| Area | AnyPS5 main@e06dbff (pre-merge) | AnyPS5 main@75a8668 (incl. merged PR #5) |
 |---|---|---|
 | Guest object | Each guest sync object is an 8-byte slot that holds a host pointer (`SceTypes.hpp:162-173`). | Same. |
-| Mutex | `PthreadMutexPrivate` wraps both a `recursive_timed_mutex` and a `timed_mutex` (`libkernel/Pthread/include/Pthread.hpp:24-32`). `resolveMutex` takes the process-global `initializationMutex` on every lock, unlock and trylock (`src/Mutex.cpp:12,21,138,142,161`). Relocking an error-check mutex throws (`Mutex.cpp:41`). | There is **no global lock** in the sce layer. It returns `EDEADLK` and `EPERM` (`src/Mutex.cpp:64-97`). A null slot throws (65). The POSIX wrappers lazily initialize the static initializers 0 and 1 by CAS; the default type is ErrorCheck (`Posix/Mutex.cpp:34-48,65`). Timed locks poll `try_lock_for` (`Time/include/TimedWait.hpp:23-38`). |
-| Condition variable | `condition_variable_any` behind the global `condInitializationMutex` (`src/Cond.cpp:17-25,129-140`). | `TimedWait::Condition` is a FIFO waiter queue under a `queueLock`, with one Win32 event per waiter (`TimedWait.hpp:42-105`, `Time/TimedWait.cpp:63,156-178`). `Signalto` degrades to `NotifyAll` (`src/Cond.cpp:90-95`). |
+| Mutex | `PthreadMutexPrivate` wraps both a `recursive_timed_mutex` and a `timed_mutex` (`libkernel/Pthread/include/Pthread.hpp:24-32`). `resolveMutex` takes the process-global `initializationMutex` on every lock, unlock and trylock (`src/Mutex.cpp:12,21,138,142,161`). Relocking an error-check mutex throws (`Mutex.cpp:41`). | There is **no global lock on the lock and unlock path**: `resolveMutex` returns an initialized slot after an acquire load, and takes the process-global `initializationMutex` only to create, init or destroy a mutex (`src/Mutex.cpp:17,27-46,134,142`). It returns `EDEADLK` and `EPERM` (`src/Mutex.cpp:49-71,158-161`). Unlocking an uninitialized slot throws (42). The POSIX wrappers lazily initialize the static initializers 0 and 1 by CAS; the default type is ErrorCheck (`Posix/Mutex.cpp:21-35,52,88`). Timed locks poll `try_lock_for` (`Time/include/TimedWait.hpp:23-38`). |
+| Condition variable | `condition_variable_any` behind the global `condInitializationMutex` (`src/Cond.cpp:17-25,129-140`). | `TimedWait::Condition` is a FIFO waiter queue under a `queueLock`, with one Win32 event per waiter (`TimedWait.hpp:42-105`, `Time/TimedWait.cpp:63-74,120-130,157-179`). `Signalto` degrades to `NotifyAll` (`src/Cond.cpp:147-151`). |
 | Rwlock, sema, event flag | Rwlock: a std wrapper. Sema: `std::mutex` plus `condition_variable` (`Semaphore/include/Semaphore.hpp:18-22`). Event flags: every call is `NotImplemented` (`EventFlag/src/EventFlag.cpp:8-35`). | Rwlock is a `shared_timed_mutex` (`Pthread.hpp:40-43`). Sema and event flags use a mutex plus `TimedWait::Condition`. Single-waiter event flags return `EPERM` (`EventFlag.cpp:30-39,128,142`). |
-| TSD, once | TSD is `NotImplemented` (`src/Tsd.cpp:6-30`). | There are 512 keys. `Getspecific` is lock-free; `Setspecific` takes `g_keyLock` (`src/Tsd.cpp:10-21,79-88`). `scePthreadOnce` uses `atomic_ref` wait/notify (`src/Thread.cpp:346-360`). |
+| TSD, once | TSD is `NotImplemented` (`src/Tsd.cpp:6-30`). | There are 512 keys. `Getspecific` is lock-free; `Setspecific` takes `g_keyLock` through `IsValidKey` (`src/Tsd.cpp:10,20,50-54,79-88`). `scePthreadOnce` uses `atomic_ref` wait/notify (`src/Thread.cpp:424-439`). |
 | `_umtx_op` | Absent. | Absent (no match in the tree). |
-| Threads | `_beginthreadex` with the guest stack size (`src/Thread.cpp:158`). | Same (`Thread.cpp:166`), plus a stack-commit check (105-128). Affinity and priority are only stored (320-344). `scePthreadGetthreadid` returns the Win32 TID (300-306). The job-worker name match `"BPE JobWorkerThread"` pins threads behind `APS5_*` switches (67-95). That is **title-specific**. |
-| TLS | The relinker rewrites the guest `mov rax, fs:[0]` into a stub that reads the PE TLS slot through `gs:[0x58]` (`relinker/elfpatcher/src/windows/WindowsTlsBuilder.cpp:82,118`). | Same. |
-| Fibers | Stubs. | An asm context switch in `libSceFiber/Export.cpp:98`. Fibers migrate between threads (34-37). |
-| Time | — | `NtSetTimerResolution` is set to 0.5 ms at load, with power throttling disabled (`libkernel/Time/Time.cpp:71-89`). `SleepUntil` waits on a high-resolution timer and then spins `YieldProcessor` for the last 0.5 ms (`TimedWait.cpp:231-244`). `APS5_TIME_SCALE` rescales the guest clocks (`Time.cpp:39-45`). |
-| Errors | `NotImplemented_nid_no_patch` logs and aborts via `Unsupported()` (`libc/src/General.cpp:86-91`); it no longer throws, because the shared unwinder let guest `catch(...)` swallow host exceptions. | Same (`General.cpp:85-87`). |
+| Threads | `_beginthreadex` with the guest stack size (`src/Thread.cpp:158`). | Same (`Thread.cpp:217`), plus a stack-commit check (158-169). Affinity and priority are only stored (204-205,357-420). `scePthreadGetthreadid` returns the Win32 TID (378-384). The job-worker name match `"BPE JobWorkerThread"` pins threads behind `APS5_*` switches (118-146). That is **title-specific**. |
+| TLS | The relinker rewrites the guest `mov rax, fs:[0]` into a stub that reads the PE TLS slot through `gs:[0x58]` (`relinker/elfpatcher/src/windows/WindowsTlsBuilder.cpp:82,118`). | Same, re-checked: the stub reads the slot through `gs:[0x58]` (`WindowsTlsBuilder.cpp:118`) and the matched instruction forms are at 79-80. |
+| Fibers | Stubs. | An asm context switch in `libSceFiber/Export.cpp:98` (second stub at 188). Fibers migrate between threads (32-34,73-74). |
+| Time | — | `NtSetTimerResolution` is set to 0.5 ms at load, with power throttling disabled (`libkernel/Time/Time.cpp:71-89`). `SleepUntil` waits on a high-resolution timer and then spins `YieldProcessor` for the last 0.5 ms (`TimedWait.cpp:231-242`). `APS5_TIME_SCALE` rescales the guest clocks (`Time.cpp:39-45`). |
+| Errors | `NotImplemented_nid_no_patch` throws `std::runtime_error` (`libc/src/General.cpp:86-88`), and the shared unwinder lets a guest `catch(...)` swallow host exceptions. | Same (`General.cpp:155-157`). |
 
 ## Decision
 
 Per the decision table in [README.md](README.md#subsystem-specs), **replace** the primitives with futex words stored in place and lazily initialized by CAS, on `WaitOnAddress`. `_umtx_op`, event flags and semaphores share that one primitive. Real errors become return codes, and `Unsupported()` aborts.
 
-Adopt from PR5 its error codes, POSIX static-initializer semantics, TSD, fibers and the raised tick.
+Adopt from AnyPS5 main (merged PR #5) its error codes, POSIX static-initializer semantics, TSD, fibers and the raised tick.
 
 Delete the job-worker affinity hack and `APS5_TIME_SCALE`. Both change behaviour, so neither may live in `[debug]`.
 
@@ -36,13 +36,13 @@ Delete the job-worker affinity hack and `APS5_TIME_SCALE`. Both change behaviour
 
 **Guest thread ids.** Each thread gets a compact tid in `[1, 2^24)` on first entry. That covers guest threads and host threads that call into the guest, such as driver workers. The tid lives in a `thread_local` and is recycled after join or detach-exit. It is the owner field in every word below and the value `scePthreadGetthreadid` returns.
 
-**Futex core.** Every wait loops on `WaitOnAddress(addr, &expected, 8|4, ms)` and re-checks after each return, so spurious wakeups are allowed. Wakes use `WakeByAddressSingle` or `WakeByAddressAll`. Deadlines are QPC nanoseconds, and waits of 1 ms or more pass the millisecond floor of the remaining time. Under 1 ms, the loop re-checks the word in 100 µs high-resolution-timer slices, spinning at most 50 µs. This replaces PR5's 0.5 ms spin.
+**Futex core.** Every wait loops on `WaitOnAddress(addr, &expected, 8|4, ms)` and re-checks after each return, so spurious wakeups are allowed. Wakes use `WakeByAddressSingle` or `WakeByAddressAll`. Deadlines are QPC nanoseconds, and waits of 1 ms or more pass the millisecond floor of the remaining time. Under 1 ms, the loop re-checks the word in 100 µs high-resolution-timer slices, spinning at most 50 µs. This replaces AnyPS5 main's (merged PR #5) 0.5 ms spin.
 
 **Mutex word** (the whole 8-byte guest slot, little-endian, all accesses 64-bit atomics):
 
 ```
 bit 63 INIT | 62 DESTROYED | 58..56 type (1 errchk, 2 recursive, 3 normal) | 47..32 recursion-1 | 31 CONTENDED | 23..0 owner tid
-slot == 0 -> static default (ErrorCheck, as PR5 Posix/Mutex.cpp:45)   slot == 1 -> adaptive (Normal)
+slot == 0 -> static default (ErrorCheck, as AnyPS5 main@75a8668 `Posix/Mutex.cpp:32`)   slot == 1 -> adaptive (Normal)
 ```
 
 Canonical user pointers never set bit 63, so INIT words cannot collide with the old pointer representation.
@@ -80,7 +80,7 @@ struct EventFlag { std::atomic<u64> pattern; std::atomic<u64> epoch; // bumped b
 ```
 
 - **Event flag wait:** a CAS loop on `pattern` implements the AND/OR checks and the CLEAR_ALL/CLEAR_PAT modes. Waiters sleep on `epoch`. Set does `fetch_or`, bumps `epoch` and wakes all when waiters are present. Cancel and delete bump `epoch` and store a status the woken waiters read.
-- **FIFO semaphores:** keep PR5's FIFO order through an intrusive queue of per-waiter futex words, guarded by an internal futex spinlock. Non-FIFO semaphores are a pure counter futex.
+- **FIFO semaphores:** keep AnyPS5 main's (merged PR #5) FIFO order through an intrusive queue of per-waiter futex words, guarded by an internal futex spinlock. Non-FIFO semaphores are a pure counter futex.
 
 **`_umtx_op`.** This follows the public FreeBSD semantics:
 
@@ -150,7 +150,7 @@ An unknown operation returns `EINVAL` and is logged once per operation.
   - **SharpEMU `Pthread*SemanticsTests`:** POSIX mutex attribute invariants, timed condvar deadline precision, writer-preference rwlock starvation prevention.
   - **SharpEMU `Fiber*Tests` (M4):** fiber stack allocation, context switching, migration across threads, and fiber-local storage (FLS) isolation.
   - **Wine / Proton Concurrency Perturbation:** high-contention `WaitOnAddress` race conditions under thread affinity perturbation.
-- **Microbenchmarks** (M1 exit): an uncontended lock/unlock pair is **at least 10× faster** than main's implementation. Also measured: contended hand-off latency, condition-variable round trip, `sceKernelUsleep(100)` error (p50/p99), and the CPU cost of a 1 ms sleep.
+- **Microbenchmarks** (M1 exit): an uncontended lock/unlock pair is **at least 10× faster** than main@e06dbff's implementation. Also measured: contended hand-off latency, condition-variable round trip, `sceKernelUsleep(100)` error (p50/p99), and the CPU cost of a 1 ms sleep.
 - **Local regression:** per-run telemetry counts contended waits, `Unsupported()` hits (target 0) and watchdog heartbeats. Bugsnax job-system coverage is checked at M4.
 
 ## Milestones

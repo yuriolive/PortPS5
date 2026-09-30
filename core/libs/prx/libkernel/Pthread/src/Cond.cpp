@@ -452,7 +452,7 @@ int APS5_VABI scePthreadCondBroadcast(PthreadCond* cond) noexcept {
  */
 int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) noexcept {
     (void)thread;
-    // POSIX permits broadcast-as-signal (spurious wakeup); matches PR5.
+    // POSIX permits broadcast-as-signal (spurious wakeup); matches AnyPS5 main (merged PR #5).
     return scePthreadCondBroadcast(cond);
 }
 
