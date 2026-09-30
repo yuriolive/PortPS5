@@ -283,8 +283,14 @@ void PadManager::PublishControllerInput(int slot, const PadInputState& input) {
     std::lock_guard lock(mutex);
     if (failure) std::rethrow_exception(failure);
     auto& s = slots[static_cast<std::size_t>(slot)];
-    s.controllerInput = input;
+    // First sample from a controller establishes the full connected state even
+    // if SetControllerConnected was never called, and counts as one (re)connect.
+    if (!s.controllerPresent) {
+        ++s.connectedCount;
+    }
     s.controllerPresent = true;
+    s.connected = true;
+    s.controllerInput = input;
 }
 
 void PadManager::SetControllerConnected(int slot, bool connected) {
@@ -321,6 +327,27 @@ void PadManager::TestSetSlotConnected(int slot, bool connected) {
             ++s.connectedCount;
         }
     }
+}
+
+/**
+ * Restores `slot` to its constructed state (closed, no controller, initial
+ * connectedCount, zeroed timestamp baseline). Test-only: production code never
+ * resets a slot. Thread-safe (takes the manager mutex). Out-of-range slots are
+ * ignored. The timestamp is zeroed because ReadState advances it monotonically
+ * from max(process time, lastTimestamp), so a stale value would leak one test's
+ * timestamp sequence into the next.
+ */
+void PadManager::TestResetSlot(int slot) {
+    if (slot < 0 || slot >= PAD_MAX_SLOTS) return;
+    std::lock_guard lock(mutex);
+    auto& s = slots[static_cast<std::size_t>(slot)];
+    s.opened = false;
+    s.controllerPresent = false;
+    s.controllerInput = {};
+    s.lastTimestamp = 0;
+    // Slot 0 is the always-present keyboard/mouse pad (count 1); others start at 0.
+    s.connected = (slot == 0);
+    s.connectedCount = static_cast<std::uint8_t>(slot == 0 ? 1 : 0);
 }
 
 void Initialize() {
