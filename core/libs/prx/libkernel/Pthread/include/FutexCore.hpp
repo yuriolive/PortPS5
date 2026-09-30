@@ -10,7 +10,7 @@
 // word after each return, so spurious wakeups are allowed. Wakes use
 // WakeByAddressSingle/All. Deadlines are QPC nanoseconds; waits >=1ms pass
 // the millisecond floor of the remaining time, under 1ms the caller loops in
-// ~100us slices spinning at most 50us (this replaces PR5's 0.5ms spin).
+// ~100us slices spinning at most 50us (this replaces the 0.5ms spin in AnyPS5 main (merged PR #5)).
 // Ordering: all word accesses are 64/32-bit atomics via atomic_ref; the
 // expected-value check inside WaitOnAddress plus the re-check loop prevents
 // lost wakeups (publish word update before wake, with release/acquire).
