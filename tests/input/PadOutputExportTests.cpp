@@ -418,9 +418,6 @@ TEST_F(PadOutputTest, GetTriggerEffectStateWritesEightBytesAndKeepsCookie) {
     EXPECT_EQ(scePadGetTriggerEffectState(-1, &frame.state), PAD_ERROR_INVALID_HANDLE);
 }
 
-// Invariant: with a pad open, handle 0 is never a valid scePadReadState handle
-// (PortPS5 handles are slot + 1) while the real handle reads fine. Port of
-// sharpemu ReadState_RejectsHandleZeroOnceAPadIsOpen (GPL-2.0-or-later).
 // Invariant: every export that dereferences a guest pointer rejects an unmapped (non-null) pointer
 // with PAD_ERROR_INVALID_ARG instead of faulting the host (review finding on #81; the earlier code
 // only null-checked). Precondition: slot 1 is open (fixture). Address 0x1000 is below any mapping
@@ -442,6 +439,9 @@ TEST_F(PadOutputTest, UnmappedGuestPointersAreRejected) {
     EXPECT_EQ(scePadReadState(1, &good), PAD_OK);
 }
 
+// Invariant: with a pad open, handle 0 is never a valid scePadReadState handle
+// (PortPS5 handles are slot + 1) while the real handle reads fine. Port of
+// sharpemu ReadState_RejectsHandleZeroOnceAPadIsOpen (GPL-2.0-or-later).
 TEST_F(PadOutputTest, ReadStateRejectsHandleZeroOnceAPadIsOpen) {
     PadData data{};
     EXPECT_EQ(scePadReadState(0, &data), PAD_ERROR_INVALID_HANDLE);
