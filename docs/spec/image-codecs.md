@@ -32,6 +32,7 @@ Ported from AnyPS5 `main` (commits `94c73192`, `5853fec9`, `44208261`, `16290424
 - stb is licence-compatible with GPL-2.0-only (MIT or public domain, choose either; see `3rdparty/stb/LICENSE`). It is pinned as a submodule, not vendored piecemeal.
 - The shared layer does not throw. Library wrappers map `nullopt` to SCE codes, or to `Unsupported()` when validation has already passed and only host allocation or encoder failure remains.
 - Unsupported modes abort loudly instead of emitting wrong output (`.agents/rules/no-title-hacks.md`: no silent skips).
+- Every guest range a codec export reads or writes goes through `GuestMemoryValidation` ([guest-memory.md](guest-memory.md) "Validation API") before use: param structs, the live-handle tag, work memory, the pixel or PNG buffer, `info`/`output_info` structs and the output raster. Error mapping: an unreadable param struct returns the same code as a null one (`INVALID_ADDR` for JpegEnc, `INVALID_PARAM` for PngDec param structs), an unreadable handle returns `INVALID_HANDLE`, and any unusable data buffer returns `INVALID_ADDR`. Output buffers are checked for the bytes actually written, not the title's declared capacity. `scePngDecParseHeader` and `scePngDecDecode` require the whole declared `png_mem_size` to be readable.
 
 ## Target design
 
@@ -86,7 +87,7 @@ All tests are GoogleTest through `portps5_add_gtest`, run in hosted CI (no GPU),
 
 ## Open questions
 
-- **Guest pointer validation.** No guest-memory range-validation API is exported to PRXs. These libraries validate null, alignment and size arithmetic but read guest buffers with raw pointers, like the rest of the tree. Replace with the guest-memory API when it lands ([guest-memory.md](guest-memory.md); bean `portps5-8l0d`).
+- **Guest pointer validation.** Done for `libSceJpegEnc` and `libScePngDec` through `GuestMemoryValidation` ([guest-memory.md](guest-memory.md) "Validation API"; bean `portps5-8l0d`). Unusable data buffers return `INVALID_ADDR`; unreadable param structs return the same code as a null one. `scePngDecParseHeader`/`Decode` require the whole declared `png_mem_size` to be readable, which is stricter than a parser that stops at the header; whether the console library tolerates an over-declared size is unverified.
 - **`scePngDecCreate` `max_image_width`** is stored but never enforced against the image width; the real library's behaviour is unverified (bean `portps5-jvsq`).
 - **`scePngDecDecode` return value** (`width<<16|height`, or `0` when a dimension exceeds 32767) is ported from AnyPS5 and not independently verified.
 - **`sceJpegEncEncode`**: the `compression_ratio` to stb quality mapping is a linear approximation; `output_info->height` echoes the input height; a negative `restart_interval` is treated as no restart. None is verified against hardware.

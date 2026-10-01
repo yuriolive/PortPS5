@@ -28,12 +28,12 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "PIE", "RUF", "ISC", 
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["check_comments", "progress"]
+known-first-party = ["check_comments", "progress", "regress", "regress_metrics"]
 
-# Test methods (test_*) are self-describing by name; helper functions,
+# Test methods and pytest test functions (test_*) are self-describing by name; helper functions,
 # modules, classes and packages still require docstrings everywhere.
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D102"]
+"tests/**" = ["D102", "D103"]
 "core/**/tests/**" = ["D102"]
 
 [tool.ruff.format]

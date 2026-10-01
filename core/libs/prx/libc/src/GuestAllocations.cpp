@@ -1,9 +1,20 @@
+// GuestAllocations.cpp: the guest allocation registry (ranges, protections,
+// pins) shared by libc, libkernel and the AGC driver.
+//
+// Every access goes through the tracking recursive mutex taken by Mutation (or
+// internally by the noexcept read-only queries such as Cover/Acquire). The
+// mutating exports throw std::runtime_error on contract violations and are
+// only called from host code that catches it; the noexcept queries never throw
+// so APS5_VABI callers (GuestMemoryValidation) can use them directly.
+
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestMemoryTracking.hpp"
+#include <algorithm>
 #include <limits>
 #include <iterator>
 #include <map>
 #include <stdexcept>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -213,21 +224,47 @@ void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, st
     registry().ranges.swap(replacement);
 }
 
-void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, bool)>& apply) {
-    GuestAllocationsRequireUnpinned_nid_postfix(mutation, pointer, bytes);
+/**
+ * Walks the registered fragments (not the allocation extents) that overlap the
+ * request, so a hole left inside an allocation by an earlier partial unmap, or
+ * a gap between allocations, is skipped instead of being treated as a
+ * registered range. All pieces are collected and checked for releasability
+ * before the first host unmap, so a request that touches image memory fails
+ * without unmapping anything. Each piece is then applied and committed to the
+ * registry separately: if the host unmap of piece N throws, pieces 0..N-1 are
+ * already gone from both the host and the registry.
+ */
+void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
-    const auto found = registry().ranges.upper_bound(address);
-    require(found != registry().ranges.begin(), "unmap address is not registered");
-    const auto& range = *std::prev(found)->second;
-    require(range.releasable, "guest image memory cannot be unmapped");
-    require(address >= range.address && address - range.allocationAddress <= range.allocationBytes && bytes <= range.allocationBytes - (address - range.allocationAddress), "unmap crosses allocation boundaries");
-    auto replacement = replaceRange(pointer, bytes, true, false, false);
-    bool last = true;
-    for (const auto& [base, entry] : replacement) {
-        if (entry->allocationAddress == range.allocationAddress) last = false;
+    require(bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest unmap range");
+    GuestAllocationsRequireUnpinned_nid_postfix(mutation, pointer, bytes);
+    const auto end = address + bytes;
+    struct Piece {
+        std::uint64_t first;
+        std::uint64_t last;
+        std::uint64_t allocation;
+    };
+    std::vector<Piece> pieces;
+    auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;  // the one fragment starting before `address` that may overlap it
+    for (; it != ranges.end() && it->first < end; ++it) {
+        const auto& range = *it->second;
+        const auto finish = range.address + range.bytes;
+        if (finish <= address) continue;
+        require(range.releasable, "guest image memory cannot be unmapped");
+        pieces.push_back({std::max<std::uint64_t>(range.address, address), std::min<std::uint64_t>(finish, end), range.allocationAddress});
     }
-    apply(reinterpret_cast<const void*>(range.allocationAddress), last);
-    registry().ranges.swap(replacement);
+    require(!pieces.empty(), "unmap address is not registered");
+    for (const auto& piece : pieces) {
+        auto replacement = replaceRange(reinterpret_cast<const void*>(piece.first), piece.last - piece.first, true, false, false);
+        bool last = true;
+        for (const auto& [base, entry] : replacement) {
+            if (entry->allocationAddress == piece.allocation) last = false;
+        }
+        apply(reinterpret_cast<const void*>(piece.first), static_cast<std::size_t>(piece.last - piece.first), reinterpret_cast<const void*>(piece.allocation), last);
+        ranges.swap(replacement);
+    }
 }
 
 Lease GuestAllocationsAcquire_nid_postfix() {
@@ -237,6 +274,46 @@ Lease GuestAllocationsAcquire_nid_postfix() {
         if (range->readable && range->bytes != 0) result.push_back(range);
     }
     return result;
+}
+
+/**
+ * Walks the registered ranges in address order. Adjacent ranges with the same
+ * permission may jointly cover a request (a mapping split by mprotect leaves
+ * several Range entries), so coverage is tracked with a moving cursor rather
+ * than requiring one range to contain the whole request. A registered range
+ * without the requested permission is reported as Denied instead of falling
+ * back to the host: the registry holds the guest's idea of the protection and
+ * the host protection can differ (the write tracker makes tracked pages
+ * read-only on the host while the guest still sees them as writable).
+ */
+Coverage GuestAllocationsCover_nid_postfix(std::uint64_t address, std::uint64_t bytes, bool writable, std::uint64_t* gapStart, std::uint64_t* gapEnd) noexcept {
+    std::lock_guard lock(registry().mutex);
+    const auto end = address + bytes;  // caller rejected wrap
+    auto cursor = address;
+    const auto& ranges = registry().ranges;
+    // The only range that can start before `address` yet overlap it is the one just before upper_bound.
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end() && cursor < end; ++it) {
+        const auto& range = *it->second;
+        const auto finish = range.address + range.bytes;
+        if (finish <= cursor) continue;
+        if (range.address >= end) break;
+        if (range.address > cursor) {
+            // Unregistered hole before the next range.
+            *gapStart = cursor;
+            *gapEnd = std::min<std::uint64_t>(range.address, end);
+            return Coverage::Gap;
+        }
+        if (writable ? !range.writable : !range.readable) return Coverage::Denied;
+        cursor = finish;
+    }
+    if (cursor < end) {
+        *gapStart = cursor;
+        *gapEnd = end;
+        return Coverage::Gap;
+    }
+    return Coverage::Covered;
 }
 
 }

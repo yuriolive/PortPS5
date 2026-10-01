@@ -1,3 +1,6 @@
+// Sampled host texture lifetime and detile upload (AGC graphics subsystem).
+// release() runs from the destructor and must not throw; render-target images go back to
+// ResidentImagePool instead of being freed. See Texture.hpp and RenderTexture.cpp.
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"
@@ -206,6 +209,12 @@ Texture::~Texture() {
 void Texture::release() noexcept {
     upload.reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+    if (pool && recyclable) {
+        // upload.reset() above waited for the copy; a Texture is released only once no draw holds it,
+        // so the image is idle and can be recycled instead of freed.
+        pool->Release(poolKey, {image, memory, allocationBytes});
+        return;
+    }
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
     if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
 }

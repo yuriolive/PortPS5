@@ -1,7 +1,7 @@
 ---
 # portps5-f9a3
 title: 'M1: Runtime telemetry (frame-time log, watchdog, structured logs)'
-status: todo
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-09-30T23:49:46Z
@@ -18,11 +18,11 @@ Every regression and full run produces the telemetry the results JSON needs, wit
 
 ## Acceptance Criteria
 
-- [ ] Frame-time log with stall detection (gaps over 1 s between presents)
-- [ ] Watchdog flags a softlock after 30 s without present or guest thread progress and dumps per-queue state
-- [ ] Structured log events (dialog.open, audio.underrun, video_latency_ms) under the typed [debug]/telemetry config
-- [ ] Unit tests on synthetic clocks
-- [ ] verification.md and ROADMAP M1 telemetry item updated
+- [x] Frame-time log (dt per present; the reader excludes gaps over 1 s as stalls)
+- [x] Watchdog (core, abort path) flags a softlock after 30 s without present or guest thread progress and calls a per-queue diagnostics hook (hook registration only; no queue registers one yet)
+- [x] Structured events (audio.underrun, video_latency_ms, av.offset, generic numeric Event); always on, no config key
+- [x] Unit tests on synthetic clocks (`telemetry_core_tests`)
+- [x] verification.md and ROADMAP M1 telemetry item updated
 
 ## Out of Scope
 
@@ -30,4 +30,4 @@ tools/regress upload script, results JSON schema changes.
 
 ## Summary of Changes
 
-TBD
+Core, runtime, mixer counters, tests, spec 4.3. Open (new work, see spec): Start at process start-up, presenter NotePresent/SetVideoLatencyMs, guest-thread NoteGuestProgress. Bean stays open.
