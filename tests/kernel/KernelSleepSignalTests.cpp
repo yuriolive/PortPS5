@@ -22,6 +22,7 @@ unsigned int APS5_VABI sceKernelSleep(unsigned int seconds);
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet);
 int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet);
 int* APS5_VABI __error_nid_postfix();
+int APS5_VABI usleep_nid_postfix(unsigned int microseconds);
 }
 
 namespace {
@@ -90,6 +91,16 @@ TEST(KernelSigprocmask, InvalidHowIsEinvalAndChangesNothing) {
     GuestSignalSet current{};
     ASSERT_EQ(_sigprocmask_nid_postfix(kSigBlock, nullptr, &current), 0);
     EXPECT_EQ(current.bits[0], 0u);
+}
+
+// Invariant: the POSIX usleep export exists (it used to be unresolved), returns 0
+// and sleeps at least the requested time; 0 microseconds returns promptly.
+TEST(KernelSleep, UsleepSleepsAndReturnsZero) {
+    EXPECT_EQ(usleep_nid_postfix(0), 0);
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_EQ(usleep_nid_postfix(20000), 0);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    EXPECT_GE(elapsed, std::chrono::milliseconds(19));
 }
 
 }  // namespace

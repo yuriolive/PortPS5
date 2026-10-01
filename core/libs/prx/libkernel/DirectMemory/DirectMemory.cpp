@@ -134,13 +134,30 @@ int MapAligned(void* addr, size_t len, int prot, int flags, size_t alignment, vo
     ret = ValidateAlignment(alignment, resolvedAlign);
     if (ret != 0) return ret;
     constexpr int guestMapFixed = 0x10;
+    constexpr int guestMapNoOverwrite = 0x80;
     constexpr int guestMapNoCoalesce = 0x400000;
-    if ((flags & ~(guestMapFixed | guestMapNoCoalesce)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    if ((flags & ~(guestMapFixed | guestMapNoOverwrite | guestMapNoCoalesce)) != 0) return SCE_KERNEL_ERROR_EINVAL;
     if ((flags & guestMapFixed) != 0) {
         ret = ValidateRange(addr, len, resolvedAlign);
         if (ret != 0) return ret;
+        // NO_OVERWRITE needs no extra handling here: the callers already refuse a fixed mapping that
+        // overlaps a registered allocation (RequireAvailable), and the host reservation underneath is
+        // created without replacing anything. Replacing an existing mapping is not supported, so a
+        // fixed mapping without NO_OVERWRITE behaves the same way.
     } else if (addr != nullptr) {
-        return SCE_KERNEL_ERROR_EINVAL;
+        // Without MAP_FIXED the address is only a hint, as on FreeBSD: use it when the range is free
+        // and suitably aligned, otherwise place the mapping anywhere. (FreeBSD searches upwards from
+        // the hint; placing it anywhere is a documented simplification, see guest-memory.md.)
+        const auto hint = reinterpret_cast<std::uintptr_t>(addr);
+        if (ValidateRange(addr, len, resolvedAlign) == 0 && hint != 0) {
+            try {
+                mappedOut = GuestMemoryBacking::GuestMemoryBackingMap_nid_postfix(addr, len, resolvedAlign, prot);
+                return 0;
+            } catch (...) {
+                // Hint unavailable (occupied or unsupported by the host): fall through to anywhere.
+            }
+        }
+        addr = nullptr;
     }
     try {
         mappedOut = GuestMemoryBacking::GuestMemoryBackingMap_nid_postfix(addr, len, resolvedAlign, prot);
@@ -185,7 +202,7 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
 
     try {
         GuestAllocations::Mutation mutation;
-        if (*addr != nullptr) mutation.RequireAvailable(*addr, len);
+        if (*addr != nullptr && (flags & 0x10) != 0) mutation.RequireAvailable(*addr, len);  // only MAP_FIXED must be free; otherwise *addr is a hint
         void* mapped = nullptr;
         ret = MapAligned(*addr, len, linuxProt, flags, alignment, mapped);
         if (ret != 0) return ret;
@@ -218,7 +235,7 @@ int DoMapAnon(void** addr, size_t len, int prot, int flags) {
 
     try {
         GuestAllocations::Mutation mutation;
-        if (*addr != nullptr) mutation.RequireAvailable(*addr, len);
+        if (*addr != nullptr && (flags & 0x10) != 0) mutation.RequireAvailable(*addr, len);  // only MAP_FIXED must be free; otherwise *addr is a hint
         void* mapped = nullptr;
         ret = MapAligned(*addr, len, linuxProt, flags, PS5_PAGE_SIZE, mapped);
         if (ret != 0) return ret;
@@ -299,8 +316,10 @@ int DoMunmap(void* addr, size_t len) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
     try {
         GuestAllocations::Mutation mutation;
-        mutation.Unmap(addr, len, [&](const void*, bool) {
-            Unmap(addr, len);
+        // The range may span several registered mappings and unregistered gaps (FreeBSD munmap
+        // semantics): the registry reports each registered piece and only those are host-unmapped.
+        mutation.Unmap(addr, len, [&](const void* piece, std::size_t pieceBytes, const void*, bool) {
+            Unmap(const_cast<void*>(piece), pieceBytes);
         });
         PoolPurgeCommittedRange(reinterpret_cast<uintptr_t>(addr), len);
         return 0;
