@@ -21,129 +21,211 @@
 extern "C" {
 // NpManager (offline signed-out).
 int APS5_VABI sceNpAbortRequest(int) noexcept;
+// Export under test: sceNpCheckCallback (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpCheckCallback(void) noexcept;
+// Export under test: sceNpCheckNpAvailability (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpCheckNpAvailability(int, const char*, void*) noexcept;
+// Export under test: sceNpCheckNpReachability (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpCheckNpReachability(int, int) noexcept;
+// Export under test: sceNpCheckPremium (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpCheckPremium(int, const NpCheckPremiumParameter*, NpCheckPremiumResult*) noexcept;
+// Export under test: sceNpCreateAsyncRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpCreateAsyncRequest(const NpCreateAsyncRequestParameter*) noexcept;
+// Export under test: sceNpCreateRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpCreateRequest(void) noexcept;
+// Export under test: sceNpDeleteRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpDeleteRequest(int) noexcept;
+// Export under test: sceNpGetAccountAge (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetAccountAge(int, int, uint8_t*) noexcept;
+// Export under test: sceNpGetAccountCountryA (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetAccountCountryA(int, void*) noexcept;
+// Export under test: sceNpGetAccountIdA (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetAccountIdA(int, uint64_t*) noexcept;
+// Export under test: sceNpGetNpId (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetNpId(int, NpId*) noexcept;
+// Export under test: sceNpGetNpReachabilityState (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetNpReachabilityState(int, uint32_t*) noexcept;
+// Export under test: sceNpGetOnlineId (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetOnlineId(int, NpOnlineId*) noexcept;
+// Export under test: sceNpGetState (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetState(int, uint32_t*) noexcept;
+// Export under test: sceNpHasSignedUp (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpHasSignedUp(int, bool*) noexcept;
+// Export under test: sceNpPollAsync (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpPollAsync(int, int*) noexcept;
+// Export under test: sceNpRegisterGamePresenceCallback (linked from its PRX; see the file header for expected codes).
 void APS5_VABI sceNpRegisterGamePresenceCallback(void*, void*) noexcept;
+// Export under test: sceNpRegisterNpReachabilityStateCallback (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpRegisterNpReachabilityStateCallback(void*, void*) noexcept;
+// Export under test: sceNpRegisterPlusEventCallback (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpRegisterPlusEventCallback(void*, void*) noexcept;
+// Export under test: sceNpRegisterPremiumEventCallback (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpRegisterPremiumEventCallback(void*, void*) noexcept;
+// Export under test: sceNpRegisterStateCallback (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpRegisterStateCallback(void*, void*) noexcept;
+// Export under test: sceNpSetContentRestriction (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpSetContentRestriction(const NpContentRestriction*) noexcept;
+// Export under test: sceNpSetNpTitleId (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpSetNpTitleId(const NpTitleId*, const NpTitleSecret*) noexcept;
+// Export under test: sceNpUnregisterStateCallback (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpUnregisterStateCallback(void) noexcept;
+// Export under test: sceNpGetAccountLanguage2 (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGetAccountLanguage2(int, int, void*) noexcept;
+// Export under test: sceNpNotifyPremiumFeature (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpNotifyPremiumFeature(const void*) noexcept;
+// Export under test: sceNpRegisterStateCallbackA (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpRegisterStateCallbackA(void*, void*) noexcept;
+// Export under test: sceNpUnregisterStateCallbackA (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpUnregisterStateCallbackA(int) noexcept;
 // NpAuth.
 int APS5_VABI sceNpAuthAbortRequest(int) noexcept;
+// Export under test: sceNpAuthCreateAsyncRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpAuthCreateAsyncRequest(const void*) noexcept;
+// Export under test: sceNpAuthCreateRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpAuthCreateRequest(void) noexcept;
+// Export under test: sceNpAuthDeleteRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpAuthDeleteRequest(int) noexcept;
+// Export under test: sceNpAuthGetAuthorizationCodeV3 (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpAuthGetAuthorizationCodeV3(int, const void*, void*, int*) noexcept;
+// Export under test: sceNpAuthGetIdTokenV3 (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpAuthGetIdTokenV3(int, const void*, void*) noexcept;
+// Export under test: sceNpAuthPollAsync (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpAuthPollAsync(int, int*) noexcept;
+// Export under test: sceNpAuthWaitAsync (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpAuthWaitAsync(int, int*) noexcept;
 // WebApi2.
 int APS5_VABI sceNpWebApi2AbortRequest(int64_t) noexcept;
+// Export under test: sceNpWebApi2CreateRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpWebApi2CreateRequest(int, const char*, const char*, const char*, const void*, int64_t*) noexcept;
+// Export under test: sceNpWebApi2CreateUserContext (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpWebApi2CreateUserContext(int, int) noexcept;
+// Export under test: sceNpWebApi2DeleteRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpWebApi2DeleteRequest(int64_t) noexcept;
+// Export under test: sceNpWebApi2GetHttpResponseHeaderValue (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpWebApi2GetHttpResponseHeaderValue(int64_t, const char*, char*, size_t) noexcept;
+// Export under test: sceNpWebApi2SendRequest (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpWebApi2SendRequest(int64_t, const void*, size_t, NpWebApi2ResponseInformationOption*) noexcept;
+// Export under test: sceNpWebApi2Initialize (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpWebApi2Initialize(int, size_t) noexcept;
+// Export under test: sceNpWebApi2Terminate (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpWebApi2Terminate(int) noexcept;
 // Commerce / Entitlement / Session / GameIntent.
 int APS5_VABI sceNpCommerceDialogUpdateStatus(void) noexcept;
+// Export under test: sceNpEntitlementAccessGetAddcontEntitlementInfo (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfo(uint32_t, const NpUnifiedEntitlementLabel*, NpEntitlementAccessAddcontEntitlementInfo*) noexcept;
+// Export under test: sceNpEntitlementAccessGetAddcontEntitlementInfoList (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoList(uint32_t, NpEntitlementAccessAddcontEntitlementInfo*, uint32_t, uint32_t*) noexcept;
+// Export under test: sceNpEntitlementAccessGetSkuFlag (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpEntitlementAccessGetSkuFlag(uint32_t*) noexcept;
+// Export under test: sceNpEntitlementAccessInitialize (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitParam*, NpEntitlementAccessBootParam*) noexcept;
+// Export under test: sceNpSessionSignalingInitialize (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpSessionSignalingInitialize(void*) noexcept;
+// Export under test: sceNpGameIntentGetPropertyValueString (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGameIntentGetPropertyValueString(const NpGameIntentData*, const char*, char*, size_t) noexcept;
+// Export under test: sceNpGameIntentInitialize (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGameIntentInitialize(const void*) noexcept;
+// Export under test: sceNpGameIntentReceiveIntent (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGameIntentReceiveIntent(NpGameIntentInfo*) noexcept;
+// Export under test: sceNpGameIntentTerminate (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpGameIntentTerminate(void) noexcept;
 // Trophy2.
 int APS5_VABI sceNpTrophy2CreateContext(int*, int, uint32_t, uint64_t) noexcept;
+// Export under test: sceNpTrophy2CreateHandle (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2CreateHandle(int*) noexcept;
+// Export under test: sceNpTrophy2GetGameInfo (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2GetGameInfo(int, int, NpTrophy2GameDetails*, NpTrophy2GameData*) noexcept;
+// Export under test: sceNpTrophy2GetGameIcon (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2GetGameIcon(int, int, void*, size_t*) noexcept;
+// Export under test: sceNpTrophy2GetGroupInfo (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2GetGroupInfo(int, int, int, NpTrophy2GroupDetails*, NpTrophy2GroupData*) noexcept;
+// Export under test: sceNpTrophy2GetGroupIcon (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2GetGroupIcon(int, int, int, void*, size_t*) noexcept;
+// Export under test: sceNpTrophy2GetTrophyInfo (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2GetTrophyInfo(int, int, int, NpTrophy2Details*, NpTrophy2Data*) noexcept;
+// Export under test: sceNpTrophy2GetTrophyIcon (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2GetTrophyIcon(int, int, int, void*, size_t*) noexcept;
+// Export under test: sceNpTrophy2RegisterUnlockCallback (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpTrophy2RegisterUnlockCallback(void*, void*) noexcept;
 // UDS.
 int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInitParam*) noexcept;
+// Export under test: sceNpUniversalDataSystemCreateContext (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpUniversalDataSystemCreateContext(int*, int, uint32_t, uint64_t) noexcept;
+// Export under test: sceNpUniversalDataSystemCreateHandle (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpUniversalDataSystemCreateHandle(int*) noexcept;
+// Export under test: sceNpUniversalDataSystemPostEvent (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpUniversalDataSystemPostEvent(int, int, const void*, uint64_t) noexcept;
+// Export under test: sceNpUniversalDataSystemTerminate (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceNpUniversalDataSystemTerminate(void) noexcept;
 // UserService.
 int APS5_VABI sceUserServiceGetAccessibilityVibration(int, int32_t*) noexcept;
+// Export under test: sceUserServiceGetAgeLevel (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetAgeLevel(int, uint32_t*) noexcept;
+// Export under test: sceUserServiceGetEvent (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent*) noexcept;
+// Export under test: sceUserServiceGetGamePresets (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetGamePresets(int, UserServiceGamePresets*) noexcept;
+// Export under test: sceUserServiceGetInitialUser (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetInitialUser(int*) noexcept;
+// Export under test: sceUserServiceGetLoginUserIdList (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList*) noexcept;
+// Export under test: sceUserServiceGetUserName (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetUserName(int, char*, size_t) noexcept;
+// Export under test: sceUserServiceGetUserNumber (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetUserNumber(int, int32_t*) noexcept;
+// Export under test: sceUserServiceGetPlatformPrivacyWs1 (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t, int32_t*) noexcept;
+// Export under test: sceUserServiceInitialize (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceUserServiceInitialize(const void*) noexcept;
 // SystemService.
 int APS5_VABI sceSystemServiceGetDisplaySafeAreaInfo(SystemServiceDisplaySafeAreaInfo*) noexcept;
+// Export under test: sceSystemServiceGetNoticeScreenSkipFlag (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSystemServiceGetNoticeScreenSkipFlag(bool*) noexcept;
+// Export under test: sceSystemServiceGetStatus (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus*) noexcept;
+// Export under test: sceSystemServiceHideSplashScreen (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSystemServiceHideSplashScreen(void) noexcept;
+// Export under test: sceSystemServiceParamGetInt (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSystemServiceParamGetInt(int, int*) noexcept;
+// Export under test: sceSystemServiceParamGetString (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSystemServiceParamGetString(int, char*, size_t) noexcept;
+// Export under test: sceSystemServiceReceiveEvent (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSystemServiceReceiveEvent(SystemServiceEvent*) noexcept;
-// MsgDialog.
-int APS5_VABI sceMsgDialogInitialize(void) noexcept;
-int APS5_VABI sceMsgDialogOpen(const void*) noexcept;
-int APS5_VABI sceMsgDialogGetStatus(void) noexcept;
-int APS5_VABI sceMsgDialogUpdateStatus(void) noexcept;
-int APS5_VABI sceMsgDialogGetResult(void*) noexcept;
-int APS5_VABI sceMsgDialogClose(void) noexcept;
-int APS5_VABI sceMsgDialogTerminate(void) noexcept;
-int APS5_VABI sceMsgDialogProgressBarSetValue(int, uint32_t) noexcept;
 // SaveDataDialog.native (same names as plain; link picks one — test native path
 // via direct statics would collide, so exercise native only when its lib is
 // linked; plain lib provides identical names and would duplicate. To avoid
 // duplicate symbols, this test links native only; plain behavior mirrors it
 // except completing in Open, verified by review plus native sequence below).
 int APS5_VABI sceSaveDataDialogInitialize(void) noexcept;
+// Export under test: sceSaveDataDialogOpen (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSaveDataDialogOpen(const void*) noexcept;
+// Export under test: sceSaveDataDialogGetStatus (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSaveDataDialogGetStatus(void) noexcept;
+// Export under test: sceSaveDataDialogUpdateStatus (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSaveDataDialogUpdateStatus(void) noexcept;
+// Export under test: sceSaveDataDialogGetResult (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSaveDataDialogGetResult(void*) noexcept;
+// Export under test: sceSaveDataDialogClose (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSaveDataDialogClose(const void*) noexcept;
+// Export under test: sceSaveDataDialogTerminate (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSaveDataDialogTerminate(void) noexcept;
+// Export under test: sceSaveDataDialogIsReadyToDisplay (linked from its PRX; see the file header for expected codes).
 int APS5_VABI sceSaveDataDialogIsReadyToDisplay(void) noexcept;
 // CommonDialog.
 int APS5_VABI sceCommonDialogInitialize(void) noexcept;
+// Export under test: sceCommonDialogIsUsed (linked from its PRX; see the file header for expected codes).
 bool APS5_VABI sceCommonDialogIsUsed(void) noexcept;
 // Pad.
 int APS5_VABI scePadInit_nid_postfix(void) noexcept;
+// Export under test: scePadOpen_nid_postfix (linked from its PRX; see the file header for expected codes).
 int APS5_VABI scePadOpen_nid_postfix(int, int, int, const void*) noexcept;
+// Export under test: scePadReadState (linked from its PRX; see the file header for expected codes).
 int APS5_VABI scePadReadState(int, PadData*) noexcept;
+// Export under test: scePadRead_nid_postfix (linked from its PRX; see the file header for expected codes).
 int APS5_VABI scePadRead_nid_postfix(int, PadData*, int) noexcept;
+// Export under test: scePadGetControllerInformation (linked from its PRX; see the file header for expected codes).
 int APS5_VABI scePadGetControllerInformation(int, PadControllerInformation*) noexcept;
+// Export under test: scePadSetMotionSensorState (linked from its PRX; see the file header for expected codes).
 int APS5_VABI scePadSetMotionSensorState(int, bool) noexcept;
 }
 
@@ -396,24 +478,6 @@ void TestSystemService() {
  REQUIRE(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT);
 }
 
-void TestMsgDialog() {
- REQUIRE(sceMsgDialogInitialize() == 0);
- REQUIRE(sceMsgDialogInitialize() == static_cast<int>(0x80B80004));
- REQUIRE(sceMsgDialogOpen(nullptr) == static_cast<int>(0x80B8000D));
- int dummy = 1;
- REQUIRE(sceMsgDialogOpen(&dummy) == 0);
- // Why RUNNING here: Open must not complete; UpdateStatus finishes.
- REQUIRE(sceMsgDialogGetStatus() == 2);
- REQUIRE(sceMsgDialogUpdateStatus() == 3);
- REQUIRE(sceMsgDialogGetStatus() == 3);
- int result = 0;
- REQUIRE(sceMsgDialogGetResult(nullptr) == static_cast<int>(0x80B8000D));
- REQUIRE(sceMsgDialogGetResult(&result) == 0);
- REQUIRE(sceMsgDialogProgressBarSetValue(0, 100) == 0);
- REQUIRE(sceMsgDialogClose() == 0);
- REQUIRE(sceMsgDialogTerminate() == 0);
-}
-
 void TestSaveDataDialogNative() {
  REQUIRE(sceSaveDataDialogInitialize() == SAVE_DATA_DIALOG_OK);
  SaveDataDirName dir{};
@@ -479,7 +543,6 @@ int main() {
  TestUds();
  TestUserService();
  TestSystemService();
- TestMsgDialog();
  TestSaveDataDialogNative();
  TestCommonDialog();
  TestPad();
