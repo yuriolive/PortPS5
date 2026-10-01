@@ -25,7 +25,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | **progress-report** | Runs `tools/progress.py` on every PR (no `main` filter): renders the base and head implementation counts (declared `APS5_VABI` functions in `core/libs/prx`, RDNA opcodes vs `tools/rdna_isa.txt`) and posts the delta as a PR comment (`progress-comment.yml`). Static source scan, no GPU, no game data. Full-site render plus badges deploy from `main` pushes via `workflows/progress.yml` (needs GitHub Pages enabled). |
 | **python-quality** | Astral toolchain gate for every Python file (`tools/`, `tests/tools/`, relinker self-tests): `ruff check` + `ruff format --check` and `pytest` with coverage over `tools/` (`fail_under = 85`, `pyproject.toml`). Runs on `ubuntu-latest` via pinned `uv` (`uv.lock` committed); versions pinned in `pyproject.toml` (`dependency-groups.dev`). CTest keeps running the same suites through stdlib `unittest` on Windows so hosted unit execution never depends on PyPI. |
 
-- **Status as of 2026-09-30:** every job above exists in `.github/workflows/` except `driver-lavapipe` (driver suites carry the `lavapipe` ctest label but no job runs them; bean `portps5-ekx3`). Sections 2 to 4 are design only: `tools/regress`, the results JSON writer and the telemetry they read (frame-time log, watchdog, structured logs) do not exist yet (beans `portps5-3m3u`, `portps5-f9a3`).
+- **Status as of 2026-09-30:** every job above exists in `.github/workflows/` except `driver-lavapipe` (driver suites carry the `lavapipe` ctest label but no job runs them; bean `portps5-ekx3`). `tools/regress.py` (conversion layout, launch, results JSON writer, pass rule) exists as of this PR (bean `portps5-3m3u`); the frame-check, checkpoint-replay and shader-corpus steps of section 2 and the upload are still open. The runtime telemetry it reads (section 4.1 contract) is not emitted yet (bean `portps5-f9a3`), so `run` reports a missing log until it lands.
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
 ## 2. Local regression (per build, maintainer GPU machine)
@@ -88,6 +88,35 @@ Results are uploaded by a local script as a PR to `compat/results/`, or as a rel
 
 - **Pass rule:** `debug_keys_set` is empty, and in warm-cache runs `spirv_compilations` = 0 and `pipeline_creations_after_warmup` = 0. A run that fails any of these reports `result: "fail"`.
 - The results JSON carries no personally identifying hardware detail beyond GPU vendor, driver and tier.
+
+### 4.1 Telemetry log contract (`portps5.telemetry/1`)
+
+The runtime writes `<install>/logs/telemetry.jsonl`, one JSON object per line, always on and independent of any `[debug]` key. `tools/regress.py` reads only the whitelisted fields below and ignores unknown events and keys, so no game text can reach the results. The first record must be `run.start`; malformed lines are errors, never skipped.
+
+| `ev` | Fields | Used for |
+|---|---|---|
+| `run.start` | `schema`, `resolution` (`WxH`), `pipeline_cache` (`warm`/`cold`), `audio_device` | header fields |
+| `frame` | `dt_ms` (time since the previous present) | `fps`, stalls, softlock gaps |
+| `softlock` | `idle_ms` | watchdog report (no present, or no guest thread progress, over 30 s) |
+| `crash` | none | `crashes` |
+| `audio.underrun` | `n` (default 1) | `audio_underruns_per_10min` |
+| `av.offset` | `ms` | `av_offset_ms_max` (absolute maximum) |
+| `warmup.end` | `warmup_ms` | `warmup_ms`; later `pipeline.create` events count |
+| `spirv.compile`, `pipeline.create` | none | `spirv_compilations`, `pipeline_creations_after_warmup` |
+| `run.end` | `capture_split`, `write_faults` | clean end marker and totals |
+
+### 4.2 Runner rules (`tools/regress.py`)
+
+- **Statistics:** stalls (`dt_ms` > 1000) are excluded from `fps` and counted in `fps.stalls`. `p1_low` = 1000 / mean of the slowest 1% (rounded up, at least one frame) of the remaining frame times. `duration_s` is the span of presented frames, the quantity the 30 minute rule uses.
+- **Softlocks:** `softlocks` is the larger of the watchdog's `softlock` events and the count of present gaps over 30 s, so a silent watchdog cannot hide one.
+- **Crashes:** `crash` events, plus one if the title ended by itself without `run.end` or with a non-zero exit code. A run the runner ends at its time limit is not a crash.
+- **Config:** `config_sha256` hashes the canonical JSON of `global.toml` overlaid by `games/<titleId>.toml`; `workarounds_set` lists enabled `[workarounds]` keys and `debug_keys_set` every `[debug]` key present. The runner refuses to run with `PORTPS5_DEBUG` set, so the hash reproduces from files. Enabling `[debug] profile` for a run therefore makes it `fail`, by the pass rule above.
+- **Additive fields:** `fail_reasons` (names of failed rule fields only), `fmv` (per-FMV `pass`/`fail` from the "FMV played" rule in [video-fmv.md](video-fmv.md)). `save_roundtrip` may be `not_run`, which fails a `full_run`. `checkpoints`, `fmv` entries and `save_roundtrip` come from `--checks-file`, written by the frame-check and save steps.
+- **Full-run pass:** all rules above plus average ≥ 30 fps, 1% low ≥ 20 fps, `duration_s` ≥ 1800, resolution ≥ 1920×1080, warm cache and `save_roundtrip` = `pass`.
+- **Layout:** `prepare` runs `relinker --windows` (never `--skip-sce-module`, which crashes guest libc++ code), copies the runtime libs and links `app0` to the dump (read-only). `run` launches `game.exe` with the install dir as cwd, sends stdout and stderr to files it never reads, and refuses any path inside the repository.
+
+**Run locally** (Windows, `release` preset, `C:\mingw64\bin` first on PATH; paths are placeholders, quote them):
+`python tools/regress.py prepare --dump "<dump dir>" --install "<out dir>" --relinker build\release\core\relinker\relinker.exe --libs build\release\core\libs\libs`, then `python tools/regress.py run --install "<out dir>" --duration-s 2100 --run-type full_run --title-id <id> --region <r> --patch <p> --name "<n>" --commit <sha> --gpu-vendor <v> --driver-version <d> --bench-cpu <n> --bench-gpu <n> --checks-file "<checks.json>"`. Review the written `compat/results/<titleId>/<commit>-<run_type>.json` (metrics, hashes, pass/fail only) before opening a PR. Raw logs, stdout and saves stay in `<out dir>`.
 
 ## 5. Test Framework Architecture (GoogleTest & GMock)
 
