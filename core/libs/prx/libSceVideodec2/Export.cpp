@@ -323,7 +323,12 @@ int EmitNext(Instance& inst, std::uint64_t handle, FrameBuffer* frame, OutputInf
 
 /** Common argument checks of Decode and Flush on the frame buffer and output reply. */
 int CheckFrameAndOutput(const FrameBuffer* frame, const OutputInfo* out) {
+    if (!GuestRangeUsable(frame, sizeof(FrameBuffer), true) || !GuestRangeUsable(out, sizeof(std::uint64_t), false)) {
+        return kErrArgumentPointer;
+    }
     if (frame->thisSize != sizeof(FrameBuffer) || !OutputInfoSizeValid(out->thisSize)) return kErrStructSize;
+    // Size validated: the whole reply block is written by FillNoPicture/EmitNext.
+    if (!GuestRangeUsable(out, static_cast<std::size_t>(out->thisSize), true)) return kErrArgumentPointer;
     if (frame->frameBufferSize == 0) return kErrFrameBufferSize;
     if (frame->frameBuffer == 0) return kErrFrameBufferPointer;
     return 0;
@@ -435,6 +440,7 @@ int APS5_VABI sceVideodec2Decode(std::uint64_t handle, const InputData* input, F
     const auto inst = Find(handle);
     if (!inst) return kErrDecoderInstance;
     if (input == nullptr || frame == nullptr || output == nullptr) return kErrArgumentPointer;
+    if (!GuestRangeUsable(input, sizeof(InputData), false)) return kErrArgumentPointer;
     if (input->thisSize != sizeof(InputData)) return kErrStructSize;
     if (const int e = CheckFrameAndOutput(frame, output)) return e;
     if (input->auSize == 0) return kErrAccessUnitSize;
@@ -517,7 +523,15 @@ int APS5_VABI sceVideodec2GetPictureInfo(const OutputInfo* output, void* first, 
     info.picWidthInMbsMinus1 = (p.width + 15) / 16 - 1;
     info.picHeightInMapUnitsMinus1 = (p.height + 15) / 16 - 1;
     info.frameMbsOnlyFlag = 1;  // Interlaced streams are not reported separately.
-    // The decoder returns already cropped pictures, so the crop offsets are zero.
+    // The decoder returns already cropped pictures; the SPS crop is recovered from the padding up to the
+    // macroblock grid. Offsets are in 4:2:0 crop units (2 luma samples) as in the SPS syntax.
+    {
+        const std::uint32_t gridW = (info.picWidthInMbsMinus1 + 1) * 16;
+        const std::uint32_t gridH = (info.picHeightInMapUnitsMinus1 + 1) * 16;
+        info.frameCropRightOffset = (gridW - p.width) / 2;
+        info.frameCropBottomOffset = (gridH - p.height) / 2;
+        info.frameCroppingFlag = info.frameCropRightOffset != 0 || info.frameCropBottomOffset != 0 ? 1 : 0;
+    }
     info.aspectRatioInfoPresentFlag = p.sarWidth != 0 && p.sarHeight != 0 ? 1 : 0;
     info.aspectRatioIdc = info.aspectRatioInfoPresentFlag ? 255 : 0;  // 255 = Extended_SAR.
     info.sarWidth = p.sarWidth;
@@ -525,7 +539,7 @@ int APS5_VABI sceVideodec2GetPictureInfo(const OutputInfo* output, void* first, 
     info.videoSignalTypePresentFlag = 1;
     info.videoFormat = 5;  // Unspecified.
     info.videoFullRangeFlag = p.colorRange == 2 ? 1 : 0;
-    info.colourDescriptionPresentFlag = p.colorPrimaries != 0 || p.colorTransfer != 0 || p.colorMatrix != 0 ? 1 : 0;
+    info.colourDescriptionPresentFlag = p.colorPrimaries > 2 || p.colorTransfer > 2 || p.colorMatrix > 2 ? 1 : 0;  // 0/2 = unspecified.
     info.colourPrimaries = p.colorPrimaries;
     info.transferCharacteristics = p.colorTransfer;
     info.matrixCoefficients = p.colorMatrix;

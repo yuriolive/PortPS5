@@ -477,6 +477,56 @@ TEST_F(Videodec2Test, PictureInfoReportsStreamMetadata) {
     EXPECT_EQ(sceVideodec2GetPictureInfo(&out, info.data(), nullptr), kOutputInfo);
 }
 
+// Review regression: a cropped SPS (30x28 inside a 32x32 grid) must be reported with the crop
+// offsets recovered from the grid padding, and a stream without VUI colour data must not claim a
+// colour description (value 2 is "unspecified" too). Fails if the offsets stay zero.
+TEST_F(Videodec2Test, PictureInfoReportsCropAndNoColourDescription) {
+    REQUIRE_HOST_DECODER();
+    DecoderSetup s;
+    ASSERT_EQ(Create(s), 0);
+    Geometry g;
+    g.cropRight = 1;   // 2 luma samples
+    g.cropBottom = 2;  // 4 luma samples
+    const auto au = Join({Sps(g), Pps(), IdrPcm(g, Pattern(g, 3))});
+    std::vector<std::uint8_t> fb(256 * 48);
+    OutputInfo out{};
+    ASSERT_EQ(Decode(au, fb, out, 1, 1), 0);
+    ASSERT_EQ(out.valid, 1);
+    ASSERT_EQ(out.width, 30u);
+    ASSERT_EQ(out.height, 28u);
+
+    std::vector<std::uint8_t> info(120, 0);
+    const std::uint64_t size = 120;
+    std::memcpy(info.data(), &size, 8);
+    ASSERT_EQ(sceVideodec2GetPictureInfo(&out, info.data(), nullptr), 0);
+    auto u32 = [&](std::size_t off) { std::uint32_t v; std::memcpy(&v, &info[off], 4); return v; };
+    EXPECT_EQ(info[53], 1);  // frame_cropping_flag
+    EXPECT_EQ(u32(56), 0u);  // left
+    EXPECT_EQ(u32(60), 1u);  // right
+    EXPECT_EQ(u32(64), 0u);  // top
+    EXPECT_EQ(u32(68), 2u);  // bottom
+}
+
+// Review regression: unreadable or unwritable guest pointers are ARGUMENT_POINTER, never a fault.
+TEST_F(Videodec2Test, DecodeProbesGuestStructPointers) {
+    REQUIRE_HOST_DECODER();
+    DecoderSetup s;
+    ASSERT_EQ(Create(s), 0);
+    const Geometry g;
+    const auto au = Join({Sps(g), Pps(), IdrPcm(g, Pattern(g, 1))});
+    std::vector<std::uint8_t> fb(1 << 16);
+    InputData in{sizeof(in), reinterpret_cast<std::uintptr_t>(au.data()), au.size(), 1, 0, 0};
+    FrameBuffer frame{sizeof(frame), reinterpret_cast<std::uintptr_t>(fb.data()), fb.size(), 0, {}};
+    OutputInfo out{};
+    out.thisSize = sizeof(out);
+    auto* bad = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    EXPECT_EQ(sceVideodec2Decode(handle_, static_cast<const InputData*>(bad), &frame, &out), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2Decode(handle_, &in, static_cast<FrameBuffer*>(bad), &out), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2Decode(handle_, &in, &frame, static_cast<OutputInfo*>(bad)), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2Flush(handle_, static_cast<FrameBuffer*>(bad), &out), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2Flush(handle_, &frame, static_cast<OutputInfo*>(bad)), kArgumentPointer);
+}
+
 // Flush with nothing pending produces no picture and no error; after Flush the decoder accepts a
 // new stream; the picture-info table is bounded (old entries are forgotten, not leaked).
 TEST_F(Videodec2Test, FlushWithNothingPendingAndPictureTableIsBounded) {

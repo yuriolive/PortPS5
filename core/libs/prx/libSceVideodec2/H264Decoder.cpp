@@ -10,6 +10,7 @@
 #include "H264Decoder.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -18,6 +19,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/buffer.h>
+#include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/pixfmt.h>
 }
@@ -162,6 +164,9 @@ DecodeStatus H264Decoder::Decode(const std::uint8_t* data, std::size_t size, con
     }
     av_packet_free(&packet);
     if (result < 0) {
+        char err[AV_ERROR_MAX_STRING_SIZE] = {};
+        av_strerror(result, err, sizeof(err));
+        std::fprintf(stderr, "[VIDEODEC2] avcodec_send_packet failed: %s\n", err);
         return DecodeStatus::BadAccessUnit;
     }
     impl_->Collect();
