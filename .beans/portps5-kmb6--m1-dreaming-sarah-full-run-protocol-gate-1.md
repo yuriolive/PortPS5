@@ -1,14 +1,15 @@
 ---
 # portps5-kmb6
-title: 'M1: Dreaming Sarah full-run protocol (gate 1)'
+title: 'M2: Dreaming Sarah full-run protocol (gate 1)'
 status: todo
 type: task
 priority: high
 created_at: 2026-09-30T23:52:22Z
-updated_at: 2026-10-01T00:18:21Z
+updated_at: 2026-10-01T17:59:26Z
 blocked_by:
     - portps5-ks96
 ---
+
 
 ## Context
 
