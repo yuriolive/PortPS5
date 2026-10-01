@@ -103,6 +103,20 @@ portps5_add_gtest(guest_allocations_unmap_tests
         unit
 )
 
+# Guest-visible direct-memory exports: query, available size, argument hardening
+portps5_add_gtest(direct_memory_export_tests
+    SOURCES
+        memory/DirectMemoryExportTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Direct memory physical pool and SceKernelMemoryPool API verification
 portps5_add_gtest(direct_memory_pool_tests
     SOURCES

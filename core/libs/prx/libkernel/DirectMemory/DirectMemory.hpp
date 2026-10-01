@@ -106,6 +106,33 @@ int APS5_VABI sceKernelAllocateDirectMemory(int64_t search_start, int64_t search
 int APS5_VABI sceKernelAllocateMainDirectMemory(size_t len, size_t alignment, int memory_type, int64_t* phys_addr_out);
 
 /**
+ * @brief Guest-visible result of sceKernelDirectMemoryQuery (explicit widths, offsets pinned).
+ */
+struct DirectMemoryQueryInfo {
+    int64_t start;       ///< First byte of the allocated run.
+    int64_t end;         ///< One past the last byte of the run.
+    int32_t memoryType;  ///< Memory type the run was allocated with.
+};
+static_assert(sizeof(DirectMemoryQueryInfo) == 24 && offsetof(DirectMemoryQueryInfo, end) == 8 && offsetof(DirectMemoryQueryInfo, memoryType) == 16,
+              "DirectMemoryQueryInfo is guest-visible");
+
+/** Query flag: when the offset is free, answer with the next allocated run instead of failing. */
+static constexpr int SCE_KERNEL_DMQ_FIND_NEXT = 1;
+
+/**
+ * @brief Queries the allocated direct-memory run containing (or, with FIND_NEXT, following) an offset.
+ * @param offset Physical direct-memory offset.
+ * @param flags 0 or SCE_KERNEL_DMQ_FIND_NEXT.
+ * @param info Receives a DirectMemoryQueryInfo; must be non-null.
+ * @param info_size Size of the caller's buffer; at least sizeof(DirectMemoryQueryInfo).
+ * @return 0; SCE_KERNEL_ERROR_EINVAL for a null buffer, negative offset or short buffer;
+ *         SCE_KERNEL_ERROR_EACCES when the offset is past the aperture or in free memory
+ *         (and, with FIND_NEXT, no allocated run follows).
+ * @note Adjacent allocations of the same memory type report one merged run.
+ */
+int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t info_size);
+
+/**
  * @brief Queries available contiguous direct memory size within a search range.
  * @param search_start Lower bound of search window.
  * @param search_end Upper bound of search window.
