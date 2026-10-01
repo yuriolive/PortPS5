@@ -1,3 +1,7 @@
+// core/libs/prx/libSceAgcDriver/Graphics/include/TextureCache.hpp
+// Cache of sampled Textures keyed by the eight T# DWORDs, validated against a guest-memory
+// snapshot or a ResidentColor generation. Owns the ResidentImagePool shared by render-target
+// copies. Used under the device graphics serialisation lock.
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURECACHE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURECACHE_HPP
 

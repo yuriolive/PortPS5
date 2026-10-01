@@ -1,3 +1,6 @@
+// TextureCache lookup, revalidation and eviction (AGC graphics subsystem).
+// Render-target sources are validated by ResidentColor generation, guest textures by snapshot
+// memcmp. Used under the device graphics serialisation lock.
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"

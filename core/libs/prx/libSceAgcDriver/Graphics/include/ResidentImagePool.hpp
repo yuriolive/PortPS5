@@ -47,6 +47,7 @@ public:
      * @param maxImages Upper bound on retained image count.
      */
     ResidentImagePool(Destroy destroy, VkDeviceSize maxBytes, std::size_t maxImages);
+    /// @brief Destroys every retained image through the destroy callback.
     ~ResidentImagePool();
     ResidentImagePool(const ResidentImagePool&) = delete;
     ResidentImagePool& operator=(const ResidentImagePool&) = delete;
@@ -63,16 +64,30 @@ public:
      * @param key Key the image was created under.
      * @param image The image; ownership transfers to the pool. Oldest entries are destroyed first
      *        when the byte or count bound would be exceeded; an image larger than the byte bound
-     *        is destroyed immediately.
+     *        is destroyed immediately. Never throws: if retaining fails to allocate, the image is
+     *        destroyed instead.
      */
-    void Release(const ResidentImageKey& key, const PooledImage& image);
+    void Release(const ResidentImageKey& key, const PooledImage& image) noexcept;
 
-    /// Number of retained images.
+    /**
+     * @brief Number of images currently retained.
+     * @return Retained image count.
+     */
     std::size_t Size() const;
-    /// Device bytes retained.
+    /**
+     * @brief Device memory held by retained images.
+     * @return Bytes retained.
+     */
     VkDeviceSize RetainedBytes() const;
-    /// Acquire calls answered from the pool / missed since construction.
+    /**
+     * @brief Acquire calls answered from the pool since construction.
+     * @return Hit count.
+     */
     std::uint64_t Hits() const;
+    /**
+     * @brief Acquire calls that found no matching image since construction.
+     * @return Miss count.
+     */
     std::uint64_t Misses() const;
 
 private:

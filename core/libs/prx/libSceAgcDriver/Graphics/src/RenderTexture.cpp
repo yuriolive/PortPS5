@@ -1,3 +1,7 @@
+// Texture constructor for sampling a resident render target (AGC graphics subsystem).
+// Copies the target into a sampled image, recycling destination images through ResidentImagePool.
+// Runs under the device graphics serialisation lock; flushes the draw queue before the copy so it
+// sees every earlier draw into the target (see docs/spec/gpu-driver.md, render-target sampling).
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RenderCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"

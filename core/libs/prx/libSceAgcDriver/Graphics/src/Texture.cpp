@@ -1,3 +1,6 @@
+// Sampled host texture lifetime and detile upload (AGC graphics subsystem).
+// release() runs from the destructor and must not throw; render-target images go back to
+// ResidentImagePool instead of being freed. See Texture.hpp and RenderTexture.cpp.
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"
