@@ -358,8 +358,8 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive
           Write-Host "Mesa SHA256: $((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant())"
           7z x $archive "-o$env:RUNNER_TEMP\mesa" -y | Out-Null
-          $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd*.json' | Select-Object -First 1
-          if ($null -eq $icd) { throw "lvp_icd manifest not found in the Mesa archive" }
+          $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd.x86_64.json' | Select-Object -First 1
+          if ($null -eq $icd) { throw "lvp_icd.x86_64.json not found in the Mesa archive (must be the x64 ICD, never x86/arm64)" }
           # The manifest's library_path is relative to its own directory.
           # VK_DRIVER_FILES makes the loader use only this ICD (hermetic).
           "VK_DRIVER_FILES=$($icd.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -382,7 +382,18 @@ jobs:
       - name: Run driver tests (ctest --preset lavapipe)
         # Bounded parallelism of 4 comes from the preset (execution.jobs).
         # --no-tests=error: an empty label selection must not pass.
-        run: ctest --preset lavapipe --no-tests=error
+        shell: pwsh
+        run: |
+          # -V so GoogleTest's skip messages reach the log. ctest counts a
+          # GTEST_SKIP as a pass, so an ICD that fails to load (wrong arch,
+          # unresolved library_path, missing DLL) would otherwise go green
+          # with nothing executed. Fail if any suite reports no device.
+          ctest --preset lavapipe --no-tests=error -V 2>&1 | Tee-Object -FilePath lavapipe-ctest.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+          if (Select-String -Path lavapipe-ctest.log -Pattern 'no Vulkan device|cannot load the Vulkan loader' -Quiet) {
+            throw "lavapipe device not visible: driver suites skipped instead of running"
+          }
 
   python_quality:
     name: Python quality (uv, ruff, pytest, coverage)
