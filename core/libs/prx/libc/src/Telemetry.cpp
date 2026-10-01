@@ -32,8 +32,6 @@ struct Runtime {
     Watchdog watchdog;
     Sampler sampler;
     Clock::time_point origin = Clock::now();
-    std::atomic<PortPS5TelemetryAudioSource> audio{nullptr};
-    std::atomic<PortPS5TelemetryDiagnosticsHook> hook{nullptr};
     std::thread thread;
     std::mutex stopMutex;
     std::condition_variable stopCv;
@@ -50,6 +48,13 @@ struct Runtime {
 };
 
 std::atomic<Runtime*> g_runtime{nullptr};
+
+// Process-wide, deliberately independent of Runtime: the mixer registers its counter source
+// once (AudioMixer::Initialize is idempotent) and queues register their diagnostics hook
+// whenever they are created, either of which can happen before Start. Keeping them here
+// means a registration made before Start is never lost.
+std::atomic<PortPS5TelemetryAudioSource> g_audioSource{nullptr};
+std::atomic<PortPS5TelemetryDiagnosticsHook> g_diagnosticsHook{nullptr};
 
 /** The runtime if started and not yet shut down, else nullptr (every export is then a no-op). */
 Runtime* Active() {
@@ -69,7 +74,7 @@ void WatchdogLoop(Runtime* rt) {
         rt->stopCv.wait_for(lock, std::chrono::seconds(1), [rt] { return rt->stop; });
         if (rt->stop) break;
         lock.unlock();
-        PortPS5TelemetryAudioSource src = rt->audio.load();
+        PortPS5TelemetryAudioSource src = g_audioSource.load();
         rt->sampler.Sample(src ? src() : AudioCounters{});
         std::uint64_t idleMs = 0;
         const std::uint64_t now = rt->NowMs();
@@ -78,7 +83,7 @@ void WatchdogLoop(Runtime* rt) {
         if (v != WatchdogVerdict::Ok) {
             rt->log.Event("softlock", {{"idle_ms", static_cast<double>(idleMs)},
                                        {"reason", v == WatchdogVerdict::PresentStall ? 1.0 : 2.0}});
-            if (PortPS5TelemetryDiagnosticsHook h = rt->hook.load()) h();
+            if (PortPS5TelemetryDiagnosticsHook h = g_diagnosticsHook.load()) h();
             rt->log.Event("run.end", {{"capture_split", 0}, {"write_faults", 0}});
             Unsupported("telemetry watchdog: softlock (no present or no guest progress)");
         }
@@ -134,11 +139,11 @@ extern "C" void PortPS5_Telemetry_Event_nid_no_patch(const char* name, const cha
 }
 
 extern "C" void PortPS5_Telemetry_SetAudioSource_nid_no_patch(PortPS5TelemetryAudioSource source) {
-    if (Runtime* rt = Active()) rt->audio.store(source);
+    g_audioSource.store(source);  // valid before Start; read by WatchdogLoop
 }
 
 extern "C" void PortPS5_Telemetry_SetDiagnosticsHook_nid_no_patch(PortPS5TelemetryDiagnosticsHook hook) {
-    if (Runtime* rt = Active()) rt->hook.store(hook);
+    g_diagnosticsHook.store(hook);  // valid before Start; read when the watchdog trips
 }
 
 extern "C" void PortPS5_Telemetry_SetVideoLatencyMs_nid_no_patch(double ms) {
