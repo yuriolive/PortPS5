@@ -19,8 +19,8 @@ Registry and other libc contract errors become testable from test executables on
 ## Acceptance Criteria
 
 - [ ] Root cause identified (test exe unwind registration, separate C++ runtime, or the repo's `.ehfram` unwinder)
-- [ ] Either a fix or a documented rule in docs/TESTING.md for tests that need a thrown error
-- [ ] The skipped tests in `tests/memory/GuestAllocationsUnmapTests.cpp` run on Windows
+- [ ] Either a code fix, or a documented rule in docs/TESTING.md for tests that need a thrown error
+- [ ] If a code fix is chosen: the skipped tests in `tests/memory/GuestAllocationsUnmapTests.cpp` run on Windows. If the documented rule is chosen instead: the skips stay, and the rule names the export-level tests that cover the same behaviour.
 
 ## Out of Scope
 
