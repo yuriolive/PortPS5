@@ -63,7 +63,11 @@ def event_value(ev, rec):
     caller turns into a RegressError carrying the line number.
     """
     if ev == "frame":
-        return float(rec["dt_ms"]), rec.get("t_ms")
+        dt = float(rec["dt_ms"])
+        if dt < 0:
+            # A negative interval would silently lower duration_s (the 30 minute rule).
+            raise ValueError("negative dt_ms")
+        return dt, rec.get("t_ms")
     if ev == "av.offset":
         return abs(float(rec["ms"]))
     if ev == "audio.underrun":
@@ -356,7 +360,7 @@ def report(args, runner=None):
         raise RegressError(f"no telemetry log at {TELEMETRY_REL} (runtime telemetry is required)")
     tel = parse_telemetry(log)
     cfg = rm.load_resolved_config(install / "config", args.title_id)
-    runner = runner or load_runner(install)
+    runner = runner if runner is not None else load_runner(install)
     res = build_results(
         args,
         tel,
