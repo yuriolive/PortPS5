@@ -32,13 +32,19 @@ public:
         base_ = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes_ + kPage, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS));
         if (base_ && access != PageAccess::None) {
             DWORD old = 0;
-            VirtualProtect(base_, bytes_, access == PageAccess::ReadOnly ? PAGE_READONLY : PAGE_READWRITE, &old);
+            if (!VirtualProtect(base_, bytes_, access == PageAccess::ReadOnly ? PAGE_READONLY : PAGE_READWRITE, &old)) {
+                VirtualFree(base_, 0, MEM_RELEASE);  // data() == nullptr tells the test the setup failed
+                base_ = nullptr;
+            }
         }
 #else
         void* mapped = mmap(nullptr, bytes_ + kPage, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         base_ = mapped == MAP_FAILED ? nullptr : static_cast<std::uint8_t*>(mapped);
         if (base_ && access != PageAccess::None) {
-            mprotect(base_, bytes_, access == PageAccess::ReadOnly ? PROT_READ : PROT_READ | PROT_WRITE);
+            if (mprotect(base_, bytes_, access == PageAccess::ReadOnly ? PROT_READ : PROT_READ | PROT_WRITE) != 0) {
+                munmap(base_, bytes_ + kPage);  // data() == nullptr tells the test the setup failed
+                base_ = nullptr;
+            }
         }
 #endif
     }

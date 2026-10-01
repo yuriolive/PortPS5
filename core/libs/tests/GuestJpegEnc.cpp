@@ -298,8 +298,13 @@ TEST(JpegEncGuestRanges, CreateRejectsUnusableGuestPointers) {
     EXPECT_EQ(sceJpegEncCreate(&ok, readOnly.data(), 0x800, &handle), kInvalidAddr);  // work memory not writable
     EXPECT_EQ(sceJpegEncCreate(&ok, work, 0x800, reinterpret_cast<void**>(readOnly.data())), kInvalidAddr);  // handle slot not writable
     EXPECT_EQ(handle, nullptr);
-    // Work memory that runs off the mapping end is rejected before any write.
-    EXPECT_EQ(sceJpegEncCreate(&ok, readOnly.end() - 0x100, 0x800, &handle), kInvalidAddr);
+    // Work memory that runs off the mapping end is rejected before any write. The pages are
+    // read/write on purpose: the only reason to refuse is the 0x800-byte extent reaching the
+    // guard page, so this fails if the check covers fewer bytes than MEMORY_SIZE.
+    GuestPages rw(1, PageAccess::ReadWrite);
+    ASSERT_NE(rw.data(), nullptr);
+    EXPECT_EQ(sceJpegEncCreate(&ok, rw.end() - 0x100, 0x800, &handle), kInvalidAddr);
+    EXPECT_EQ(handle, nullptr);
 }
 
 // Invariant: a forged handle pointing at unreadable memory is INVALID_HANDLE
