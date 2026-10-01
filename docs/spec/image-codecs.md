@@ -86,7 +86,7 @@ All tests are GoogleTest through `portps5_add_gtest`, run in hosted CI (no GPU),
 
 ## Open questions
 
-- **Guest pointer validation.** No guest-memory range-validation API is exported to PRXs. These libraries validate null, alignment and size arithmetic but read guest buffers with raw pointers, like the rest of the tree. Replace with the guest-memory API when it lands ([guest-memory.md](guest-memory.md); bean `portps5-8l0d`).
+- **Guest pointer validation.** Done for `libSceJpegEnc` and `libScePngDec` through `GuestMemoryValidation` ([guest-memory.md](guest-memory.md) "Validation API"; bean `portps5-8l0d`). Unusable data buffers return `INVALID_ADDR`; unreadable param structs return the same code as a null one. `scePngDecParseHeader`/`Decode` require the whole declared `png_mem_size` to be readable, which is stricter than a parser that stops at the header; whether the console library tolerates an over-declared size is unverified.
 - **`scePngDecCreate` `max_image_width`** is stored but never enforced against the image width; the real library's behaviour is unverified (bean `portps5-jvsq`).
 - **`scePngDecDecode` return value** (`width<<16|height`, or `0` when a dimension exceeds 32767) is ported from AnyPS5 and not independently verified.
 - **`sceJpegEncEncode`**: the `compression_ratio` to stb quality mapping is a linear approximation; `output_info->height` echoes the input height; a negative `restart_interval` is treated as no restart. None is verified against hardware.
