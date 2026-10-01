@@ -54,8 +54,8 @@ void PrintAddress(const char* label, DWORD64 address) {
     }
 }
 
-/** Walks the faulting thread's stack from its exception context (a copy, so any thread may walk it). */
-void PrintStack(const CONTEXT& faulting) {
+/** Walks the faulting thread's stack from its exception context; `thread` is that thread's real handle. */
+void PrintStack(const CONTEXT& faulting, HANDLE thread) {
     CONTEXT context = faulting;
     STACKFRAME64 frame{};
     frame.AddrPC.Offset = context.Rip;
@@ -65,7 +65,6 @@ void PrintStack(const CONTEXT& faulting) {
     frame.AddrStack.Offset = context.Rsp;
     frame.AddrStack.Mode = AddrModeFlat;
     const HANDLE process = GetCurrentProcess();
-    const HANDLE thread = GetCurrentThread();
     for (int depth = 0; depth < 48; ++depth) {
         if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, thread, &frame, &context, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) break;
         if (frame.AddrPC.Offset == 0) break;
@@ -92,20 +91,28 @@ void WriteDump(EXCEPTION_POINTERS* exception, DWORD faultingThread) {
     std::fprintf(stderr, ok ? "[crash] minidump written to %s\n" : "[crash] MiniDumpWriteDump failed for %s\n", path);
 }
 
-/** What the helper thread needs: the crash, and the faulting thread id the minidump attributes it to. */
-struct HelperArgs {
-    EXCEPTION_POINTERS* exception;
+/**
+ * The one report job, in process-lifetime storage: after a helper timeout the filter returns and the
+ * faulting thread's frame (where the system's EXCEPTION_POINTERS live) is gone, but a delayed helper may
+ * still run, so it only ever reads these copies. Written once, before the helper starts (`reported`).
+ */
+struct ReportJob {
+    EXCEPTION_RECORD record;
+    CONTEXT context;
+    EXCEPTION_POINTERS pointers;
     DWORD faultingThread;
+    HANDLE faultingThreadHandle;
 };
+ReportJob job{};
 
 /** Loader-lock work, off the faulting thread: module lookup, stack walk and the minidump. */
 DWORD WINAPI ReportHelper(void* parameter) {
-    const auto& args = *static_cast<const HelperArgs*>(parameter);
-    PrintAddress("faulting pc", reinterpret_cast<DWORD64>(args.exception->ExceptionRecord->ExceptionAddress));
+    auto& args = *static_cast<ReportJob*>(parameter);
+    PrintAddress("faulting pc", reinterpret_cast<DWORD64>(args.record.ExceptionAddress));
     SymInitialize(GetCurrentProcess(), nullptr, TRUE);
-    PrintStack(*args.exception->ContextRecord);
+    PrintStack(args.context, args.faultingThreadHandle);
     std::fflush(stderr);
-    WriteDump(args.exception, args.faultingThread);
+    WriteDump(&args.pointers, args.faultingThread);
     std::fflush(stderr);
     return 0;
 }
@@ -120,8 +127,14 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* exception) {
         }
         std::fprintf(stderr, "[crash] faulting pc 0x%llx\n", static_cast<unsigned long long>(reinterpret_cast<DWORD64>(record->ExceptionAddress)));
         std::fflush(stderr);
-        HelperArgs args{exception, GetCurrentThreadId()};
-        const HANDLE helper = CreateThread(nullptr, 0, &ReportHelper, &args, 0, nullptr);
+        job.record = *record;
+        job.record.ExceptionRecord = nullptr;  // the chained record is not copied; the dump needs only this one
+        job.context = *exception->ContextRecord;
+        job.pointers = {&job.record, &job.context};
+        job.faultingThread = GetCurrentThreadId();
+        // A real handle (GetCurrentThread() is a pseudo-handle meaning "the caller", i.e. the helper).
+        if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &job.faultingThreadHandle, 0, FALSE, DUPLICATE_SAME_ACCESS)) job.faultingThreadHandle = nullptr;
+        const HANDLE helper = CreateThread(nullptr, 0, &ReportHelper, &job, 0, nullptr);
         if (helper == nullptr) {
             std::fprintf(stderr, "[crash] cannot start the report helper (error %lu); no stack or dump\n", GetLastError());
         } else {
