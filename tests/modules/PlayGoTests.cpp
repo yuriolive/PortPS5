@@ -156,8 +156,12 @@ TEST_F(PlayGoTest, ChunkDefsStatusErrorFailsOpen) {
     const int previousHandle = Open();
     const auto app0 = MakeSubPath(std::string(512, 'x'));
     std::error_code ec;
-    ASSERT_FALSE(std::filesystem::exists(app0 / "playgo-chunkdefs.xml", ec));
-    ASSERT_TRUE(ec) << "The fixture must fail the status query";
+    (void)std::filesystem::exists(app0 / "playgo-chunkdefs.xml", ec);
+    // Whether an overlong component is a status error or plain "not found" depends on the OS and
+    // file system; only assert the library's behaviour where the fixture really fails the query.
+    if (!ec) {
+        GTEST_SKIP() << "this platform reports an overlong path as absent, not as a status error";
+    }
     AddPathAlias_nid_no_patch("/app0", app0.string().c_str());
 
     int handle = 99;
