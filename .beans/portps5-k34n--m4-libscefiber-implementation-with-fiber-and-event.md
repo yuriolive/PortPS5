@@ -5,9 +5,10 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-10-01T18:26:46Z
-updated_at: 2026-10-01T18:27:12Z
+updated_at: 2026-10-01T21:29:06Z
 parent: portps5-rd6g
 ---
+
 
 ## Context
 
@@ -31,3 +32,5 @@ Other M4 items (separate beans). Title-specific code paths.
 ## Summary of Changes
 
 TBD
+
+Reference note: add a test for fiber TLS when a fiber resumes on another thread; KytyPS5 ded6964 fixes this class of bug.

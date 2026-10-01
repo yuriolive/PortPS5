@@ -5,7 +5,7 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-09-30T23:53:10Z
-updated_at: 2026-10-01T18:33:21Z
+updated_at: 2026-10-01T21:08:49Z
 parent: portps5-dbpx
 ---
 
@@ -34,3 +34,6 @@ Bounded hash-indexed variants (M3).
 ## Summary of Changes
 
 TBD
+
+
+Note (AnyPS5 #148, bc51b33): persist comparison-image (depth-compare sampler) flags in the cached variant key, or a cache hit can return a shader built without them.
