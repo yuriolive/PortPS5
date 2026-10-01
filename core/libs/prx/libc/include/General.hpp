@@ -23,7 +23,15 @@ extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 // Error policy). Replaces the throw in NotImplemented_nid_no_patch, which the
 // shared DWARF unwinder lets guest catch(...) swallow. The log names what was
 // hit; the threading slice adds caller offset and thread name.
-[[noreturn]] void Unsupported(const char* what);
+//
+// Cross-prx ABI: dependents (libScePad, libSceAudioOut, ...) import this by
+// name from libc.prx. `nid_patcher libc` hashes undecorated C++ exports, so a
+// mangled `_Z11UnsupportedPKc` import fails the dependent's load with
+// GetLastError 127 (docs/spec/build-toolchain.md). The real entry point is
+// therefore the verbatim `Unsupported_nid_no_patch`, and `Unsupported` is an
+// inline forwarder so every existing call site keeps its spelling.
+extern "C" [[noreturn]] void Unsupported_nid_no_patch(const char* what);
+[[noreturn]] inline void Unsupported(const char* what) { Unsupported_nid_no_patch(what); }
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
 extern "C" void AddPathAlias_nid_no_patch(const char* guestPrefix, const char* hostPath);
