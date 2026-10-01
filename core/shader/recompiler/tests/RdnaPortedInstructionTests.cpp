@@ -17,6 +17,7 @@
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrProgram.hpp"
 #include "IntermediateRepresentation/include/IntermediateRepresentation/IrValue.hpp"
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/include/ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaInstruction.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Translation/include/Translation/TranslationContext.hpp"
@@ -38,6 +39,9 @@
 #include <thread>
 #include <string>
 #include <vector>
+
+#include <spirv/unified1/GLSL.std.450.h>
+#include <spirv/unified1/spirv.hpp>
 
 #include <gtest/gtest.h>
 
@@ -68,6 +72,14 @@ constexpr std::uint32_t Sopc(std::uint32_t op, std::uint32_t ssrc0, std::uint32_
 constexpr std::uint32_t Sopp(std::uint32_t op, std::uint32_t simm16) {
     return 0xBF800000u | (op << 16u) | simm16;
 }
+// VOP2: [31]=0, op[30:25], vdst[24:17], vsrc1[16:9], src0[8:0]. src0 = 250 (0xfa) selects the DPP16 modifier dword.
+constexpr std::uint32_t Vop2(std::uint32_t op, std::uint32_t vdst, std::uint32_t src0, std::uint32_t vsrc1) {
+    return (op << 25u) | (vdst << 17u) | (vsrc1 << 9u) | src0;
+}
+// DPP16 dword: src0 VGPR[7:0], dpp_ctrl[16:8], fi[18], bound_ctrl[19], bank_mask[27:24], row_mask[31:28].
+constexpr std::uint32_t Dpp16(std::uint32_t src0Vgpr, std::uint32_t control, bool boundCtrl, std::uint32_t bankMask, std::uint32_t rowMask) {
+    return src0Vgpr | (control << 8u) | (boundCtrl ? 1u << 19u : 0u) | (bankMask << 24u) | (rowMask << 28u);
+}
 // VOP3 word 0: [31:26]=0b110101, op[25:16], clamp[15], op_sel[14:11], abs[10:8], vdst[7:0].
 constexpr std::uint32_t Vop3W0(std::uint32_t op, std::uint32_t vdst, std::uint32_t opSel = 0u) {
     return 0xD4000000u | (op << 16u) | (opSel << 11u) | vdst;
@@ -82,6 +94,26 @@ constexpr std::uint32_t Vop3W1(std::uint32_t src0, std::uint32_t src1, std::uint
 // like the translated instruction stream, so ordering bugs (read-after-write) are observable.
 // ---------------------------------------------------------------------------------------------------------
 using Value = std::optional<std::uint64_t>;
+
+// RDNA2 DPP source lane for the controls modelled here: quad_perm (0x000-0x0ff), row_shl:n (0x101-0x10f) and
+// row_shr:n (0x111-0x11f). Rows are 16 lanes; a shift that leaves the row yields an invalid source. Any other control
+// is not modelled and returns nullopt.
+struct DppSource {
+    std::uint32_t lane;
+    bool valid;
+};
+std::optional<DppSource> DppSourceLane(std::uint32_t control, std::uint32_t lane) {
+    if (control <= 0xffu) return DppSource{(lane & ~3u) | ((control >> (2u * (lane & 3u))) & 3u), true};
+    if (control >= 0x101u && control <= 0x10fu) {
+        const std::uint32_t n = control - 0x100u;
+        return DppSource{lane + n, (lane % 16u) + n < 16u};
+    }
+    if (control >= 0x111u && control <= 0x11fu) {
+        const std::uint32_t n = control - 0x110u;
+        return DppSource{lane - n, (lane % 16u) >= n};
+    }
+    return std::nullopt;
+}
 
 struct Machine {
     std::array<std::uint32_t, 128> sgpr{};
@@ -102,6 +134,10 @@ struct Machine {
     // Writes of unknown (uninterpretable) values are test failures unless a test opts out because it checks only
     // other outputs (e.g. the carry-out mask write, which needs a ballot the interpreter does not model).
     bool allowUnknownWrites = false;
+    // Optional wave-wide VGPR file. When set, GetVectorRegister reads the current lane's row from it, which lets the
+    // DPP ops below fetch another lane's source value. waveExec is the wave's EXEC mask (bit i = lane i active).
+    const std::array<std::array<std::uint32_t, 64>, 64>* waveVgpr = nullptr;
+    std::uint64_t waveExec = ~0ull;
     std::map<const IrValue*, Value> memo;
 
     Value Eval(const IrValue* raw) {
@@ -195,7 +231,32 @@ private:
         }
         switch (v->Opcode()) {
         case IrOpcode::GetScalarRegister: return sgpr[v->Argument(0)->Register().index];
-        case IrOpcode::GetVectorRegister: return vgpr[v->Argument(0)->Register().index];
+        case IrOpcode::GetVectorRegister:
+            return waveVgpr != nullptr ? (*waveVgpr)[lane][v->Argument(0)->Register().index] : vgpr[v->Argument(0)->Register().index];
+        case IrOpcode::DppMoveU32: {
+            // Independent statement of the RDNA2 DPP source fetch for the controls this harness models. A control the
+            // harness does not model is unknown (the asserting test fails) instead of silently treated as identity.
+            const auto flags = v->Flags<DppMoveFlags>();
+            const auto source = DppSourceLane(flags.control, lane);
+            if (!source || waveVgpr == nullptr) return std::nullopt;
+            if (!source->valid) return 0u;  // an invalid source lane reads as zero (bound_ctrl) / the write is gated off
+            if (!flags.fetchInactive && ((waveExec >> source->lane) & 1ull) == 0u) return 0u;
+            Machine other = *this;
+            other.lane = source->lane;
+            other.memo.clear();
+            return other.Eval(v->Argument(0));
+        }
+        case IrOpcode::DppUpdateU32: {
+            // D keeps its old value unless EXEC, ROW_MASK[lane/16], BANK_MASK[(lane/4)%4] enable the lane and (without
+            // BOUND_CTRL) the source lane is valid. arg0 = new value, arg1 = old value, arg2 = this lane's EXEC bit.
+            const auto flags = v->Flags<DppMoveFlags>();
+            const auto source = DppSourceLane(flags.control, lane);
+            if (!source) return std::nullopt;
+            const bool rowOk = ((flags.rowMask >> (lane / 16u)) & 1u) != 0u;
+            const bool bankOk = ((flags.bankMask >> ((lane / 4u) % 4u)) & 1u) != 0u;
+            const bool write = *arg(2) != 0u && rowOk && bankOk && (flags.boundControl || source->valid);
+            return write ? *arg(0) : *arg(1);
+        }
         case IrOpcode::GetScc: return scc ? 1u : 0u;
         case IrOpcode::GetExec: return execBit ? 1u : 0u;
         case IrOpcode::GetExecLo: return execLo;
@@ -284,6 +345,18 @@ Translated Translate(std::vector<std::uint32_t> code, std::uint32_t waveSize = 6
     TranslationContext context(*t.program, *t.entry, 256u);
     context.TranslateInstruction(t.inst);
     return t;
+}
+
+// Translate() for tests of *new* decode/translate support. This test target is built without asynchronous unwind
+// tables, so an exception escaping a TEST body (an opcode the decoder rejects) terminates the whole binary instead of
+// failing one test. This wrapper turns it into a normal test failure; the caller asserts `entry != nullptr`.
+Translated TryTranslate(std::vector<std::uint32_t> code, std::uint32_t waveSize = 64u) {
+    try {
+        return Translate(std::move(code), waveSize);
+    } catch (const std::exception& error) {
+        ADD_FAILURE() << "decode/translate threw: " << error.what();
+        return Translated{};
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1010,6 +1083,465 @@ TEST(RdnaPortedInstructionTests, StageInputInfoStorageIsPerThreadAndSurvivesThre
             EXPECT_NE(BuildShaderStageInputInfo(ShaderStageKind::Compute, context).compute, nullptr);
             EXPECT_NE(BuildShaderStageInputInfo(ShaderStageKind::Pixel, context).pixel, nullptr);
         }).join();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// DPP: row/bank masks and bound_ctrl gate the destination write
+// ---------------------------------------------------------------------------------------------------------
+
+// RDNA2 ISA (DPP): a lane's VGPR write happens only when EXEC, ROW_MASK[lane/16] and BANK_MASK[(lane/4)%4] enable
+// the lane, and, with BOUND_CTRL = 0, only when the source lane exists (a row shift that leaves the row does not).
+// With BOUND_CTRL = 1 an invalid source reads as 0 and the write goes ahead. The lanes a mask leaves out keep the
+// destination's old value. The decoder puts the DPP fields on the source operand; the translator must hand them to the
+// destination too (TranslateInstruction), otherwise every lane is written and a wave64 scan that adds one row's total
+// into the odd rows only (row_mask 0xa) adds it into all of them.
+// Test: v_add_nc_u32_dpp v1, v0, v1 over a wave64 for several controls and masks, each lane checked against the
+// pseudo-code (D = (src ? S0[src_lane] : 0) + S1). Failure mode without the fix: a masked lane's v1 changes.
+TEST(RdnaPortedInstructionTests, DppRowAndBankMasksGateTheVgprWrite) {
+    struct Control {
+        std::uint32_t code;
+        bool boundCtrl;
+    };
+    const Control controls[] = {{0xe4u, false}, {0xb1u, false}, {0x111u, false}, {0x111u, true}, {0x101u, false}, {0x101u, true}};
+    std::array<std::array<std::uint32_t, 64>, 64> wave{};
+    for (std::uint32_t lane = 0; lane < 64u; ++lane) {
+        wave[lane][0] = 0x100u + lane * 7u;      // S0 (read through DPP)
+        wave[lane][1] = 0x10000u + lane * 5u;    // S1 and the old destination value
+    }
+    for (const auto& control : controls) {
+        for (const std::uint32_t rowMask : {0xfu, 0xau, 0x5u, 0x1u, 0x0u}) {
+            for (const std::uint32_t bankMask : {0xfu, 0x3u, 0xcu, 0x6u}) {
+                auto t = TryTranslate({Vop2(0x25u, 1u, 0xfau, 1u), Dpp16(0u, control.code, control.boundCtrl, bankMask, rowMask)});
+                ASSERT_NE(t.entry, nullptr);
+                EXPECT_EQ(t.inst.op, RdnaOpcode::VAddNcU32);
+                for (std::uint32_t lane = 0; lane < 64u; ++lane) {
+                    Machine m;
+                    m.lane = lane;
+                    m.waveVgpr = &wave;
+                    m.execBit = true;
+                    m.Run(*t.entry);
+                    const auto source = DppSourceLane(control.code, lane);
+                    ASSERT_TRUE(source.has_value());
+                    const bool write = ((rowMask >> (lane / 16u)) & 1u) != 0u && ((bankMask >> ((lane / 4u) % 4u)) & 1u) != 0u &&
+                                       (control.boundCtrl || source->valid);
+                    const std::uint32_t s0 = source->valid ? wave[source->lane][0] : 0u;
+                    const std::uint32_t expected = write ? s0 + wave[lane][1] : wave[lane][1];
+                    ASSERT_TRUE(m.vgprWritten[1]) << "ctrl=" << control.code;
+                    EXPECT_EQ(m.vgpr[1], expected) << "ctrl=0x" << std::hex << control.code << " bound=" << control.boundCtrl << " row=" << rowMask
+                                                   << " bank=" << bankMask << " lane=" << std::dec << lane;
+                }
+            }
+        }
+    }
+}
+
+// An accumulator form (v_fmac_f32) reads the destination as its third operand. Its DPP modifier moves the *sources*
+// and gates the write; it must not also be applied to the accumulator read (that would permute the accumulator
+// across lanes). The IR must therefore hold exactly one DppMoveU32 (the S0 fetch) and one DppUpdateU32 (the gated
+// write). Without accumulatorOperand the destination carries the DPP fields and the accumulator read adds a second
+// DppMoveU32.
+TEST(RdnaPortedInstructionTests, DppDoesNotMoveTheMacAccumulator) {
+    // v_fmac_f32_dpp v1, v0, v2 quad_perm:[1,0,3,2] row_mask:0xf bank_mask:0xf
+    auto t = TryTranslate({Vop2(0x2bu, 1u, 0xfau, 2u), Dpp16(0u, 0xb1u, false, 0xfu, 0xfu)});
+    ASSERT_NE(t.entry, nullptr);
+    std::uint32_t moves = 0u;
+    std::uint32_t updates = 0u;
+    for (const IrValue* inst : t.entry->Instructions()) {
+        if (inst == nullptr) continue;
+        moves += inst->Opcode() == IrOpcode::DppMoveU32 ? 1u : 0u;
+        updates += inst->Opcode() == IrOpcode::DppUpdateU32 ? 1u : 0u;
+    }
+    EXPECT_EQ(moves, 1u) << "only the S0 source is fetched through DPP";
+    EXPECT_EQ(updates, 1u) << "the destination write is gated by the DPP masks";
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// 32-bit saveexec forms (wave32) and the 64-bit zero-bit scalar ops
+// ---------------------------------------------------------------------------------------------------------
+
+// Runs s_<op>_saveexec_b32 sdst, ssrc on a wave32 machine: D = EXEC; EXEC = f(S0, EXEC); SCC = (EXEC != 0); the lane's
+// EXEC bit is its own bit of the new mask. Without the decoder entries the opcode throws "unsupported SOP1 opcode".
+void CheckSaveexec32(std::uint32_t sop1Opcode, RdnaOpcode expected, SaveexecOp kind, std::uint32_t sdst, std::uint32_t ssrc) {
+    auto t = TryTranslate({Sop1(sop1Opcode, sdst, ssrc)}, 32u);
+    ASSERT_NE(t.entry, nullptr);
+    EXPECT_EQ(t.inst.op, expected);
+    const std::uint32_t source = 0xf0f00ff0u;
+    const std::uint32_t oldExec = 0xffff00ffu;
+    std::uint32_t expectedExec = 0u;
+    switch (kind) {
+    case SaveexecOp::Or: expectedExec = source | oldExec; break;
+    case SaveexecOp::Xor: expectedExec = source ^ oldExec; break;
+    case SaveexecOp::Andn2: expectedExec = source & ~oldExec; break;  // S0 & ~EXEC
+    default: FAIL() << "unexpected kind";
+    }
+    for (std::uint32_t lane = 0u; lane < 32u; ++lane) {
+        Machine m;
+        m.lane = lane;
+        m.execLo = oldExec;
+        m.sgpr[ssrc] = source;
+        m.Run(*t.entry);
+        ASSERT_TRUE(m.execLoWritten);
+        EXPECT_EQ(m.execLo, expectedExec);
+        EXPECT_EQ(m.sgpr[sdst], oldExec) << "destination receives the old EXEC";
+        EXPECT_EQ(m.scc, expectedExec != 0u);
+        ASSERT_TRUE(m.execBitWritten);
+        EXPECT_EQ(m.execBit, ((expectedExec >> lane) & 1u) != 0u) << "lane " << lane;
+    }
+}
+
+// s_or_saveexec_b32 (SOP1 0x3d), s_xor_saveexec_b32 (0x3e), s_andn2_saveexec_b32 (0x3f): the wave32 counterparts of the
+// 64-bit forms. ANDN2 negates EXEC (the "2" operand), not S0.
+TEST(RdnaPortedInstructionTests, SOrSaveexecB32) { CheckSaveexec32(0x3du, RdnaOpcode::SOrSaveexecB32, SaveexecOp::Or, 4u, 6u); }
+TEST(RdnaPortedInstructionTests, SXorSaveexecB32) { CheckSaveexec32(0x3eu, RdnaOpcode::SXorSaveexecB32, SaveexecOp::Xor, 4u, 6u); }
+TEST(RdnaPortedInstructionTests, SAndn2SaveexecB32) { CheckSaveexec32(0x3fu, RdnaOpcode::SAndn2SaveexecB32, SaveexecOp::Andn2, 4u, 6u); }
+
+// Same read-before-write ordering rule as the and-form: `s_or_saveexec_b32 s6, s6` is EXEC | old S0.
+TEST(RdnaPortedInstructionTests, SOrSaveexecB32AliasedSourceReadsBeforeWrite) {
+    auto t = TryTranslate({Sop1(0x3du, 6u, 6u)}, 32u);
+    ASSERT_NE(t.entry, nullptr);
+    Machine m;
+    m.execLo = 0x0000ffffu;
+    m.sgpr[6] = 0x00f000f0u;
+    m.Run(*t.entry);
+    EXPECT_EQ(m.execLo, 0x00f0fff0u | 0x0000000fu);  // old S0 | old EXEC, not EXEC | EXEC
+    EXPECT_EQ(m.sgpr[6], 0x0000ffffu);
+}
+
+// s_bcnt0_i32_b64 (SOP1 0x0e): D = number of zero bits of the 64-bit source, SCC = (D != 0).
+// s_ff0_i32_b64  (SOP1 0x12): D = index of the lowest zero bit, -1 if all 64 bits are ones; SCC untouched.
+TEST(RdnaPortedInstructionTests, SBcnt0AndSFf0B64CountZeroBitsOfSixtyFourBitSource) {
+    auto bcnt = TryTranslate({Sop1(0x0eu, 4u, 2u)});
+    ASSERT_NE(bcnt.entry, nullptr);
+    auto ff0 = TryTranslate({Sop1(0x12u, 4u, 2u)});
+    ASSERT_NE(ff0.entry, nullptr);
+    EXPECT_EQ(bcnt.inst.op, RdnaOpcode::SBcnt0I32B64);
+    EXPECT_EQ(ff0.inst.op, RdnaOpcode::SFf0I32B64);
+    for (const std::uint64_t x : {0x0000000000000000ull, 0xffffffffffffffffull, 0x0000000000000001ull, 0x00000000ffffffffull,
+                                  0xffffffff00000000ull, 0xffffffff7fffffffull, 0x7fffffffffffffffull, 0xfffffffffffffff7ull,
+                                  0xf0f0f0f0deadbeefull, 0x0123456789abcdefull}) {
+        Machine a;
+        a.sgpr[2] = static_cast<std::uint32_t>(x);
+        a.sgpr[3] = static_cast<std::uint32_t>(x >> 32u);
+        a.scc = (x == ~0ull);  // pre-set to the opposite of the expected outcome for the all-ones case
+        a.Run(*bcnt.entry);
+        const auto zeros = static_cast<std::uint32_t>(std::popcount(~x));
+        EXPECT_EQ(a.sgpr[4], zeros) << std::hex << x;
+        EXPECT_EQ(a.scc, zeros != 0u) << std::hex << x;
+        EXPECT_TRUE(a.sccWritten);
+        EXPECT_FALSE(a.sgprWritten[5]) << "the result is one dword";
+
+        Machine b;
+        b.sgpr[2] = static_cast<std::uint32_t>(x);
+        b.sgpr[3] = static_cast<std::uint32_t>(x >> 32u);
+        b.scc = true;
+        b.Run(*ff0.entry);
+        const std::uint32_t expected = x == ~0ull ? 0xffffffffu : static_cast<std::uint32_t>(std::countr_zero(~x));
+        EXPECT_EQ(b.sgpr[4], expected) << std::hex << x;
+        EXPECT_FALSE(b.sccWritten);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// SPIR-V inspection helpers (a minimal word-stream walker; there is no disassembler in the test binary)
+// ---------------------------------------------------------------------------------------------------------
+
+struct SpirvInstr {
+    std::uint32_t opcode;
+    const std::uint32_t* words;  // words[0] is the opcode/word-count word
+    std::uint32_t count;
+};
+
+// Splits a SPIR-V module (5-word header, then instructions) into instructions. An instruction with a zero word count
+// would loop forever, so it ends the walk (the validator rejects such a module before it can be returned).
+std::vector<SpirvInstr> ParseSpirv(const std::vector<std::uint32_t>& spirv) {
+    std::vector<SpirvInstr> out;
+    for (std::size_t at = 5u; at < spirv.size();) {
+        const std::uint32_t count = spirv[at] >> 16u;
+        if (count == 0u || at + count > spirv.size()) break;
+        out.push_back({spirv[at] & 0xffffu, &spirv[at], count});
+        at += count;
+    }
+    return out;
+}
+
+// Recompile() that reports a thrown error (decode, validation or emission failure) as a test failure and returns an
+// empty module, for the same reason as TryTranslate: an exception escaping a TEST body would end the whole binary.
+std::vector<std::uint32_t> CompileOrFail(const RecompileRequest& request) {
+    try {
+        return Recompile(request).spirv;
+    } catch (const std::exception& error) {
+        ADD_FAILURE() << "Recompile threw: " << error.what();
+        return {};
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// GLC/DLC coherent buffer accesses
+// ---------------------------------------------------------------------------------------------------------
+
+// Compiles `v_mov_b32 v0, 1 ; buffer_store_dword v0, v1, s[8:11], null <flags> ; s_endpgm` as a compute shader and
+// returns its SPIR-V. word0 flag bits: GLC = bit 14, DLC = bit 15 (RDNA2 MUBUF).
+std::vector<std::uint32_t> CompileBufferStore(std::uint32_t word0Flags) {
+    const Golden::SyntheticCase testCase{Golden::SyntheticFamily::Mubuf, "mubuf_store_cache_policy",
+        {0x7E000281u, 0xE0700000u | word0Flags, 0x7D020001u, 0xBF810000u},
+        {static_cast<std::uint32_t>(Golden::kMubufBase), 0u, 0xFFFFFFFFu, 0u}, 8u, {Golden::ZeroRegion(Golden::kMubufBase, 256u)}, ShaderStage::Compute};
+    auto owned = Golden::MakeRequest(testCase, 64u, 64u);
+    return CompileOrFail(owned.request);
+}
+
+// Counts the module's Coherent decorations and the OpStore/OpLoad instructions carrying the Volatile memory operand.
+struct CoherenceStats {
+    std::uint32_t coherentDecorations = 0u;
+    std::uint32_t volatileStores = 0u;
+    std::uint32_t volatileLoads = 0u;
+};
+CoherenceStats MeasureCoherence(const std::vector<std::uint32_t>& spirv) {
+    CoherenceStats stats;
+    for (const SpirvInstr& inst : ParseSpirv(spirv)) {
+        if (inst.opcode == spv::OpDecorate && inst.count >= 3u && inst.words[2] == spv::DecorationCoherent) ++stats.coherentDecorations;
+        // OpStore: pointer, object, [memory access mask]. OpLoad: result type, result id, pointer, [memory access mask].
+        if (inst.opcode == spv::OpStore && inst.count >= 4u && (inst.words[3] & spv::MemoryAccessVolatileMask) != 0u) ++stats.volatileStores;
+        if (inst.opcode == spv::OpLoad && inst.count >= 5u && (inst.words[4] & spv::MemoryAccessVolatileMask) != 0u) ++stats.volatileLoads;
+    }
+    return stats;
+}
+
+// RDNA2 ISA: a buffer access with GLC (L0) or DLC (GL1) bypasses the caches another workgroup's stores may be stale in,
+// so a look-back that polls a flag published by another workgroup sees it. The recompiler maps that to a Volatile
+// access to a Coherent storage buffer. Invariants: a GLC store, a DLC store, and both together are coherent; a plain
+// store is not (no Coherent decoration and no Volatile access, so ordinary buffer traffic keeps its freedom to be
+// cached and combined). Failure mode without the feature: every case is incoherent.
+TEST(RdnaPortedInstructionTests, GlcAndDlcBufferStoresAreCoherentVolatileAccesses) {
+    constexpr std::uint32_t kGlc = 1u << 14u;
+    constexpr std::uint32_t kDlc = 1u << 15u;
+    const CoherenceStats plain = MeasureCoherence(CompileBufferStore(0u));
+    EXPECT_EQ(plain.coherentDecorations, 0u);
+    EXPECT_EQ(plain.volatileStores, 0u);
+    for (const std::uint32_t flags : {kGlc, kDlc, kGlc | kDlc}) {
+        const CoherenceStats stats = MeasureCoherence(CompileBufferStore(flags));
+        EXPECT_GE(stats.coherentDecorations, 1u) << "flags 0x" << std::hex << flags;
+        EXPECT_GE(stats.volatileStores, 1u) << "flags 0x" << std::hex << flags;
+    }
+}
+
+// The decoder must read DLC from MUBUF word 0 bit 15 (and GLC from bit 14) independently.
+TEST(RdnaPortedInstructionTests, MubufDecoderReadsGlcAndDlcBits) {
+    for (const std::uint32_t flags : {0u, 1u << 14u, 1u << 15u, (1u << 14u) | (1u << 15u)}) {
+        const std::vector<std::uint32_t> code{0xE0700000u | flags, 0x7D020001u, 0xBF810000u};
+        const RdnaInstruction inst = DecodeRdnaInstruction(0u, std::span<const std::uint32_t>(code), 0u);
+        EXPECT_EQ(inst.glc, (flags & (1u << 14u)) != 0u);
+        EXPECT_EQ(inst.dlc, (flags & (1u << 15u)) != 0u);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// MRT export formats (SPI_SHADER_COL_FORMAT)
+// ---------------------------------------------------------------------------------------------------------
+
+// Resolves a SPIR-V id to a 32-bit constant through OpBitcast, OpCompositeExtract of an OpCompositeConstruct or
+// OpConstantComposite, and OpConstant (the optimizer may fold the first two away). Returns nullopt when the value is
+// not a compile-time constant (for example a value loaded at run time).
+class SpirvConstants {
+public:
+    explicit SpirvConstants(const std::vector<std::uint32_t>& spirv) : instrs_(ParseSpirv(spirv)) {
+        for (const SpirvInstr& inst : instrs_) {
+            // Result id position: types/constants/ops put (type, id, ...) in words 1-2, except OpVariable-like ids too.
+            if (inst.count >= 3u && HasResultAndType(inst.opcode)) byId_[inst.words[2]] = &inst;
+        }
+    }
+    std::optional<std::uint32_t> Scalar(std::uint32_t id) const {
+        const auto found = byId_.find(id);
+        if (found == byId_.end()) return std::nullopt;
+        const SpirvInstr& inst = *found->second;
+        switch (inst.opcode) {
+        case spv::OpConstant: return inst.words[3];
+        case spv::OpBitcast: return Scalar(inst.words[3]);
+        case spv::OpCompositeExtract: return inst.count == 5u ? Element(inst.words[3], inst.words[4]) : std::nullopt;
+        default: return std::nullopt;
+        }
+    }
+    std::optional<std::uint32_t> Element(std::uint32_t vectorId, std::uint32_t index) const {
+        const auto found = byId_.find(vectorId);
+        if (found == byId_.end()) return std::nullopt;
+        const SpirvInstr& inst = *found->second;
+        switch (inst.opcode) {
+        case spv::OpCompositeConstruct:
+        case spv::OpConstantComposite: return 3u + index < inst.count ? Scalar(inst.words[3u + index]) : std::nullopt;
+        case spv::OpBitcast: return Element(inst.words[3], index);
+        default: return std::nullopt;
+        }
+    }
+    const std::vector<SpirvInstr>& Instructions() const { return instrs_; }
+
+private:
+    static bool HasResultAndType(std::uint32_t opcode) {
+        return opcode == spv::OpConstant || opcode == spv::OpConstantComposite || opcode == spv::OpBitcast ||
+               opcode == spv::OpCompositeExtract || opcode == spv::OpCompositeConstruct || opcode == spv::OpVectorShuffle ||
+               opcode == spv::OpExtInst || opcode == spv::OpLoad;
+    }
+    std::vector<SpirvInstr> instrs_;
+    std::map<std::uint32_t, const SpirvInstr*> byId_;
+};
+
+// Compiles `v_mov v0..v3 <distinct literals> ; exp mrt0 v0..v3 (en 0xf, done, optionally compr) ; s_endpgm` as a pixel
+// shader whose MRT0 SPI_SHADER_COL_FORMAT is `colFormat`, and returns the SPIR-V.
+std::vector<std::uint32_t> CompilePixelMrtExport(std::uint32_t colFormat, bool compressed) {
+    constexpr std::uint32_t kMovLiteral = 0x7E0002FFu;  // v_mov_b32 v<d>, literal: VOP1 op 1, src0 = 255, vdst in [24:17]
+    const std::uint32_t exp0 = 0xF800080Fu | (compressed ? 1u << 10u : 0u);  // target 0 (MRT0), en 0xf, done
+    const Golden::SyntheticCase testCase{Golden::SyntheticFamily::Exp, "pixel_mrt_export",
+        {kMovLiteral | (0u << 17u), 0x11111111u, kMovLiteral | (1u << 17u), 0x22222222u, kMovLiteral | (2u << 17u), 0x33333333u,
+         kMovLiteral | (3u << 17u), 0x44444444u, exp0, 0x03020100u, 0xBF810000u},
+        {}, 8u, {}, ShaderStage::Fragment};
+    auto owned = Golden::MakeRequest(testCase, 64u, 64u);
+    ShaderPixelStageInfo pixel{};
+    pixel.targetOutputMode.fill(0u);
+    pixel.targetOutputMode[0] = static_cast<std::uint8_t>(colFormat);
+    pixel.targetExportMapping.fill(0xe4u);  // identity component mapping
+    owned.request.context.compute.reset();
+    owned.request.context.pixel = pixel;
+    return CompileOrFail(owned.request);
+}
+
+// Returns the constant bits of the four components stored to the module's fragment color output, or nullopt per
+// component when it is not a compile-time constant.
+std::array<std::optional<std::uint32_t>, 4> StoredColorComponents(const std::vector<std::uint32_t>& spirv) {
+    const SpirvConstants constants(spirv);
+    std::array<std::optional<std::uint32_t>, 4> result{};
+    std::map<std::uint32_t, bool> outputVariable;
+    for (const SpirvInstr& inst : constants.Instructions()) {
+        // OpVariable: result type, result id, storage class. Output = 3.
+        if (inst.opcode == spv::OpVariable && inst.count >= 4u && inst.words[3] == spv::StorageClassOutput) outputVariable[inst.words[2]] = true;
+    }
+    for (const SpirvInstr& inst : constants.Instructions()) {
+        if (inst.opcode != spv::OpStore || inst.count < 3u || !outputVariable.count(inst.words[1])) continue;
+        for (std::uint32_t component = 0; component < 4u; ++component) result[component] = constants.Element(inst.words[2], component);
+    }
+    return result;
+}
+
+// SPI_SHADER_COL_FORMAT 32_R (1), 32_GR (2) and 32_AR (3) export only those components of a 32-bit export; the other
+// components read as 0 (alpha as 1) however many the export's EN mask enables. 32_ABGR (9) exports all four.
+// Test: distinct literals 0x11111111..0x44444444 in v0..v3 are exported to MRT0 and the stored color is inspected.
+// Failure mode without the mask: modes 1-3 store all four literals.
+TEST(RdnaPortedInstructionTests, MrtExportFormatMasksUnexportedComponents) {
+    constexpr std::uint32_t kOne = 0x3f800000u;
+    struct Expect {
+        std::uint32_t format;
+        std::array<std::uint32_t, 4> bits;
+    };
+    const Expect expectations[] = {
+        {9u, {0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u}},  // 32_ABGR
+        {1u, {0x11111111u, 0u, 0u, kOne}},                           // 32_R
+        {2u, {0x11111111u, 0x22222222u, 0u, kOne}},                  // 32_GR
+        {3u, {0x11111111u, 0u, 0u, 0x44444444u}},                    // 32_AR
+    };
+    for (const Expect& expect : expectations) {
+        const auto stored = StoredColorComponents(CompilePixelMrtExport(expect.format, false));
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            ASSERT_TRUE(stored[component].has_value()) << "format " << expect.format << " component " << component;
+            EXPECT_EQ(*stored[component], expect.bits[component]) << "format " << expect.format << " component " << component;
+        }
+    }
+}
+
+// A compressed (two 16-bit values per dword) export is unpacked by the SPI_SHADER_COL_FORMAT of its target: 5 UNORM16,
+// 6 SNORM16, anything else FP16. SNORM16 used to take the half-float path, which reads the wrong values.
+TEST(RdnaPortedInstructionTests, CompressedMrtExportUnpacksPerColorFormat) {
+    const auto unpackOps = [](const std::vector<std::uint32_t>& spirv) {
+        std::vector<std::uint32_t> ops;
+        for (const SpirvInstr& inst : ParseSpirv(spirv)) {
+            // OpExtInst: result type, result id, set, instruction number, operands.
+            if (inst.opcode != spv::OpExtInst || inst.count < 5u) continue;
+            const std::uint32_t number = inst.words[4];
+            if (number == GLSLstd450UnpackSnorm2x16 || number == GLSLstd450UnpackUnorm2x16 || number == GLSLstd450UnpackHalf2x16) ops.push_back(number);
+        }
+        return ops;
+    };
+    const auto snorm = unpackOps(CompilePixelMrtExport(6u, true));
+    const auto unorm = unpackOps(CompilePixelMrtExport(5u, true));
+    const auto half = unpackOps(CompilePixelMrtExport(4u, true));
+    ASSERT_FALSE(snorm.empty());
+    ASSERT_FALSE(unorm.empty());
+    ASSERT_FALSE(half.empty());
+    for (const auto op : snorm) EXPECT_EQ(op, static_cast<std::uint32_t>(GLSLstd450UnpackSnorm2x16));
+    for (const auto op : unorm) EXPECT_EQ(op, static_cast<std::uint32_t>(GLSLstd450UnpackUnorm2x16));
+    for (const auto op : half) EXPECT_EQ(op, static_cast<std::uint32_t>(GLSLstd450UnpackHalf2x16));
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Structurizer: a selection whose arm continues
+// ---------------------------------------------------------------------------------------------------------
+
+// Smallest graph where the nearest common post-dominator of a selection is computed across a loop's back edge:
+//   0 -> 1 (loop header) -> 2;  2: 5 | 3;  3: 5 | 4;  4 -> 7 (continue);  5: 6 (exit) | 7;  6 returns;  7 -> 1.
+// Every path from 4 passes 5 only around the back edge, so 5 post-dominates both selections although arm 4 merely
+// continues. The merge of block 3 must then be where its other arm goes (5, within this iteration), and splitting the
+// merge shared with block 2 must terminate. Without the fix the split repeats until the budget throws.
+TEST(RdnaPortedInstructionTests, StructurizerTerminatesOnSelectionWhoseArmContinues) {
+    const std::vector<std::vector<std::uint32_t>> successors{{1}, {2}, {5, 3}, {5, 4}, {7}, {6, 7}, {}, {1}};
+    ControlFlowGraph graph;
+    graph.entryBlock = 0;
+    for (std::uint32_t id = 0; id < successors.size(); ++id) {
+        BasicBlock block;
+        block.id = id;
+        block.startProgramCounter = id * 8u;
+        block.endProgramCounter = id * 8u + 8u;
+        block.instructionBegin = id * 2u;
+        block.instructionEnd = id * 2u + 2u;
+        block.successors = successors[id];
+        auto& terminator = block.terminator;
+        if (successors[id].empty()) {
+            terminator.kind = TerminatorKind::Return;
+        } else if (successors[id].size() == 1u) {
+            terminator.kind = TerminatorKind::Branch;
+            terminator.trueBlock = successors[id][0];
+        } else {
+            terminator.kind = TerminatorKind::ConditionalBranch;
+            terminator.condition = BranchCondition::SccNonZero;
+            terminator.trueBlock = successors[id][0];
+            terminator.falseBlock = successors[id][1];
+        }
+        graph.blocks.push_back(std::move(block));
+    }
+    for (const auto& block : graph.blocks) {
+        for (const auto successor : block.successors) graph.blocks[successor].predecessors.push_back(block.id);
+    }
+    ASSERT_NO_THROW(Structurizer{}.Structurize(graph));
+    EXPECT_NE(graph.FindBlock(2).terminator.mergeBlock, graph.FindBlock(3).terminator.mergeBlock) << "the nested selections must not share a merge block";
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// BDA access inside a loop's continue construct
+// ---------------------------------------------------------------------------------------------------------
+
+// A guest-memory (BDA) access whose lookup fails ends the invocation. SPIR-V requires a loop's back-edge block to
+// post-dominate the continue target structurally, so an early return inside the continue construct makes the module
+// invalid ("The continue construct ... is not structurally post dominated by the back-edge block"). The recompiler
+// must therefore record the fault without returning while it emits a continue target (the access then reads zero).
+// Test: a single-block counting loop whose body loads through a flat (BDA) address; the body is the continue target:
+//   s_mov_b32 s0, 0 ; L: flat_load_dword v0, v[1:2] ; s_waitcnt 0 ; s_add_u32 s0, s0, 1 ; s_cmp_lt_u32 s0, 4 ;
+//   s_cbranch_scc1 L ; exp pos0 v0..v3 done ; s_endpgm
+// Failure mode without the fix: Recompile throws "SPIR-V validation before optimization failed".
+// Known, separate limitation: with SPIRV-Tools enabled (the ci preset) the optimizer's merge-blocks pass then rejects the
+// same loop for any continue target that contains a selection (reproduced with a plain buffer store, no BDA access), so
+// this test asserts only that the *emitted* module passes validation. See docs/spec/shader-recompiler.md, open question
+// on loop continue targets.
+TEST(RdnaPortedInstructionTests, BdaAccessInContinueTargetEmitsValidModule) {
+    const Golden::SyntheticCase testCase{Golden::SyntheticFamily::Flat, "flat_load_in_loop",
+        {0xBE800380u, 0xDC300000u, 0x00000001u, 0xBF8C0000u, 0x80008100u, 0xBF0A8400u, 0xBF85FFFAu, 0xF80008CFu, 0x03020100u, 0xBF810000u},
+        {}, 8u, {}, ShaderStage::Vertex};
+    auto owned = Golden::MakeRequest(testCase, 64u, 64u);
+    owned.request.target.bdaAbiVersion = BdaAbi::Version;
+    static constexpr std::array<std::uint32_t, 3> kCapabilities{11u, 5347u, 4448u};
+    static constexpr std::array<std::string_view, 2> kExtensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    owned.request.target.supportedCapabilities = kCapabilities;
+    owned.request.target.supportedExtensions = kExtensions;
+    try {
+        EXPECT_FALSE(Recompile(owned.request).spirv.empty());
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        EXPECT_EQ(message.find("validation before optimization"), std::string::npos) << message;
     }
 }
 

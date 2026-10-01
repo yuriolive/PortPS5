@@ -1,3 +1,7 @@
+// core/shader/recompiler/SpirvBackend/src/SpirvBdaRead.cpp
+// Emits guest-memory (flat/global) reads through the BDA page table: address arithmetic with overflow faults and
+// per-byte lookups. A failed lookup stops the invocation, except inside a loop's continue target (see
+// SpirvEmitterState::bdaStopsInvocations), where the read yields zero. Single-threaded emission.
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
@@ -41,6 +45,9 @@ std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::
     const auto overflow = Binary(state, spv::OpUGreaterThan, TypeBool(state), address, BdaConstant(state, std::numeric_limits<std::uint64_t>::max() - bits / 8u));
     EmitIfCondition(state, overflow, [&] { RecordBdaFault(state, address, ConstantU32(state, bits / 8u), instruction, BdaAbi::FaultReason::Overflow); });
     StopBdaInvocationIf(state, overflow);
+    // Where a fault does not stop the invocation (a continue target), the read must still not dereference an address
+    // that failed: an overflowed span or an unmapped byte (lookup returned 0) reads as zero instead.
+    const auto notOverflow = state.bdaStopsInvocations ? 0u : Unary(state, spv::OpLogicalNot, TypeBool(state), overflow);
     const auto byteType = state.module.Type(spv::OpTypeInt, 8u, 0u);
     const auto bytePointer = TypePointer(state, spv::StorageClassPhysicalStorageBuffer, byteType);
     auto result = ConstantU32(state, 0u);
@@ -49,11 +56,20 @@ std::uint32_t EmitBdaRead(SpirvValueEmitContext& ctx, const IrValue& inst, std::
         const auto physical = state.module.AllocateId();
         state.module.AddFunction(spv::OpFunctionCall, TypeScalarU64(state), physical, state.bdaPointerFunction, guest, ConstantU32(state, 1u), instruction);
         StopBdaInvocationIf(state, Binary(state, spv::OpIEqual, TypeBool(state), physical, BdaConstant(state, 0u)));
-        const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpConvertUToPtr, bytePointer, pointer, physical);
-        const auto loaded = state.module.AllocateId();
-        state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, spv::MemoryAccessAlignedMask, 1u);
-        const auto value = Unary(state, spv::OpUConvert, TypeU32(state), loaded);
+        const auto loadByte = [&]() {
+            const auto pointer = state.module.AllocateId();
+            state.module.AddFunction(spv::OpConvertUToPtr, bytePointer, pointer, physical);
+            const auto loaded = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, byteType, loaded, pointer, spv::MemoryAccessAlignedMask, 1u);
+            return Unary(state, spv::OpUConvert, TypeU32(state), loaded);
+        };
+        std::uint32_t value = 0u;
+        if (state.bdaStopsInvocations) {
+            value = loadByte();
+        } else {
+            const auto mapped = Binary(state, spv::OpINotEqual, TypeBool(state), physical, BdaConstant(state, 0u));
+            value = EmitValueOrZeroIfCondition(state, Binary(state, spv::OpLogicalAnd, TypeBool(state), mapped, notOverflow), loadByte);
+        }
         result = Binary(state, spv::OpBitwiseOr, TypeU32(state), result, Binary(state, spv::OpShiftLeftLogical, TypeU32(state), value, ConstantU32(state, byte * 8u)));
     }
     return result;

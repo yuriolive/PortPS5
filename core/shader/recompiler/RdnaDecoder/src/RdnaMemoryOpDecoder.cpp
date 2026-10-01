@@ -1,3 +1,6 @@
+// core/shader/recompiler/RdnaDecoder/src/RdnaMemoryOpDecoder.cpp
+// Decoder for the RDNA2 memory formats (SMEM, MUBUF, MTBUF, FLAT, DS): field extraction into RdnaInstruction,
+// including the GLC/DLC cache-policy bits. Pure function of the code words; thread-safe.
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
 #include <bit>
 #include <limits>
@@ -411,6 +414,8 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     instruction.offen = ((word0 >> 12u) & 1u) != 0u;
     instruction.idxen = ((word0 >> 13u) & 1u) != 0u;
     instruction.glc = ((word0 >> 14u) & 1u) != 0u;
+    // MUBUF/MTBUF word 0 bit 15 is DLC on RDNA2 (GL1 cache policy).
+    instruction.dlc = ((word0 >> 15u) & 1u) != 0u;
     instruction.slc = ((word1 >> 22u) & 1u) != 0u;
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
@@ -450,6 +455,8 @@ RdnaInstruction DecodeRdnaMtbuf(std::uint32_t programCounter, std::span<const st
     instruction.offen = ((word0 >> 12u) & 1u) != 0u;
     instruction.idxen = ((word0 >> 13u) & 1u) != 0u;
     instruction.glc = ((word0 >> 14u) & 1u) != 0u;
+    // MUBUF/MTBUF word 0 bit 15 is DLC on RDNA2 (GL1 cache policy).
+    instruction.dlc = ((word0 >> 15u) & 1u) != 0u;
     instruction.slc = ((word1 >> 22u) & 1u) != 0u;
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);

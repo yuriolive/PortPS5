@@ -1,3 +1,6 @@
+// core/shader/recompiler/Translation/src/MemoryInstructions/BufferInstructions.cpp
+// MUBUF/MTBUF buffer load, store and atomic translation for TranslationContext. A GLC/DLC load or store is tagged
+// MemoryInfo::coherent so the SPIR-V backend emits a Volatile access to a Coherent buffer. Single-threaded.
 #include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
@@ -33,7 +36,8 @@ MemoryInfo bufferMemoryInfoFromInstruction(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
-    const MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    memory.coherent = inst.glc || inst.dlc;
     IrOpcode opcode;
     switch (memory.dataBits) {
     case 8u:
@@ -80,7 +84,8 @@ bool TranslationContext::bufferLoad(const RdnaInstruction& inst) {
 }
 
 bool TranslationContext::bufferStore(const RdnaInstruction& inst) {
-    const MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    MemoryInfo memory = bufferMemoryInfoFromInstruction(inst);
+    memory.coherent = inst.glc || inst.dlc;
     IrValue* resource = getBufferResource(memory);
     const BufferAddress address = readBufferAddress(inst, 1u);
     const IrU32 data = readU32(inst.destination);
