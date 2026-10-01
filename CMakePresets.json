@@ -96,7 +96,8 @@
       "description": "Runs all unit tests in CI",
       "configurePreset": "ci",
       "execution": {
-        "jobs": 4
+        "jobs": 4,
+        "timeout": 300
       },
       "output": {
         "outputOnFailure": true

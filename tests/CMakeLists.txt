@@ -195,6 +195,20 @@ portps5_add_gtest(filesystem_sandbox_path_tests
         unit
 )
 
+# /savedata0 per-title save container mount + file I/O + sandbox containment
+portps5_add_gtest(filesystem_savedata_mount_tests
+    SOURCES
+        filesystem/SaveDataMountTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Offline network stack verification (sockets, options, epoll, DNS resolver stubs)
 portps5_add_gtest(offline_net_stack_tests
     SOURCES
