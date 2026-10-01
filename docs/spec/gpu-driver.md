@@ -205,6 +205,21 @@ Tests: `tests/DepthStencilState.cpp` (GoogleTest, `agc_driver_depth_stencil_test
 
 The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` only when the ranges are resolved at submit time. Otherwise, as with an indirect count, it runs the shader.
 
+### Per-draw CPU cost
+
+Converted titles miss the 60 Hz flip rate in draw-heavy scenes (about 53 draws and 530 PM4 packets per frame against about 16 in light frames), so the cost is per draw. Metrics from one gate title on the `release` preset (the `dev` preset runs SPIR-V tools per rect-list draw and is about 2.5x slower; never measure on it): `Driver.Draw.total` about 30 ms per slow frame, `Graphics.ShaderResources.bindings` about 12 ms, fence waits 6 to 7 ms, `Driver.Draw.shaders` about 3.8 ms, `memory_upload` and `vertex_upload` about 3 ms each, `GuestMemory.Read` about 3.6 ms over about 880 calls, and `TextureCache::Get` about 0.15 ms per lookup even on a hit. Read them with `[debug] profile = ["gpu"]`.
+
+Slices, each its own PR with a regression test that needs no game data. A texture changed by the guest or by GPU write-back must still be re-read in every slice.
+
+| # | Mechanism | Status |
+|---|---|---|
+| 1 | `BytesEqual` (SSE2, `memcmp == 0` semantics) for the TextureCache whole-texture revalidation. Cuts the compare cost, keeps exact semantics. | in this PR |
+| 2 | Replace the per-draw compare with write-watch invalidation. The existing `GuestMemoryTracking::Watch` is page-protection based (`PAGE_NOACCESS` / `PAGE_READONLY`) and requires committed, writable, non-executable memory (`MemoryTrackingWindows.cpp` `Query`). A read-only texture page makes a kernel write into it (a file read, DMA) fail with an error instead of faulting, so this needs a design decision before code. | open, see Open question 9 |
+| 3 | Reuse prepared `ShaderResources` state (layout, descriptor writes, vertex layout) when shaders, bindings and descriptors are unchanged between draws (the idea behind AnyPS5 `29b4601` draw recipes, behaviour only). | open |
+| 4 | Batch guest reads and uploads (`GuestMemory.Read` calls, vertex and memory upload). | open |
+
+Out of scope here: the render-target-as-texture copy (`RenderTexture.cpp`), owned by another change.
+
 ## Interfaces
 
 | Peer | Contract |
@@ -264,3 +279,4 @@ The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` on
 7. Sync assessment (PR #28): upstream `Recorder` (`Graphics/src/Recorder.cpp`, 2,901 lines at the trial port; 2,910 at `main@75a8668`) was trial-ported and reverted. Verdict: a raw port cannot land — 32 `getenv("APS5_…")` calls trip the `policy` job by design, throws cross the `APS5_VABI` boundary, and the file is unwired without the driver port. It returns adapted (typed `[debug]` config, return codes/abort path, file headers, GTest under `driver-lavapipe`) together with the M1 driver port. The `tests/Recorder.cpp` assessment likewise waits for the ported driver headers. **Update (PR #49):** the adapted `Recorder` and `HostImport` landed without the GpuMutex coupling, release thread or env switches (see "Landed in PortPS5" above); wiring the driver's dispatch/draw/submit path onto them is still open (bean `portps5-tiod`).
 8. Depth surface (resolved in M2): the host image is allocated on the first draw that binds a surface; clears map to `loadOp = CLEAR` (rect-list, full-surface only); bit 31 colour suppression is a zero colour write mask, bit 30 with a failable depth test is a rejection; see "Depth surface" above. Remaining: retile depth to guest memory and upload of never-cleared surfaces (titles that clear through compute or DMA are rejected on their first depth read), and whether a partial clear path (`vkCmdClearAttachments`) is worth building.
 9. Emit SPIR-V 1.6? It needs `VkPipelineShaderStageRequiredSubgroupSizeCreateInfo` set to `target.subgroupSize` (plus `REQUIRE_FULL_SUBGROUPS` for compute) on every pipeline path, with the `subgroupSizeControl` and `computeFullSubgroups` features enabled, the size checked against the device's min/max range, and each pinned stage checked against `VkPhysicalDeviceSubgroupSizeControlProperties::requiredSubgroupSizeStages` (support is per stage and implementation-dependent; an unsupported stage is rejected with a logged error). `REQUIRE_FULL_SUBGROUPS` is set on a compute pipeline only when `local_size_x` is a multiple of `target.subgroupSize`, which Vulkan requires; any other workgroup size omits the flag or is rejected with a logged error. Until then a 1.6 module may run a wave64 guest shader on a different subgroup size (between draws and dispatches, and where the stage allows it within one command) and silently read the wrong lanes. This lands with the wave64 work in M4.
+9. Per-draw texture revalidation: can write-watch invalidation replace the whole-texture compare? Page protection breaks kernel writes into watched pages (they fail instead of faulting) and costs a fault per guest write. Options to evaluate with measurements: keep the compare but gate it by a cheap per-page dirty probe (Windows write-watch via `MEM_WRITE_WATCH` and `GetWriteWatch`, which does not change protection), or restrict watching to textures the guest has not written for N frames. Not decided; the compare stays until a measured design exists.

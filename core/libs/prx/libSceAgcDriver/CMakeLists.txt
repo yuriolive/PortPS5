@@ -389,6 +389,13 @@ if(BUILD_TESTING)
         LABELS   lavapipe
     )
 
+    # Hosted BytesEqual tests: pure helper used by the TextureCache revalidation (no GPU, no guest memory).
+    portps5_add_gtest(agc_bytes_equal_tests
+        SOURCES  tests/BytesEqualTests.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+        LABELS   unit
+    )
+
     # Hosted depth/stencil decode tests: synthetic register maps through DecodeState,
     # no GPU and no guest memory (draws use no colour target).
     portps5_add_gtest(agc_driver_depth_stencil_tests

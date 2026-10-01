@@ -1,4 +1,11 @@
+// core/libs/prx/libSceAgcDriver/Graphics/src/TextureCache.cpp
+//
+// Subsystem: AGC driver Graphics. Owns host images keyed by (guest address, T# words) and revalidates them
+// against guest memory (whole-snapshot compare, or render-target generation) on every lookup.
+// Threading: called under the GPU mutex from the draw prepare path; not internally synchronised.
+// Spec: docs/spec/gpu-driver.md "Per-draw CPU cost".
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BytesEqual.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RenderCache.hpp"
@@ -48,7 +55,8 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
             break;
         }
         GuestMemory::CheckRange(reinterpret_cast<const void*>(resource.baseAddress), it->snapshot.size(), 1);
-        if (std::memcmp(reinterpret_cast<const void*>(resource.baseAddress), it->snapshot.data(), it->snapshot.size()) == 0) {
+        // Whole-texture revalidation on every lookup: BytesEqual is memcmp==0 semantics at SSE2 speed.
+        if (BytesEqual(reinterpret_cast<const void*>(resource.baseAddress), it->snapshot.data(), it->snapshot.size())) {
             auto result = it->texture;
             entries.splice(entries.end(), entries, it);
             return result;
