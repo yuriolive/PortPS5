@@ -35,6 +35,7 @@ int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) noexc
 int APS5_VABI scePadResetLightBar(int handle) noexcept;
 int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) noexcept;
 int APS5_VABI scePadSetMotionSensorState(int handle, bool enable) noexcept;
+int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) noexcept;
 int APS5_VABI scePadResetOrientation(int handle) noexcept;
 int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) noexcept;
 int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) noexcept;
@@ -375,4 +376,51 @@ TEST_F(PadOutputTest, DeviceClassAndTriggerStateQueries) {
     EXPECT_EQ(scePadDeviceClassParseData(1, nullptr, &cd), PAD_ERROR_INVALID_ARG);
     EXPECT_EQ(scePadDeviceClassParseData(1, &data, nullptr), PAD_ERROR_INVALID_ARG);
     EXPECT_EQ(scePadDeviceClassParseData(-1, &data, &cd), PAD_ERROR_INVALID_HANDLE);
+}
+
+// Invariant: scePadSetTiltCorrectionState validates the handle with SCE codes
+// instead of taking the Unsupported() abort path. Handle 1 is the open slot 0;
+// 0, an unopened slot and a negative handle are PAD_ERROR_INVALID_HANDLE.
+// Port of sharpemu PadExportsTests.SetTiltCorrectionState_ValidatesHandle
+// (GPL-2.0-or-later), adapted to PortPS5 handles (slot + 1, 0 never valid).
+TEST_F(PadOutputTest, SetTiltCorrectionStateValidatesHandle) {
+    EXPECT_EQ(scePadSetTiltCorrectionState(1, true), PAD_OK);
+    EXPECT_EQ(scePadSetTiltCorrectionState(1, false), PAD_OK);
+    EXPECT_EQ(scePadSetTiltCorrectionState(0, true), PAD_ERROR_INVALID_HANDLE);
+    EXPECT_EQ(scePadSetTiltCorrectionState(2, true), PAD_ERROR_INVALID_HANDLE);
+    EXPECT_EQ(scePadSetTiltCorrectionState(-1, true), PAD_ERROR_INVALID_HANDLE);
+}
+
+// Invariant: scePadGetTriggerEffectState writes exactly the 8-byte
+// ScePadTriggerEffectStateInformation and nothing past it. Guest callers place
+// their stack cookie directly after the out-param, so a larger write fails the
+// guest's stack check. Also rejects foreign handles. Port of sharpemu
+// GetTriggerEffectState_WritesEightBytesAndLeavesTheCookieIntact and
+// _RejectsForeignHandles (GPL-2.0-or-later).
+TEST_F(PadOutputTest, GetTriggerEffectStateWritesEightBytesAndKeepsCookie) {
+    static_assert(sizeof(PadTriggerEffectStateInformation) == 8, "guest ABI: state is 8 bytes");
+    constexpr std::uint64_t kCookie = 0xC0DEC0DECAFEBA00ull;
+    struct Frame {
+        PadTriggerEffectStateInformation state;
+        std::uint64_t cookie;
+    } frame;
+    std::memset(&frame.state, 0xEE, sizeof(frame.state));
+    frame.cookie = kCookie;
+
+    ASSERT_EQ(scePadGetTriggerEffectState(1, &frame.state), PAD_OK);
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(&frame.state);
+    for (std::size_t i = 0; i < sizeof(frame.state); ++i) EXPECT_EQ(bytes[i], 0) << "byte " << i;
+    EXPECT_EQ(frame.cookie, kCookie);
+
+    EXPECT_EQ(scePadGetTriggerEffectState(2, &frame.state), PAD_ERROR_INVALID_HANDLE);
+    EXPECT_EQ(scePadGetTriggerEffectState(-1, &frame.state), PAD_ERROR_INVALID_HANDLE);
+}
+
+// Invariant: with a pad open, handle 0 is never a valid scePadReadState handle
+// (PortPS5 handles are slot + 1) while the real handle reads fine. Port of
+// sharpemu ReadState_RejectsHandleZeroOnceAPadIsOpen (GPL-2.0-or-later).
+TEST_F(PadOutputTest, ReadStateRejectsHandleZeroOnceAPadIsOpen) {
+    PadData data{};
+    EXPECT_EQ(scePadReadState(0, &data), PAD_ERROR_INVALID_HANDLE);
+    EXPECT_EQ(scePadReadState(1, &data), PAD_OK);
 }

@@ -196,13 +196,14 @@ int APS5_VABI scePadSetMotionSensorState(int handle, bool enable) noexcept {
 }
 
 /**
- * Not implemented: no gate title needs it, so the call takes the logging abort
- * path instead of silently stubbing.
+ * Accepts the tilt-correction toggle for an open pad. The orientation filter
+ * (PadMotion.hpp) always applies its accelerometer tilt correction, so the flag
+ * has no separate state to store. Returns PAD_ERROR_INVALID_HANDLE for a closed
+ * or out-of-range handle, as a console does, instead of aborting.
  */
 int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) noexcept {
-    (void)handle;
     (void)enabled;
-    Unsupported(__func__);
+    return Pad::PadManager::Get().CheckOpenHandle(handle);
 }
 
 /**
