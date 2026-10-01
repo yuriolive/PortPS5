@@ -172,6 +172,20 @@ portps5_add_gtest(avplayer_exports_tests
         unit
 )
 
+# Headless message dialog state machine (transitions, error codes, 44-byte result, auto-answer policy)
+portps5_add_gtest(msgdialog_tests
+    SOURCES
+        dialogs/MsgDialogTests.cpp
+    LIBRARIES
+        libSceMsgDialog
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Save data subsystem fidelity tests (mount modes, snapshots, atomic swaps, quotas, patterns, dialogs)
 portps5_add_gtest(savedata_fidelity_tests
     SOURCES
