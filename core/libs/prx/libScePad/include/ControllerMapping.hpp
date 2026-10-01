@@ -23,6 +23,11 @@ namespace Pad {
 struct ControllerSample {
     std::array<bool, SDL_CONTROLLER_BUTTON_MAX> buttons{};
     std::array<std::int16_t, SDL_CONTROLLER_AXIS_MAX> axes{};
+    // Optional sensors and touchpad, filled only when the controller has them.
+    bool hasMotion = false;
+    std::array<float, 3> accel{0.0f, kStandardGravity, 0.0f}; // m/s^2, SDL sensor units
+    std::array<float, 3> gyro{0.0f, 0.0f, 0.0f};              // rad/s
+    std::array<PadTouchPoint, 2> touch{};
 };
 
 // Returns the PS5 digital bit for an SDL button, or 0 when it has no digital
@@ -102,6 +107,10 @@ inline PadInputState BuildControllerState(const ControllerSample& sample, double
     state.triggers = {NormalizeTrigger(sample.axes[SDL_CONTROLLER_AXIS_TRIGGERLEFT]),
                       NormalizeTrigger(sample.axes[SDL_CONTROLLER_AXIS_TRIGGERRIGHT])};
     state.analogTriggers = true;
+    state.hasMotion = sample.hasMotion;
+    state.accel = sample.accel;
+    state.gyro = sample.gyro;
+    state.touch = sample.touch;
     if (state.triggers[0] > 30) state.buttons |= static_cast<std::uint32_t>(PadButton::L2);
     if (state.triggers[1] > 30) state.buttons |= static_cast<std::uint32_t>(PadButton::R2);
     return state;

@@ -479,6 +479,64 @@ portps5_add_gtest(pad_controller_input_tests
         unit
 )
 
+# DualSense output and motion: pure encoders, hot-plug slot table, export-level
+# contracts and the SDL HIDAPI build guard (docs/spec/input.md). None needs a
+# device; the pure suites link only GoogleTest.
+portps5_add_gtest(pad_output_mapping_tests
+    SOURCES
+        input/PadOutputMappingTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+portps5_add_gtest(pad_motion_tests
+    SOURCES
+        input/PadMotionTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+portps5_add_gtest(pad_slot_table_tests
+    SOURCES
+        input/PadSlotTableTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+portps5_add_gtest(pad_output_export_tests
+    SOURCES
+        input/PadOutputExportTests.cpp
+    LIBRARIES
+        libScePad libkernel libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+        ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)
+
+portps5_add_gtest(pad_sdl_build_tests
+    SOURCES
+        input/PadSdlBuildTests.cpp
+    LIBRARIES
+        SDL2-static
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)
+
 # Telemetry core: record schema, stall/softlock definitions, watchdog latch and
 # audio/A-V sampler on a synthetic clock (header-only, no game data).
 portps5_add_gtest(telemetry_core_tests

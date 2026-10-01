@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -15,6 +16,8 @@
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libScePad/include/ControllerMapping.hpp"
 #include "prx/libc/include/config/Config.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
+#include "prx/libScePad/include/PadOutputMapping.hpp"
 
 namespace {
 // Why typed config, not env: APS5_* reads are banned by policy;
@@ -43,27 +46,98 @@ void PadInput::addController(int deviceIndex) {
     if (!SDL_IsGameController(deviceIndex)) return;
     SDL_GameController* controller = SDL_GameControllerOpen(deviceIndex);
     if (controller == nullptr) return;
-    const SDL_JoystickID id = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller));
-    for (const auto& slot : controllers) {
-        if (slot.controller != nullptr && slot.instanceId == id) { SDL_GameControllerClose(controller); return; }
-    }
-    for (std::size_t i = 0; i < controllers.size(); ++i) {
-        if (controllers[i].controller != nullptr) continue;
-        controllers[i] = {controller, id};
-        PadSetControllerConnected_nid_postfix(static_cast<int>(i), true);
+    SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
+    const SDL_JoystickID id = SDL_JoystickInstanceID(joystick);
+    Pad::DeviceGuid guid{};
+    const SDL_JoystickGUID sdlGuid = SDL_JoystickGetGUID(joystick);
+    std::memcpy(guid.data(), sdlGuid.data, guid.size());
+    // SlotTable owns the policy (lowest free slot, same-GUID reclaim, fifth
+    // controller refused); duplicates and overflow just release this reference.
+    const Pad::AttachResult result = slotTable.Attach(id, guid);
+    if (result.status != Pad::AttachStatus::Assigned) {
+        SDL_GameControllerClose(controller);
         return;
     }
-    // All four slots taken: extra controllers are ignored, not an error.
-    SDL_GameControllerClose(controller);
+    ControllerSlot& slot = controllers[result.slot];
+    slot = {};
+    slot.controller = controller;
+    slot.instanceId = id;
+    slot.pending = true;
+    const char* name = SDL_GameControllerName(controller);
+    APS5_LOG_OUT("Pad: slot %zu: %s (type %d, accel=%d gyro=%d, touchpads=%d, led=%d, trigger rumble=%d)",
+        result.slot, name != nullptr ? name : "unknown", static_cast<int>(SDL_GameControllerGetType(controller)),
+        SDL_GameControllerHasSensor(controller, SDL_SENSOR_ACCEL) == SDL_TRUE, SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO) == SDL_TRUE,
+        SDL_GameControllerGetNumTouchpads(controller), SDL_GameControllerHasLED(controller) == SDL_TRUE,
+        SDL_GameControllerHasRumbleTriggers(controller) == SDL_TRUE);
+    PadSetControllerConnected_nid_postfix(static_cast<int>(result.slot), true);
+    enableSensors(result.slot);
 }
 
 void PadInput::removeController(SDL_JoystickID instanceId) {
-    for (std::size_t i = 0; i < controllers.size(); ++i) {
-        if (controllers[i].controller == nullptr || controllers[i].instanceId != instanceId) continue;
-        SDL_GameControllerClose(controllers[i].controller);
-        controllers[i] = {};
-        PadSetControllerConnected_nid_postfix(static_cast<int>(i), false);
-        return;
+    const std::size_t i = slotTable.Detach(instanceId);
+    if (i == Pad::SlotTable::kNone) return;
+    SDL_GameControllerClose(controllers[i].controller);
+    controllers[i] = {};
+    PadSetControllerConnected_nid_postfix(static_cast<int>(i), false);
+}
+
+void PadInput::enableSensors(std::size_t slot) {
+    SDL_GameController* c = controllers[slot].controller;
+    if (c == nullptr) return;
+    // Joystick sensors are independent of the SDL_SENSOR subsystem, so the
+    // DualSense IMU works with SDL_SENSOR off; SDL ignores a type the pad lacks.
+    const SDL_bool wanted = controllers[slot].output.motionEnabled ? SDL_TRUE : SDL_FALSE;
+    if (SDL_GameControllerHasSensor(c, SDL_SENSOR_ACCEL) == SDL_TRUE) SDL_GameControllerSetSensorEnabled(c, SDL_SENSOR_ACCEL, wanted);
+    if (SDL_GameControllerHasSensor(c, SDL_SENSOR_GYRO) == SDL_TRUE) SDL_GameControllerSetSensorEnabled(c, SDL_SENSOR_GYRO, wanted);
+}
+
+void PadInput::applyOutput(std::size_t index) {
+    ControllerSlot& slot = controllers[index];
+    SDL_GameController* c = slot.controller;
+    if (c == nullptr) return;
+    PadOutputState fetched;
+    if (PadFetchOutput_nid_postfix(static_cast<int>(index), &slot.outputSequence, &fetched)) {
+        const bool motionChanged = fetched.motionEnabled != slot.output.motionEnabled;
+        slot.output = fetched;
+        slot.pending = true;
+        if (motionChanged) enableSensors(index);
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const PadOutputState& out = slot.output;
+    const bool rumbling = out.vibrationLarge != 0 || out.vibrationSmall != 0;
+    const bool isPs5 = SDL_GameControllerGetType(c) == SDL_CONTROLLER_TYPE_PS5;
+    const bool triggerRumble = !isPs5 && (out.trigger[0].fallback != 0 || out.trigger[1].fallback != 0);
+    if (!slot.pending) {
+        // SDL rumble expires host-side after kRumbleDurationMs; keep it alive while the guest holds it.
+        if (!((rumbling || triggerRumble) && now >= slot.nextRumbleRefresh)) return;
+    }
+    slot.pending = false;
+    slot.nextRumbleRefresh = now + std::chrono::milliseconds(Pad::kRumbleRefreshMs);
+    if (rumbling || slot.rumbleActive) {
+        const Pad::SdlRumble r = Pad::RumbleToSdl(out.vibrationLarge, out.vibrationSmall);
+        SDL_GameControllerRumble(c, r.lowFrequency, r.highFrequency, rumbling ? Pad::kRumbleDurationMs : 0);
+        slot.rumbleActive = rumbling;
+    }
+    if (SDL_GameControllerHasLED(c) == SDL_TRUE) {
+        if (out.lightBarValid) {
+            SDL_GameControllerSetLED(c, out.lightBar[0], out.lightBar[1], out.lightBar[2]);
+            slot.ledOverridden = true;
+        } else if (slot.ledOverridden) {
+            SDL_GameControllerSetLED(c, Pad::kDefaultLightBar[0], Pad::kDefaultLightBar[1], Pad::kDefaultLightBar[2]);
+            slot.ledOverridden = false;
+        }
+    }
+    // After the guest closes the pad the request resets to "off"; an effect that
+    // was engaged must still be cleared on the host pad, hence triggerEffectActive.
+    if (out.triggerTouched || slot.triggerEffectActive) {
+        slot.triggerEffectActive = out.triggerTouched;
+        if (isPs5) {
+            const auto report = Pad::BuildDs5TriggerEffects(out.trigger[0], out.trigger[1]);
+            SDL_GameControllerSendEffect(c, report.data(), static_cast<int>(report.size()));
+        } else if (SDL_GameControllerHasRumbleTriggers(c) == SDL_TRUE) {
+            SDL_GameControllerRumbleTriggers(c, static_cast<Uint16>(out.trigger[0].fallback * 257), static_cast<Uint16>(out.trigger[1].fallback * 257),
+                triggerRumble ? Pad::kRumbleDurationMs : 0);
+        }
     }
 }
 
@@ -80,8 +154,29 @@ void PadInput::pollControllers(bool neutral) {
             for (int a = 0; a < SDL_CONTROLLER_AXIS_MAX; ++a) {
                 sample.axes[static_cast<std::size_t>(a)] = SDL_GameControllerGetAxis(c, static_cast<SDL_GameControllerAxis>(a));
             }
+            if (SDL_GameControllerIsSensorEnabled(c, SDL_SENSOR_ACCEL) == SDL_TRUE && SDL_GameControllerIsSensorEnabled(c, SDL_SENSOR_GYRO) == SDL_TRUE) {
+                std::array<float, 3> accel{};
+                std::array<float, 3> gyro{};
+                if (SDL_GameControllerGetSensorData(c, SDL_SENSOR_ACCEL, accel.data(), 3) == 0 &&
+                    SDL_GameControllerGetSensorData(c, SDL_SENSOR_GYRO, gyro.data(), 3) == 0) {
+                    sample.hasMotion = true;
+                    sample.accel = accel;
+                    sample.gyro = gyro;
+                }
+            }
+            if (SDL_GameControllerGetNumTouchpads(c) > 0) {
+                for (int finger = 0; finger < 2; ++finger) {
+                    Uint8 down = 0;
+                    float x = 0.0f;
+                    float y = 0.0f;
+                    float pressure = 0.0f;
+                    if (SDL_GameControllerGetTouchpadFinger(c, 0, finger, &down, &x, &y, &pressure) != 0 || down == 0) continue;
+                    sample.touch[static_cast<std::size_t>(finger)] = Pad::ScaleTouchFinger(x, y);
+                }
+            }
         }
         PadPublishControllerInput_nid_postfix(static_cast<int>(i), Pad::BuildControllerState(sample, deadzone));
+        applyOutput(i);
     }
 }
 
