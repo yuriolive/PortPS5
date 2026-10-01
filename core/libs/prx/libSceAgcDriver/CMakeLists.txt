@@ -408,6 +408,18 @@ if(BUILD_TESTING)
         LABELS   unit
     )
 
+    # Hosted tests for the render-target sampling image pool (pure logic, fake handles, no device).
+    portps5_add_gtest(agc_driver_resident_image_pool_tests
+        SOURCES  tests/ResidentImagePool.cpp
+                 Graphics/src/ResidentImagePool.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+        # libc supplies __gxx_personality_v0, which the project's Windows unwind configuration
+        # references from every test executable (see core/libs/CMakeLists.txt, config_tests).
+        LIBRARIES libc
+        LABELS   unit
+    )
+
     # Hosted depth-surface tests: format policy, loadOp mapping and ResidentDepth lifetime
     # against a mock Vulkan device table (no GPU, no guest memory).
     portps5_add_gtest(agc_driver_depth_surface_tests
