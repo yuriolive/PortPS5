@@ -266,3 +266,27 @@ portps5_add_gtest(pad_controller_input_tests
     LABELS
         unit
 )
+
+# Telemetry core: record schema, stall/softlock definitions, watchdog latch and
+# audio/A-V sampler on a synthetic clock (header-only, no game data).
+portps5_add_gtest(telemetry_core_tests
+    SOURCES
+        telemetry/TelemetryTests.cpp
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Telemetry runtime exports in libc: Start/Shutdown lifecycle and the run.end
+# end-marker guarantee, writing only to a temp directory.
+portps5_add_gtest(telemetry_runtime_tests
+    SOURCES
+        telemetry/TelemetryRuntimeTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
