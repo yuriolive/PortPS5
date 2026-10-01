@@ -27,6 +27,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | **python-quality** | Astral toolchain gate for every Python file (`tools/`, `tests/tools/`, relinker self-tests): `ruff check` + `ruff format --check` and `pytest` with coverage over `tools/` (`fail_under = 85`, `pyproject.toml`). Runs on `ubuntu-latest` via pinned `uv` (`uv.lock` committed); versions pinned in `pyproject.toml` (`dependency-groups.dev`). CTest keeps running the same suites through stdlib `unittest` on Windows so hosted unit execution never depends on PyPI. |
 
 - **Status as of 2026-09-30:** every job above exists in `.github/workflows/`, including `driver-lavapipe` (bean `portps5-ekx3`; it stays red until the stale driver tests are fixed by PR #80). `tools/regress.py` (conversion layout, launch, results JSON writer, pass rule) exists as of this PR (bean `portps5-3m3u`); the frame-check, checkpoint-replay and shader-corpus steps of section 2 and the upload are still open. The runtime telemetry core (section 4.3) writes the section 4.1 log, but nothing calls its `Start` at process start-up yet, so `run` reports a missing log until that wiring lands (bean `portps5-f9a3`).
+- [ ] `driver-lavapipe` passes on `main` (blocked on the stale driver test fixes in PR #80; tick when its first green run lands).
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
 ## 2. Local regression (per build, maintainer GPU machine)
