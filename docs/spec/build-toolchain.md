@@ -173,7 +173,8 @@ Tests are progressively consolidated from standalone single-function executables
   - [ ] `lavapipe` label and job (`driver-lavapipe`): the label exists on the driver suites (`libSceAgcDriver/CMakeLists.txt:351-389`), the job does not (bean `portps5-ekx3`);
   - [ ] the xxHash pin: no xxHash is vendored under `3rdparty/` yet.
 - [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from AnyPS5 main (merged PR #5) (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
-- [ ] **M2:** `tools/regress.py` runner (bean `portps5-3m3u`). It is a Python script run by hand and covered by pytest in the `python-quality` job. It is not a ctest target and not a build target, so it adds no `local`-labelled test; the `local` label stays reserved for GPU or game-data tests. SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:46-48` since PR #20; the pin check against the HIDAPI PS5 driver is still open, bean `portps5-de24`).
+- [x] **M2:** `tools/regress.py` runner (bean `portps5-3m3u`). It is a Python script run by hand and covered by pytest in the `python-quality` job. It is not a ctest target and not a build target, so it adds no `local`-labelled test; the `local` label stays reserved for GPU or game-data tests. The checkbox covers the build-toolchain deliverable only; the runner's checkpoint, frame-check and upload steps stay open under ROADMAP M2.
+- [ ] **M2:** SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:46-48` since PR #20; the pin check against the HIDAPI PS5 driver is still open, bean `portps5-de24`).
 - [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
 - [ ] **M6:** release preset used for the release commit, with the R1 status recorded.
 
