@@ -91,7 +91,7 @@ These are consistent with the decision table in [README.md](README.md#subsystem-
 | `release` | user build | `CMAKE_BUILD_TYPE=Release`, `BUILD_TESTING=OFF`, `ANYPS5_ENABLE_SPIRV_TOOLS=OFF` |
 | `dev` | development, local regression | `RelWithDebInfo`, `BUILD_TESTING=ON`, `ANYPS5_ENABLE_SPIRV_TOOLS=ON` |
 | `ci` | hosted CI, including `recompiler-golden` | inherits `dev` (so SPIRV-Tools is ON), `PORTPS5_COMPILE_WARNING_AS_ERROR=ON` (warnings as errors for PortPS5 targets only), `PORTPS5_REQUIRE_FFMPEG=ON` |
-| `asan` | local sanitizer runs | inherits `ci`, adds `-fsanitize=address,undefined -fno-omit-frame-pointer -g` to the C/C++ compile and link flags |
+| `asan` | local sanitizer runs (broken on Windows) | inherits `ci`, adds `-fsanitize=address,undefined -fno-omit-frame-pointer -g` to the C/C++ compile and link flags. MinGW-w64 GCC 15.2 ships no libasan or libubsan, so linking fails (`cannot find -lasan`); ASan on Windows needs clang. Bean `portps5-hmw8` replaces it with a GCC `ubsan-trap` preset (`-fsanitize=undefined -fsanitize-trap=all`, no runtime) and spikes a dev-only llvm-mingw ASan build of the host-only tests. |
 
 SPIRV-Tools is ON in `dev` and `ci`. In `release` it is OFF by default, pending the PRD R1 decision. That is the current default, not a policy-enforced rule; R1 may change it.
 

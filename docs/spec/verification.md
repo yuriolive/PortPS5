@@ -28,6 +28,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 
 - **Status as of 2026-10-01:** every job above exists in `.github/workflows/`. `driver-lavapipe` (bean `portps5-ekx3`) first ran green on `main` with PRs #80/#82 (`0bb6edf1`). `main` CI was green through #53 (`07b76f75`). `build_and_test` then failed `prx_cross_import_check` on the #68 and #88 merges (`eaea7340`, `1c65844a`); PR #94 fixed it by exporting the mount-table API verbatim (bean `portps5-sjuv`, completed). `driver_lavapipe` still crashes intermittently in `agc_recorder_tests` (first seen as `RecorderTest.SubmitMakesDeviceWritesVisibleToTheHost`; it did not reproduce locally in about 7,350 runs), tracked as bean `portps5-3maf` until a dump is captured. `tools/regress.py` (conversion layout, launch, results JSON writer, pass rule) landed in PR #76 (bean `portps5-3m3u`); the frame-check, checkpoint-replay, shader-corpus and save steps of section 2 and the upload are still open. The runtime telemetry core (section 4.3) writes the section 4.1 log, but nothing calls its `Start` at process start-up yet, so `run` reports a missing log until that wiring lands (bean `portps5-w1re`).
 - [x] `driver-lavapipe` passes on `main` (first green run with PRs #80/#82, `0bb6edf1`).
+- [ ] `driver-lavapipe` runs with the Khronos validation layer (`core` and `sync`, pinned and SHA-256-verified); any validation error fails the job, and known false positives live in a checked-in suppression file with a reason per message ID (bean `portps5-c5if`).
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
 ## 2. Local regression (per build, maintainer GPU machine)
@@ -148,6 +149,8 @@ Target design for the performance track ([ROADMAP.md](../ROADMAP.md) "Performanc
 - [ ] **Memory** (bean `portps5-ybq3`): a per-second numeric `mem` event (VRAM used and budget from `VK_EXT_memory_budget`, guest committed bytes, host-import bytes, staging bytes); the results JSON gets `memory_peak_mb`.
 - [ ] **Stall attribution** (bean `portps5-26s5`): a `frame` record over the stall threshold carries a numeric `cause` (compile, load or I/O, GPU wait, guest), from the breakdown and the violation counters; the results JSON gets `stalls_by_cause`.
 - [ ] **Boot and compile timing** (beans `portps5-pk9m`, `portps5-tg51`): `boot_ms` (process start to first present), and `shader.compile_ms` and `pipeline.create_ms` events with totals and p99 in the results JSON.
+- [ ] **Present latency** (bean `portps5-jy7n`): where `VK_KHR_present_id` and `VK_KHR_present_wait` exist, the `frame` record carries `present_to_display_ms`, and the results JSON gets present-interval jitter (p99 minus p50).
+- [ ] **Crash reports** (bean `portps5-cmyp`): beyond `crash { code }`, a local `logs/crash-<t>.txt` with a classified, symbolisable stack (guest image, prx or host, module and offset), the last records from an in-memory ring buffer and a minidump. Only the numeric `crash` event reaches the results JSON.
 - [ ] **Dialogs** (bean `portps5-7qon`): each dialog `Open` emits the numeric `dialog.open { kind }` event, and no dialog logs guest text outside `[debug]` tracing.
 
 ## 5. Test Framework Architecture (GoogleTest & GMock)
