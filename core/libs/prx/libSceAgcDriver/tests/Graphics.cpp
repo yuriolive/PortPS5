@@ -931,7 +931,10 @@ void rectListTests() {
     target.spirvVersion = 0x00010300u;
     target.supportedCapabilities = capabilities;
     target.tessellation = TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
-    for (const auto version : {0x00010300u, 0x00010400u, 0x00010600u}) {
+    // Only SPIR-V versions the production shader validator accepts (ShaderValidation.cpp caps at 1.4,
+    // which also matches VulkanDevice's mesh/non-mesh targets). RectListShaders can emit up to 1.6, but
+    // 1.6 modules fail ValidateShaders until that cap is raised (bean portps5-s16v).
+    for (const auto version : {0x00010300u, 0x00010400u}) {
         target.spirvVersion = version;
         auto auxiliary = BuildRectListShaders(vertex, fragment, target);
         const std::array<CompiledShader, 4> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::TessellationControl, &auxiliary.control, 0}, {ShaderStage::TessellationEvaluation, &auxiliary.evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};
