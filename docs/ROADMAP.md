@@ -161,6 +161,46 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [ ] Hosted CI and local regression are green.
 - [ ] The release notes are published.
 
+## Performance track (cross-cutting, M2–M5)
+
+The track keeps the steady-state invariants of [PRD §4.5](PRD.md) true while the milestones land. It runs alongside M2–M5 and gates nothing by itself; the milestone exit criteria still do. Every step measures first: before/after numbers with the same build flags and the same run protocol. Epic bean `portps5-7fqk`.
+
+**P0: Measure** (M2)
+- [x] Frame-time log, stalls, warm-up and pipeline-creation counts (PRs #76, #78).
+- [ ] Telemetry call sites wired: start-up, presenter, guest progress (bean `portps5-w1re`).
+- [ ] Results JSON frame-time percentiles (p50, p90, p99) and `tools/regress.py compare` against a stored baseline (bean `portps5-rrll`).
+- [ ] Per-frame breakdown: CPU record and submit, GPU time from Vulkan timestamp queries, CPU wait on GPU, present wait (bean `portps5-hfiw`).
+- [ ] Violation counters for invariants P1, P2, P3 and P5 (bean `portps5-aifo`).
+
+**P1: Per-draw CPU cost** (M2–M3, invariants P2 and P5)
+- [x] Pooled images for resident render-target sampling (PR #74, bean `portps5-r7qk` step 1).
+- [ ] Frame-timing report only when `debug.profile` has `gpu` (PR #71).
+- [ ] SSE2 compare of cached textures (PR #75) and the write-tracker skip of unchanged textures (PR #77; it takes effect once bean `portps5-421p` wires the tracker).
+- [ ] Resident render-target baseline, then decide step 2 (bean `portps5-r7qk`).
+
+**P2: GPU-side resolution** (M3, invariants P1 and P6). The work is the M3 driver scope: the Recorder in the submit path (bean `portps5-tiod`), the GPU path for the indirect family, block-generation tracking and the capture-ordering redesign. The M3 module split records into a GPU IR with explicit resource states ([spec/gpu-driver.md](spec/gpu-driver.md) Decision), so barrier optimization, multithreaded recording and frame overlap can come later without a rewrite.
+- [ ] M3 exit adds: in the Tomb Raider regression result, the P1 and P2 counters are 0 in steady state, or each nonzero counter has a bean.
+
+**P3: Performance pass** (M5). This is the existing M5 item. Every remaining invariant violation is removed or justified in its owner spec, and these open questions are decided with data: the async-compute queue and HTILE/DCC ([spec/gpu-driver.md](spec/gpu-driver.md) 2–3), multithreaded PM4 recording (gpu-driver 11), pipeline libraries ([spec/pipeline-cache.md](spec/pipeline-cache.md) 3), and host core placement ([spec/threading.md](spec/threading.md) 9).
+
+60/120 fps targets, upscalers and frame-rate unlocks stay post-1.0 (PRD §5).
+
+### Parallel lanes
+
+A lane can start when its blockers are done. Lanes in the same row can run in parallel. The beans record the same edges (`blocked_by`), so `beans list --ready` shows what can start now.
+
+| Lane | Beans | Blocked by |
+|---|---|---|
+| Config at startup | `portps5-c06p` | none |
+| Results compare | `portps5-rrll` | none |
+| Tracker wiring | `portps5-421p` | none |
+| Recorder in submit path | `portps5-tiod` | none |
+| Telemetry call sites | `portps5-w1re` | `portps5-c06p` |
+| Display keys | `portps5-dtwf` | `portps5-c06p` |
+| Frame breakdown | `portps5-hfiw` | `portps5-w1re`, `portps5-tiod` |
+| Violation counters | `portps5-aifo` | `portps5-w1re` |
+| Resident RT step 2 | `portps5-r7qk` | `portps5-w1re` (baseline needs telemetry) |
+
 ## Traceability
 
 | 1.0 goal (PRD) | Delivered in | Verified by |
@@ -175,6 +215,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 | F8 offline PSN/trophies | M1 | Full runs never blocked |
 | F9 telemetry | M1 | Results JSON present for every run |
 | Performance bar (§4.3) | M1 (sync), M2 (depth/stencil), M3 (driver), M4 (subgroups), M5 (perf pass) | Results JSON fps stats |
+| Performance invariants (§4.5) | Performance track P0–P3 (M2–M5) | Results JSON violation counters, before/after measurements |
 | Ecosystem test suites (GTest, Kyty, SharpEMU, FreeBSD, Mesa, Wine) | M0 (framework), M1 (core runtime), M2 (sandbox/input/audio), M3 (caches/structurizer), M4 (fibers/jobs) | CI `unit`, `recompiler-golden`, `driver-lavapipe` |
 | Gate 1: Dreaming Sarah | M2 | Full run |
 | Gate 2: TMNT: Shredder's Revenge | M2 | Full run |

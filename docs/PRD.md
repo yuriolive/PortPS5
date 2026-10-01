@@ -1,6 +1,6 @@
 # PortPS5 — Product Requirements Document (1.0)
 
-Status: draft v1 · 2026-09-27 · Owner: PortPS5 maintainer
+Status: draft v1 · 2026-09-27 (§4.5 added 2026-10-01) · Owner: PortPS5 maintainer
 
 ## 1. Summary
 
@@ -86,6 +86,25 @@ The bar is measured on a generic **upper mid-tier** desktop:
 
 To keep the tier fixed over time, it is anchored by benchmark floors: CPU Cinebench R23 multi-core ≥ 18,000, and GPU 3DMark Time Spy graphics score ≥ 18,000. A machine that meets both floors qualifies. The local test script records both scores and derives `host_tier` from them instead of trusting a self-declared value. No specific personal machine is part of the specification.
 
+### 4.5 Performance architecture invariants
+
+The 1.0 bar stays at 30 fps (§4.3), and 60/120 fps stays a non-goal (§5). A design that rules out 60 fps on the reference tier is still rejected, because removing it after 1.0 would mean rewriting a subsystem. In steady state (after `warmup.end`, outside loading) the runtime holds these invariants:
+
+| ID | Invariant | Owner spec |
+|---|---|---|
+| P1 | No CPU wait on GPU completion and no GPU→CPU readback inside a frame, unless the guest asked for it (a label wait, a query read, or CPU access to a GPU-written range). | [gpu-driver.md](spec/gpu-driver.md) |
+| P2 | No Vulkan object creation (image, buffer, memory, descriptor pool, pipeline) per draw or per dispatch. Caches and pools reuse them. | [gpu-driver.md](spec/gpu-driver.md), [pipeline-cache.md](spec/pipeline-cache.md) |
+| P3 | No shader or pipeline compilation on the submit thread after warm-up. With a warm cache this is F7. | [pipeline-cache.md](spec/pipeline-cache.md) |
+| P4 | No process-global lock on a hot path. Uncontended guest synchronization stays in user mode. | [threading.md](spec/threading.md) |
+| P5 | Per-draw CPU cost does not grow with guest resource size. Unchanged guest memory is not compared or copied in full when the write tracker can prove it unchanged. | [gpu-driver.md](spec/gpu-driver.md), [guest-memory.md](spec/guest-memory.md) |
+| P6 | CPU recording of frame N+1 can overlap GPU execution of frame N, with an explicit, bounded number of frames in flight. | [gpu-driver.md](spec/gpu-driver.md) |
+
+Rules:
+
+- Telemetry counts violations of P1, P2, P3 and P5 ([spec/verification.md](spec/verification.md) §4.4). The counts appear in the results JSON but are not part of the 1.0 pass rule.
+- A known violation has a bean and a line in its owner spec's Current state. The M5 performance pass removes or justifies each one.
+- A speed-up never comes from skipping work ([.agents/rules/no-title-hacks.md](../.agents/rules/no-title-hacks.md)). A performance claim needs a before/after measurement with the same build flags and run protocol.
+
 ## 5. Scope
 
 **In 1.0:** F1–F9, Windows only, the five gate titles.
@@ -94,7 +113,7 @@ To keep the tier fixed over time, it is anchored by benchmark floors: CPU Cinebe
 
 - Relink-time (ahead-of-time) shader compilation. The disk cache covers the stutter goal.
 - An array-of-bytes (AOB) patch engine for fps unlocks and delta-time patches.
-- Upscaling and resolution targets: FSR1/CAS, DLSS or FSR2+ via PSSR/TAA intercept, 4K, 60/120 fps.
+- Upscaling and resolution targets: FSR1/CAS, DLSS or FSR2+ via PSSR/TAA intercept, 4K, 60/120 fps. The §4.5 invariants keep these reachable without a rewrite.
 - Other platforms and front ends: Linux and macOS release builds, a GUI launcher.
 - DualSense haptics and adaptive triggers.
 - Titles beyond the gate set. The compatibility list will track them, but they do not gate 1.0.

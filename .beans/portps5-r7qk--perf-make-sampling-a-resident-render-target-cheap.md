@@ -5,8 +5,10 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-10-01T01:00:00Z
-updated_at: 2026-10-01T17:59:28Z
+updated_at: 2026-10-01T18:08:16Z
 parent: portps5-4ut1
+blocked_by:
+    - portps5-w1re
 ---
 
 
