@@ -105,6 +105,12 @@ TEST(DirectMemoryExport, QueryMergesAdjacentBlocksOfTheSameType) {
     ASSERT_EQ(sceKernelDirectMemoryQuery(a, 0, &info, sizeof(info)), 0);
     EXPECT_EQ(info.start, a);
     EXPECT_EQ(info.end, a + static_cast<int64_t>(4 * PS5_PAGE_SIZE));  // a+b merged, c (type 1) excluded
+    // The run starts at the block containing the offset and extends forward only (shadPS4 does the
+    // same: start = the found block's base, end = last adjacent same-type block). Pinned so a later
+    // "merge backwards" change is a deliberate decision, not an accident.
+    ASSERT_EQ(sceKernelDirectMemoryQuery(b, 0, &info, sizeof(info)), 0);
+    EXPECT_EQ(info.start, b);
+    EXPECT_EQ(info.end, a + static_cast<int64_t>(4 * PS5_PAGE_SIZE));
     sceKernelReleaseDirectMemory(a, 6 * PS5_PAGE_SIZE);
 }
 

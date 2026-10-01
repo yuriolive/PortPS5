@@ -128,7 +128,7 @@ static constexpr int SCE_KERNEL_DMQ_FIND_NEXT = 1;
  * @return 0; SCE_KERNEL_ERROR_EINVAL for a null buffer, negative offset or short buffer;
  *         SCE_KERNEL_ERROR_EACCES when the offset is past the aperture or in free memory
  *         (and, with FIND_NEXT, no allocated run follows).
- * @note Adjacent allocations of the same memory type report one merged run.
+ * @note The run starts at the block containing the offset and extends forward over adjacent blocks of the same memory type.
  */
 int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, size_t info_size);
 
