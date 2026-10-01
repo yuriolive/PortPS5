@@ -5,9 +5,10 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-10-01T18:25:11Z
-updated_at: 2026-10-01T18:33:01Z
+updated_at: 2026-10-01T21:29:06Z
 parent: portps5-7fqk
 ---
+
 
 ## Context
 
@@ -31,3 +32,5 @@ Shipping Tracy in release builds.
 ## Summary of Changes
 
 TBD
+
+Reference note: Tracy can install its own fault handler ahead of the write-tracking page-fault handler (KytyPS5 2650478). Verify the handler chain with profiling on.
