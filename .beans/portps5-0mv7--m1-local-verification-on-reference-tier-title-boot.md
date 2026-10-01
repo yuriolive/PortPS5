@@ -7,11 +7,28 @@ priority: normal
 tags:
     - beads:portps5-5
 created_at: 2026-09-30T22:53:49Z
-updated_at: 2026-09-30T22:53:49Z
+updated_at: 2026-09-30T23:56:52Z
 ---
 
-## Description
+## Context
 
-PR #28: Progress Report deltas on every PR (+ Pages badges) and python-quality gate (uv, ruff check/format, pytest, tools/ coverage fail_under=85). See docs/spec/verification.md jobs table.
+The original description of this bean was migrated from an unrelated beads note (progress-report deltas, PR #28). The real scope is the M1 exit criterion: local verification on the reference tier, meaning title boot, the performance gate and frame-capture comparison, on a maintainer machine with their own dumps (docs/spec/verification.md section 2, PRD section 4.3). No local run has been recorded in the repo. Migrated from beads `portps5-5`.
 
-Migrated from beads `portps5-5`.
+## Higher Goal
+
+Prove M1 with evidence: each gate title converts, boots and reports telemetry, recorded only as results JSON (legal boundary: no frames, footage or dumps).
+
+## Acceptance Criteria
+
+- [ ] Regression tooling exists: portps5-3m3u
+- [ ] Dreaming Sarah boots to the title screen and its result JSON is recorded: portps5-kmb6
+- [ ] Demon's Souls reaches the in-engine intro cinematic with title-specific code removed (ROADMAP M1 exit)
+- [ ] Hosted golden corpus covers every decoded instruction class and the local game-derived corpus replays with 0 validation failures (ROADMAP M1 exit)
+
+## Out of Scope
+
+Full-run pass bar (M2 and later), compatibility list generation.
+
+## Summary of Changes
+
+TBD

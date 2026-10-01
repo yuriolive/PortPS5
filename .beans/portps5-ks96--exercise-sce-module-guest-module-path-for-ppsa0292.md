@@ -7,15 +7,27 @@ priority: normal
 tags:
     - beads:portps5-54
 created_at: 2026-09-30T22:53:50Z
-updated_at: 2026-09-30T22:53:50Z
+updated_at: 2026-09-30T23:56:56Z
 ---
 
-## Description
+## Context
 
-Dreaming Sarah conversion probe ran with --skip-sce-module; the app ships a sce_module dir whose processing is untested for this title. Re-run conversion without the flag, verify guest artifacts, and boot-stage. If the path is unnecessary, record why in docs/spec/relinker.md.
+The Dreaming Sarah (PPSA02929) conversion probe ran with `--skip-sce-module`, and the app ships an `sce_module` directory whose processing is untested for this title. Migrated from beads `portps5-54`. Spec: docs/spec/relinker.md (guest-module path).
+
+## Higher Goal
+
+Do not skip a conversion step silently for a gate title: either it works or the failure is recorded and owned.
 
 ## Acceptance Criteria
 
-Conversion without --skip-sce-module succeeds or fails with a recorded, owned error
+- [ ] Re-run conversion without `--skip-sce-module`
+- [ ] Guest artifacts verified and boot-staged, or the path recorded as unnecessary in relinker.md
+- [ ] Failure, if any, recorded with an owner
 
-Migrated from beads `portps5-54`.
+## Out of Scope
+
+Modifying the `sce_module` builder without a failing case.
+
+## Summary of Changes
+
+TBD
