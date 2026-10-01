@@ -170,8 +170,17 @@ DepthTarget DecodeDepthTarget(const Registers& cx, bool& depthReadOnly, bool& st
     }
     if (target.hasStencil) {
         target.stencilAddress = address(0x15, 0x1d, "DB_STENCIL_WRITE_BASE");
-        Require(target.stencilAddress != 0, "stencil surface bound with a null DB_STENCIL_WRITE_BASE");
         Require(address(0x13, 0x1b, "DB_STENCIL_READ_BASE") == target.stencilAddress, "separate stencil read and write bases are unsupported");
+        if (target.stencilAddress == 0) {
+            // A valid DB_STENCIL_INFO.FORMAT with a null base means the title never allocated the stencil plane
+            // (observed: Z32F + STENCIL_8 declared, both bases 0, DB_DEPTH_CONTROL.STENCIL_ENABLE = 0). Hardware never
+            // touches the plane unless stencil is tested/written (DB_DEPTH_CONTROL bit 0) or cleared
+            // (DB_RENDER_CONTROL bit 1), so an unused plane is simply absent. Using it with no memory is a guest
+            // error and stays fatal (docs/spec/gpu-driver.md, no silent skips).
+            const bool stencilUsed = (readOr(cx, 0x200, 0) & 1u) != 0 || (readOr(cx, 0x0, 0) & 2u) != 0;
+            Require(!stencilUsed, "stencil enabled or cleared with a null DB_STENCIL_WRITE_BASE");
+            target.hasStencil = false;
+        }
     }
     const auto control = readOr(cx, 0x0, 0);
     // Accepted: DEPTH/STENCIL_CLEAR_ENABLE (0, 1), RESUMMARIZE and the two COMPRESS_DISABLE

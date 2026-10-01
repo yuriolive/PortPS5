@@ -12,6 +12,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include <gtest/gtest.h>
 #include <bit>
+#include <string>
 
 namespace {
 
@@ -289,6 +290,43 @@ TEST(DepthSurface, StencilSurfaceDecode) {
     EXPECT_TRUE(target.Bound());
 }
 
+// Invariant: a stencil format with null stencil bases and no stencil use is an absent plane,
+// not an error. Regression for a gate title that declares Z32F + STENCIL_8 but never
+// allocates the stencil plane (DB_STENCIL_{READ,WRITE}_BASE = 0, STENCIL_ENABLE = 0): the
+// decoder used to abort the whole title with "stencil surface bound with a null
+// DB_STENCIL_WRITE_BASE". Precondition: depth bound normally, stencil bases zeroed, no
+// stencil enable/clear. Expected: depth stays bound, hasStencil drops to false.
+TEST(DepthSurface, UnusedStencilWithNullBaseIsAbsent) {
+    auto queue = makeQueue();
+    bindDepth(queue, true);
+    queue.context[0x13] = queue.context[0x15] = 0;
+    const auto target = DecodeState(queue).depthTarget;
+    EXPECT_TRUE(target.HasDepth());
+    EXPECT_FALSE(target.hasStencil);
+    EXPECT_EQ(target.stencilAddress, 0ull);
+    EXPECT_FALSE(target.clearStencil);
+}
+
+// Invariant: the null-stencil-base tolerance never hides real use. Stencil test/write
+// (DB_DEPTH_CONTROL bit 0) or clear (DB_RENDER_CONTROL bit 1) with no memory still aborts,
+// with a message that names the cause. Failure mode guarded: silently dropping a used plane.
+TEST(DepthSurface, UsedStencilWithNullBaseStillRejected) {
+    const auto expectRejected = [](auto mutate) {
+        auto queue = makeQueue();
+        bindDepth(queue, true);
+        queue.context[0x13] = queue.context[0x15] = 0;
+        mutate(queue);
+        try {
+            DecodeState(queue);
+            FAIL() << "expected a rejection";
+        } catch (const std::runtime_error& error) {
+            EXPECT_NE(std::string(error.what()).find("null DB_STENCIL_WRITE_BASE"), std::string::npos) << error.what();
+        }
+    };
+    expectRejected([](auto& q) { q.context[0x200] |= 1u; });
+    expectRejected([](auto& q) { q.context[0x0] = 1u << 1u; });
+}
+
 // Failure modes of the surface decode: reserved format, MSAA, partially resident, mips and
 // slices, missing size, null or split bases, bad address extension, reserved size bits.
 TEST(DepthSurface, UnsupportedSurfaceRejected) {
@@ -311,7 +349,9 @@ TEST(DepthSurface, UnsupportedSurfaceRejected) {
     rejects("null depth base", [](auto& q) { q.context[0x12] = q.context[0x14] = 0; });
     rejects("split depth bases", [](auto& q) { q.context[0x12] = 0x1001; });
     rejects("split stencil bases", [](auto& q) { q.context[0x13] = 0x2001; });
-    rejects("null stencil base", [](auto& q) { q.context[0x13] = q.context[0x15] = 0; });
+    rejects("null stencil base with stencil enabled", [](auto& q) { q.context[0x13] = q.context[0x15] = 0; q.context[0x200] |= 1u; });
+    rejects("null stencil base with stencil clear", [](auto& q) { q.context[0x13] = q.context[0x15] = 0; q.context[0x0] = 1u << 1u; });
+    rejects("null stencil write base only", [](auto& q) { q.context[0x15] = 0; });
     rejects("depth base extension", [](auto& q) { q.context[0x1c] = 0x100; q.context[0x1a] = 0x100; });
     rejects("depth-to-colour copy", [](auto& q) { q.context[0x0] = 1u << 2u; });
     rejects("stencil-to-colour copy", [](auto& q) { q.context[0x0] = 1u << 3u; });
