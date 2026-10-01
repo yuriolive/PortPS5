@@ -50,11 +50,11 @@ python tools/regress.py prepare \
   --libs build/release/core/libs/libs
 ```
 
-This runs `relinker --windows eboot.elf game.exe`, copies the `.prx` libraries to `<install>\libs`, and links `<install>\app0` to the dump (a read-only junction; the dump is never copied or modified).
+This runs `relinker --windows eboot.elf game.exe`, copies the `.prx` libraries to `<install>\libs`, and links `<install>\app0` to the dump (a junction; the dump is not copied. `mklink /J` does not write-protect it, so a title that opens `/app0/...` for writing can modify the dump. Keep a backup).
 
 ### Option B: by hand
 
-```bash
+```cmd
 relinker --windows <dump>\eboot.elf <install>\game.exe
 xcopy /E build\release\core\libs\libs <install>\libs\
 mklink /J <install>\app0 <dump>
@@ -66,7 +66,7 @@ Always do the full conversion. Do **not** pass `--skip-sce-module`; it crashes g
 
 The runtime reads config from `<install>\config\`. The relinker does not copy it yet (bean `portps5-c06p`), so copy it yourself:
 
-```bash
+```cmd
 xcopy /E config <install>\config\
 ```
 
@@ -78,7 +78,7 @@ Without it the runtime logs one warning and uses built-in defaults.
 <install>/
   game.exe          converted executable (run this)
   libs/             patched .prx replacement libraries + MinGW runtime DLLs
-  app0/             junction to the decrypted dump (read-only)
+  app0/             junction to the decrypted dump (not write-protected)
   config/
     global.toml
     games/<titleId>.toml   optional per-title overrides
@@ -92,7 +92,7 @@ Without it the runtime logs one warning and uses built-in defaults.
 | `--windows-gui` | GUI subsystem instead of console (needs `--windows`) |
 | `--windows-diagnostics` | Extra loader diagnostics (needs `--windows`) |
 | `--to-intel` | Lower AMD-only instructions (SSE4a etc.) for Intel CPUs. Use it on Intel hosts. |
-| `--lazy-binding` | Do not stop at the first unresolved import; bind lazily |
+| `--lazy-binding` | Do not stop at the first unresolved import; bind lazily. Incompatible with guest ELF modules (conversion fails) |
 | `unused-filter=0\|1\|2` | Drop unused NID imports (default per tool; level 2 rewrites the PLT) |
 | `--registry` | Write the import registry / conversion report |
 | `--skip-syscall-check` | Skip the raw-syscall scan (diagnostic only) |
@@ -103,8 +103,8 @@ Exit codes: 0 success, 1 usage error, 2 conversion error. Errors are printed wit
 
 Run from the install directory so `libs\`, `app0\` and `config\` resolve:
 
-```bash
-cd D:\PortPS5\TITLE_ID
+```cmd
+cd /d D:\PortPS5\TITLE_ID
 game.exe
 ```
 
@@ -169,14 +169,16 @@ Full schema: [spec/configuration.md](spec/configuration.md). There are no behavi
 
 ### Diagnostics
 
-```bash
-set PORTPS5_DEBUG=log_level=debug;trace=audio,pad
+```cmd
+set "PORTPS5_DEBUG=log_level=debug;trace=audio,pad"
 game.exe
 ```
 
 Only `[debug]` keys may be set this way. Logs may contain game data: **do not paste them into issues** without checking.
 
 ## 7. Record a test result (maintainers)
+
+> **Planned.** `tools/regress.py run` needs runtime telemetry (`logs/telemetry.jsonl`), and the telemetry start-up wiring is not on `main` yet (bean `portps5-w1re`). Until then `run` fails with `no telemetry log`. `prepare` works.
 
 Local runs are recorded as metrics-only results JSON (`portps5.results/1`), never as footage or logs. Run for a fixed duration and write the result:
 
