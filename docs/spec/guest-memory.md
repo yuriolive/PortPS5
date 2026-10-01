@@ -51,7 +51,7 @@ Per the decision table in [README.md](README.md#subsystem-specs): **adopt** `Gue
 
 ```cpp
 struct Extent { u64 base, size; u64 maxInSubtree; Extent *l, *r, *parent; bool red; };
-u64 FirstFit(u64 bytes, u64 align);   // O(log n), == reference linear scan
+u64 FirstFit(u64 bytes, u64 align);   // expected O(log n), O(n) worst case when alignment padding blocks every fit; == reference linear scan
 void Free(u64 base, u64 bytes);        // coalesce left/right, fix maxInSubtree up the path
 ```
 

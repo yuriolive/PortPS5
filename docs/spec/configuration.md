@@ -142,7 +142,7 @@ Any `APS5_*` variable in the environment triggers one warning that lists the nam
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] `Config`, schema, validation and `[debug]` landed with unit tests and `policy` enforcement (done); verbatim export of the cross-prx `Loader` API (`IsInitialized`, `Get`) from `libc.prx` landed with unit and death tests. Still open: startup call with the `param.json` title ID, `config/` copy at conversion, `display` key wiring, results-JSON fields. Until then, 0 `APS5_*` reads and per-game TOML (F6) are not closed (beans `portps5-c06p`, `portps5-dtwf`). |
+| M1 | - [ ] Items:<br>- [x] `Config`, schema, validation and `[debug]` with unit tests and `policy` enforcement;<br>- [x] verbatim export of the cross-prx `Loader` API (`IsInitialized`, `Get`) from `libc.prx`, with unit and death tests (PRs #44, #47);<br>- [ ] startup call with the `param.json` title ID (bean `portps5-c06p`);<br>- [ ] `config/` copy at conversion (same bean);<br>- [ ] `display` key wiring (bean `portps5-dtwf`);<br>- [ ] results-JSON fields (bean `portps5-3m3u`). Per-game TOML (F6) is not closed until the open items land. |
 | M2 | - [ ] `[input]` bindings (with [input.md](input.md); bean `portps5-de24`). The regression tooling records the config hash (bean `portps5-3m3u`). |
 | M3 | - [ ] Any `[workarounds]` keys Tomb Raider needs, each with a docs entry. |
 | M4 | - [ ] Exit criterion: every `[workarounds]` key used by a gate title has a `docs/workarounds.md` entry. |

@@ -10,7 +10,7 @@ updated_at: 2026-09-30T23:51:00Z
 
 ## Context
 
-sceKernelLseek is declared to return int (core/libs/prx/libkernel/File/src/Open.cpp:135) and the POSIX wrapper casts that to int64_t (File/src/Stdio.cpp:165), so offsets above 2 GiB are truncated. Spec: docs/spec/save-data.md (file I/O).
+sceKernelLseek is declared to return int (core/libs/prx/libkernel/File/src/Open.cpp:135). A result above INT_MAX throws std::overflow_error (Open.cpp:143-144), a failed lseek and an invalid whence also throw, and the POSIX wrapper (File/src/Stdio.cpp:165) only widens a successful int. So seeks past 2 GiB fail instead of returning the offset, and host exceptions cross the ABI. Spec: docs/spec/save-data.md (file I/O).
 
 ## Higher Goal
 
