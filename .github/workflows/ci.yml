@@ -477,8 +477,15 @@ jobs:
             # GoogleTest cases are discovered as `Suite.Test`; the legacy runners have no dot and are
             # standalone executables named in the ctest log, which gdb cannot be pointed at from here.
             if ($name -notmatch '\.') { Write-Host "skipping non-GoogleTest test $name"; Write-Host '::endgroup::'; continue }
-            $exe = Get-ChildItem -Recurse -Path build/ci -Filter 'agc_recorder_tests.exe' | Select-Object -First 1
-            if ($null -eq $exe) { Write-Host 'agc_recorder_tests.exe not found'; Write-Host '::endgroup::'; continue }
+            # Several GoogleTest executables carry the lavapipe label; pick the one that lists this test.
+            $exe = $null
+            foreach ($candidate in 'agc_recorder_tests.exe', 'agc_driver_recompiler_tests.exe') {
+              $found = Get-ChildItem -Recurse -Path build/ci -Filter $candidate | Select-Object -First 1
+              if ($null -eq $found) { continue }
+              $listed = & $found.FullName "--gtest_filter=$name" '--gtest_list_tests' 2>&1 | Out-String
+              if ($listed -match '(?m)^\s+\S') { $exe = $found; break }
+            }
+            if ($null -eq $exe) { Write-Host "no known GoogleTest executable lists $name"; Write-Host '::endgroup::'; continue }
             & gdb -batch -ex 'set pagination off' -ex run -ex 'bt full' -ex 'thread apply all bt' --args $exe.FullName "--gtest_filter=$name" '--gtest_repeat=150' 2>&1 | Select-Object -Last 120
             Write-Host '::endgroup::'
           }
