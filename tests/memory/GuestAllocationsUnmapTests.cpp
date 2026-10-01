@@ -47,7 +47,9 @@ bool Registered(std::uintptr_t address) {
     try {
         mutation.Find(Ptr(address));
         return true;
-    } catch (const std::runtime_error&) {
+    } catch (...) {
+        // Catch-all on purpose: on Windows an exception thrown inside libc.prx does not match a
+        // typed handler in this executable (separate C++ runtimes), it would terminate the process.
         return false;
     }
 }
@@ -118,9 +120,9 @@ TEST(GuestAllocationsUnmap, PartialCoverageOfBothEnds) {
 // existing contract; EINVAL at the SCE layer), and so does a wrapping request.
 TEST(GuestAllocationsUnmap, NothingRegisteredOrWrappingThrows) {
     GuestAllocations::Mutation mutation;
-    EXPECT_THROW(UnmapRecording(mutation, kBase, kPage), std::runtime_error);
-    EXPECT_THROW(UnmapRecording(mutation, 0xFFFFFFFFFFFFF000ull, 0x2000), std::runtime_error);
-    EXPECT_THROW(UnmapRecording(mutation, kBase, 0), std::runtime_error);
+    EXPECT_ANY_THROW(UnmapRecording(mutation, kBase, kPage));
+    EXPECT_ANY_THROW(UnmapRecording(mutation, 0xFFFFFFFFFFFFF000ull, 0x2000));
+    EXPECT_ANY_THROW(UnmapRecording(mutation, kBase, 0));
 }
 
 // Invariant: a request that reaches non-releasable main-image memory fails
@@ -143,7 +145,7 @@ TEST(GuestAllocationsUnmap, ImagePieceRejectsWholeRequestBeforeApplying) {
     const auto below = imageStart - 2 * kPage;  // may be unmapped on the host: the registry only records addresses
     mutation.Add(Ptr(below), 2 * kPage, true, true);
     int applied = 0;
-    EXPECT_THROW(mutation.Unmap(Ptr(below), 3 * kPage, [&](const void*, std::size_t, const void*, bool) { ++applied; }), std::runtime_error);
+    EXPECT_ANY_THROW(mutation.Unmap(Ptr(below), 3 * kPage, [&](const void*, std::size_t, const void*, bool) { ++applied; }));
     EXPECT_EQ(applied, 0);
     EXPECT_TRUE(Registered(below));
     EXPECT_EQ(UnmapRecording(mutation, below, 2 * kPage).size(), 1u);  // cleanup
@@ -157,9 +159,9 @@ TEST(GuestAllocationsUnmap, FailingCallbackKeepsRegistryConsistent) {
     mutation.Add(Ptr(kBase), kPage, true, true);
     mutation.Add(Ptr(kBase + kPage), kPage, true, true);
     int calls = 0;
-    EXPECT_THROW(mutation.Unmap(Ptr(kBase), 2 * kPage, [&](const void*, std::size_t, const void*, bool) {
+    EXPECT_ANY_THROW(mutation.Unmap(Ptr(kBase), 2 * kPage, [&](const void*, std::size_t, const void*, bool) {
         if (++calls == 2) throw std::runtime_error("host unmap failed");
-    }), std::runtime_error);
+    }));
     EXPECT_FALSE(Registered(kBase));
     EXPECT_TRUE(Registered(kBase + kPage));
     EXPECT_EQ(UnmapRecording(mutation, kBase + kPage, kPage).size(), 1u);  // cleanup
@@ -174,7 +176,7 @@ TEST(GuestAllocationsUnmap, PinnedPieceBlocksWholeRequest) {
     {
         const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();  // holds both entries
         int applied = 0;
-        EXPECT_THROW(mutation.Unmap(Ptr(kBase), 2 * kPage, [&](const void*, std::size_t, const void*, bool) { ++applied; }), std::runtime_error);
+        EXPECT_ANY_THROW(mutation.Unmap(Ptr(kBase), 2 * kPage, [&](const void*, std::size_t, const void*, bool) { ++applied; }));
         EXPECT_EQ(applied, 0);
     }
     EXPECT_EQ(UnmapRecording(mutation, kBase, 2 * kPage).size(), 2u);  // lease gone: now allowed

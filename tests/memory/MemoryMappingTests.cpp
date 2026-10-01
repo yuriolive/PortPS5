@@ -34,7 +34,9 @@ bool IsRegistered(void* addr) {
     try {
         mutation.Find(addr);
         return true;
-    } catch (const std::exception&) {
+    } catch (...) {
+        // Catch-all on purpose: on Windows an exception thrown inside libc.prx does not match a
+        // typed handler in this executable (separate C++ runtimes), it would terminate the process.
         return false;
     }
 }
