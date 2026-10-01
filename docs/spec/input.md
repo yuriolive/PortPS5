@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Input
 
-Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-10-01
 
 ## Scope
 
@@ -35,7 +35,7 @@ References are relative to the AnyPS5 tree and cite `main@75a8668` (current AnyP
 
 the decision table in [README.md](README.md#subsystem-specs) says "`libScePad` implements `scePadRead` over SDL". At `main@e06dbff` that is accurate only for keyboard and mouse events. `main@75a8668` also reads SDL game controllers, but XInput is not referenced, and `SDL_HIDAPI`, `SDL_HAPTIC` and `SDL_SENSOR` are still forced off (`CMakeLists.txt:29-31`), so how far XInput and DualSense USB support goes is unverified here and stays new PortPS5 work.
 
-**Status as of 2026-09-30 (PortPS5 `main`).** The table above cites AnyPS5 trees. On PortPS5 `main`: `SDL_JOYSTICK` and `SDL_HIDAPI` are ON (`CMakeLists.txt:46-48`; `SDL_HAPTIC` and `SDL_SENSOR` stay off); SDL game controllers feed `scePadRead` with hot-plug, per-slot connect and a radial dead zone (PRs #54 and #57, see "Controller polling (implemented)" below; not verified with a physical device); `libSceMouse` keeps a backend and VideoOut routing, but every `sceMouse*` export is an `Unsupported()` abort (`libSceMouse/Export.cpp`, bean `portps5-afme`); `libSceKeyboard` exports are unchanged. Open: TOML bindings, XInput and DualSense matrix, slot reassignment tests (bean `portps5-de24`).
+**Status as of 2026-09-30 (PortPS5 `main`).** The table above cites AnyPS5 trees. On PortPS5 `main`: `SDL_JOYSTICK` and `SDL_HIDAPI` are ON (`CMakeLists.txt:55-58`; `SDL_HAPTIC` and `SDL_SENSOR` stay off); SDL game controllers feed `scePadRead` with hot-plug, per-slot connect and a radial dead zone (PRs #54 and #57, see "Controller polling (implemented)" below; not verified with a physical device); `libSceMouse` keeps a backend and VideoOut routing, but every `sceMouse*` export is an `Unsupported()` abort (`libSceMouse/Export.cpp`, bean `portps5-afme`); `libSceKeyboard`'s 6 exports are `Unsupported()` aborts (`libSceKeyboard/Export.cpp`). Pad output state (`libScePad/Export.cpp`, `src/PadState.cpp`): `SetVibration`, `SetLightBar`, `ResetLightBar` and `SetMotionSensorState` validate the handle and only store state in the slot, nothing reaches SDL; `SetTriggerEffect`, `SetVibrationMode` and `SetVibrationTriggerEffectWeakWhileEmbeddedMicInUse` return OK; `ResetOrientation`, `SetTiltCorrectionState`, `SetAngularVelocityDeadbandState`, `GetTriggerEffectState` and the two `DeviceClass*` exports abort through `Unsupported()`. DualSense output, motion and hot-plug slot table are PR #81 (open). Open: TOML bindings, XInput and DualSense matrix, slot reassignment tests (bean `portps5-de24`).
 
 ## Decision
 
@@ -47,7 +47,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 
 ## Target design
 
-1. **Build.** *(Done: `CMakeLists.txt:46-48`.)* Turn on `SDL_JOYSTICK` and `SDL_HIDAPI`. Leave `SDL_HAPTIC` and `SDL_SENSOR` off in 1.0. Pin an SDL2 revision whose HIDAPI driver supports PS5 controllers. *Inference:* that arrived in SDL 2.0.14. The pinned submodule commit `4b69833` must be checked against it ([build-toolchain.md](build-toolchain.md)).
+1. **Build.** *(Done: `CMakeLists.txt:55-58`.)* Turn on `SDL_JOYSTICK` and `SDL_HIDAPI`. Leave `SDL_HAPTIC` and `SDL_SENSOR` off in 1.0. Pin an SDL2 revision whose HIDAPI driver supports PS5 controllers. *Inference:* that arrived in SDL 2.0.14. The pinned submodule commit `4b69833` must be checked against it ([build-toolchain.md](build-toolchain.md)).
 2. **Device layer.** An `InputHub` owns SDL `GameController` instances and receives `CONTROLLERDEVICEADDED` / `REMOVED` events from the existing window loop.
    - XInput devices come through SDL's XInput/RawInput backends.
    - DualSense over USB comes through HIDAPI (`SDL_HINT_JOYSTICK_HIDAPI_PS5=1`). Full-report mode is enabled only when a later feature needs it.

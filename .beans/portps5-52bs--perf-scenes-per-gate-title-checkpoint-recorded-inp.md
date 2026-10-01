@@ -5,10 +5,30 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-10-01T18:25:12Z
-updated_at: 2026-10-01T18:25:12Z
+updated_at: 2026-10-01T18:32:59Z
 parent: portps5-7fqk
 blocked_by:
     - portps5-3m3u
 ---
+
+## Context
+
+Before/after performance claims need repeatable runs; full runs are long and noisy. Blocked by: portps5-3m3u (regress runner checkpoint replay).
+
+## Higher Goal
+
+Every performance PR is measured on the same short, repeatable scene.
+
+## Acceptance Criteria
+
+- [ ] Per gate title: save checkpoint + recorded input + fixed duration, all kept local
+- [ ] Run-to-run noise measured (5 runs) and recorded; rrll thresholds set from it
+- [ ] verification.md documents the scene protocol; no game data committed
+
+## Out of Scope
+
+Hosted CI runs (no GPU, no game data).
+
+## Summary of Changes
 
 TBD

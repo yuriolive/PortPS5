@@ -2,7 +2,7 @@
 
 Status: draft v1 · 2026-09-27 · checkboxes synced with `main` on 2026-09-30
 
-Status as of 2026-10-01: M0 is done except the upstream-baseline check, a local-only run (bean `portps5-sigm`). M1 work proceeded ahead of that check; the rule that a milestone starts after the previous exit criteria pass is not waived, so the baseline must be recorded before M1 can exit. M1 has landed most ports (recompiler, relinker, threading, libc, image codecs, offline services, golden corpus, Recorder and HostImport building blocks, write tracker building blocks, the telemetry core and watchdog, the `tools/regress.py` runner) but not the runtime wiring (Recorder in the submit path, arena and heap on the extent allocator, config at startup, telemetry call sites). M2 has landed save data fidelity, SDL controllers in `scePadRead`, depth/stencil state decode, the host depth/stencil surface and the single audio mixer. Landed 2026-09-30 to 2026-10-01: Vulkan 1.3 driver floor (PR #62), `driver-lavapipe` CI job (PR #82), telemetry core (PR #78), regress runner (PR #76), resident render-target image pool (PR #74), SSE4a lowering of register forms (PR #73), guest-pointer validation (PR #83), direct-memory exports (PR #84), MsgDialog, PlayGo and AudioOut2 ports (PRs #85, #86, #87), per-title `/savedata0` mount (PR #53), verbatim libc `Unsupported` export with the cross-prx import check (PR #68), AVC decode through a pinned LGPL FFmpeg (PR #88). In flight and **not** landed: per-draw texture cost (PRs #71, #75, #77) and DualSense output (PR #81). Every unticked item below names a bean (`.beans/`) or an open PR where one exists; epics `portps5-4ut1` (GPU driver), `portps5-w3s8` (guest memory) and `portps5-r8mh` (runtime wiring and telemetry) group the M1 beans. M3 and later items get beans when their milestone seed is written.
+Status as of 2026-10-01: M0 is done except the upstream-baseline check, a local-only run (bean `portps5-sigm`). M1 work proceeded ahead of that check; the rule that a milestone starts after the previous exit criteria pass is not waived, so the baseline must be recorded before M1 can exit. M1 has landed most ports (recompiler, relinker, threading, libc, image codecs, offline services, golden corpus, Recorder and HostImport building blocks, write tracker building blocks, the telemetry core and watchdog, the `tools/regress.py` runner) but not the runtime wiring (Recorder in the submit path, arena and heap on the extent allocator, config at startup, telemetry call sites). M2 has landed save data fidelity, SDL controllers in `scePadRead`, depth/stencil state decode, the host depth/stencil surface and the single audio mixer. Landed 2026-09-30 to 2026-10-01: Vulkan 1.3 driver floor (PR #62), `driver-lavapipe` CI job (PR #82), telemetry core (PR #78), regress runner (PR #76), resident render-target image pool (PR #74), SSE4a lowering of register forms (PR #73), guest-pointer validation (PR #83), direct-memory exports (PR #84), MsgDialog, PlayGo and AudioOut2 ports (PRs #85, #86, #87), per-title `/savedata0` mount (PR #53), verbatim libc `Unsupported` export with the cross-prx import check (PR #68), AVC decode through a pinned LGPL FFmpeg (PR #88). In flight and **not** landed: per-draw texture cost (PRs #71, #75, #77) and DualSense output (PR #81). Every unticked item below names a bean (`.beans/`) or an open PR where one exists; epics `portps5-4ut1` (GPU driver), `portps5-w3s8` (guest memory) and `portps5-r8mh` (runtime wiring and telemetry) group the M1 beans. Every v1 item now has a bean, grouped under milestone beans M0 `portps5-s1kj`, M1 `portps5-7dk3`, M2 `portps5-dbpx`, M3 `portps5-oo21`, M4 `portps5-rd6g`, M5 `portps5-bxvu` and M6 `portps5-w6uc`. Each bean records its blockers, so `beans list --ready` shows what can run in parallel. Part II (2.0) items get beans when their milestone seed is written.
 
 This roadmap is phased, with no calendar dates. Capacity is a solo maintainer plus AI agents, part-time. Each milestone has measurable exit criteria and unlocks gate titles in order of risk. A milestone starts only when the previous one's exit criteria pass. Each milestone becomes its own `ooo seed`.
 
@@ -58,12 +58,12 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - [x] extent-tree allocator core with a 10^6-operation differential test (PR #32, `GuestArenaExtent`);
   - [x] explicit pin tokens and the page-state table in `WriteWatchTracker` (PR #40);
   - [x] return codes instead of throws in direct memory and memory pools (PR #39);
-  - [ ] the arena, heap spans and registry use them, and the runtime instantiates the tracker.
+  - [ ] the arena, heap spans and registry use them, and the runtime instantiates the tracker (bean `portps5-421p`).
 - [x] Offline behaviour for network stack (`libSceNet`), AvPlayer playback state machine (`libSceAvPlayer`), NP/PSN, trophies, store, and user-service dialogs, so no gate title blocks on them at boot.
 - [x] `libSceVideodec2` AVC decode (host H.264 decoder: FFmpeg built LGPL-only from the pinned `3rdparty/FFmpeg`, licence gate in [spec/build-toolchain.md](spec/build-toolchain.md)); HEVC and the AJM MP3 path stay open ([spec/video-fmv.md](spec/video-fmv.md)).
 - [x] Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
 - [x] Image codecs: shared stb-backed JPEG/PNG layer (`core/Decoder`), `libSceJpegEnc` and `libScePngDec` ([spec/image-codecs.md](spec/image-codecs.md)); `libScePngEnc` remains open.
-- [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
+- [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section (beans `portps5-c06p`, `portps5-dtwf`).
   - [x] `Config` schema, validation and the typed `[debug]` section (`libc/src/Config.cpp`, `core/libs/tests/Config.cpp`); no `APS5_` string literals remain in `core/` and the `policy` job enforces it;
   - [ ] startup loads config for the `param.json` title ID: `Loader::Initialize` has no production caller (bean `portps5-c06p`);
   - [ ] `display.present_mode` and `display.resolution_scale` reach the driver: the swapchain is hard-coded to FIFO (bean `portps5-dtwf`).
@@ -76,7 +76,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 **Exit criteria**
 - [ ] (bean `portps5-0mv7`) With title-specific code removed, Demon's Souls reaches the in-engine intro cinematic, the stage AnyPS5 PR #5 reached. Its fill and copy kernels run as the title's own shaders, without replacement. The `policy` CI job is green.
 - [x] Sync microbenchmark: uncontended lock/unlock at least 10× faster than the old implementation, and the pthread and `SyncOnAddress` GoogleTest suites pass.
-- [ ] The hosted golden corpus contains synthetic shaders that cover every decoded instruction class, and it is green in CI. The local-only game-derived corpus replays with 0 validation failures.
+- [ ] The hosted golden corpus contains synthetic shaders that cover every decoded instruction class, and it is green in CI. The local-only game-derived corpus replays with 0 validation failures (bean `portps5-oq4m`).
 
 ## Milestone 2: 2D gate (titles 1–2)
 
@@ -84,8 +84,8 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [ ] Input: XInput, DualSense over USB, and keyboard/mouse mapping in TOML ([spec/input.md](spec/input.md); bean `portps5-de24`).
   - [x] SDL joystick/HIDAPI are enabled (`CMakeLists.txt:46-48`), and SDL game controllers feed `scePadRead` with hot-plug, slot assignment, a radial dead zone and keyboard merge (PRs #54 and #57, tests in `tests/input/ControllerInputTests.cpp`). Not verified with a physical controller;
   - [x] mouse backend (`libSceMouse/src/mouse_impl.cpp`) and VideoOut routing exist, but the `sceMouse*` exports are still `Unsupported()` stubs and `mouse_tests` is `DISABLED` (bean `portps5-afme`, low priority);
-  - [ ] TOML keyboard/mouse bindings (only `[input] deadzone` is consumed), XInput and DualSense USB on the manual matrix, slot reassignment tests with injected SDL events.
-- [ ] Establish filesystem sandbox, input, and audio GoogleTest suites ported from ecosystem references:
+  - [ ] TOML keyboard/mouse bindings (only `[input] deadzone` is consumed), XInput and DualSense USB on the manual matrix, slot reassignment tests with injected SDL events (bean `portps5-de24`; DualSense output PR #81).
+- [x] Establish filesystem sandbox, input, and audio GoogleTest suites ported from ecosystem references:
   - [x] Filesystem sandbox: port path-traversal containment (`../`), mount sandbox isolation, and default-deny permission tests from SharpEMU (`KernelSandboxEscapeTests`) ([spec/save-data.md](spec/save-data.md));
   - [x] Save data: port directory layout, quota enforcement, atomic commit, and crash-safe snapshot restore tests;
   - [x] Input: port DualSense USB report parsing, radial deadzone calculation, rumble motor translation, and hotplug slot assignment tests from KytyPS5 (`PadHapticsTests`) ([spec/input.md](spec/input.md));
@@ -101,68 +101,68 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 
 **Exit criteria**
 - [ ] Dreaming Sarah and TMNT: Shredder's Revenge pass the full-run protocol (average ≥30 fps, 1% low ≥20 fps, 1080p, 0 crashes and 0 softlocks, save round-trip). Dreaming Sarah: bean `portps5-kmb6`.
-- [ ] Their results JSON is published, and the compatibility list is generated.
+- [ ] Their results JSON is published, and the compatibility list is generated (TMNT full run bean `portps5-macl`; generator bean `portps5-4bkt`).
 
 ## Milestone 3: 3D core (title 3)
 
 **Scope**
 - [ ] Driver:
   - split into CommandProcessor, Recorder, Buffer/Texture/Pipeline caches, Rasterizer and Presenter, recording into a GPU IR with explicit resource states and a queue tag (bean `portps5-hkwd`; [spec/gpu-driver.md](spec/gpu-driver.md) Decision);
-  - a GPU-side path for the `DRAW_INDIRECT` family (AnyPS5 `main@75a8668` takes `vkCmdDraw[Indexed]Indirect[Count]` only when the record fold, shader path, draw index and memory state allow it, and otherwise reads records on the CPU: `Draw.hpp:43`, `Draw.cpp:823-830`);
-  - general block-generation write tracking for GPU-written surfaces, replacing the interim adjacent block-generation advance from M1–M2. Tomb Raider and Bugsnax FMV depend on it;
-  - redesign capture ordering: resolve buffers on the GPU, resolve images at submit time, and never satisfy a wait from an unexecuted label while a capture depends on it.
+  - a GPU-side path for the `DRAW_INDIRECT` family (bean `portps5-y2k5`; AnyPS5 `main@75a8668` takes `vkCmdDraw[Indexed]Indirect[Count]` only when the record fold, shader path, draw index and memory state allow it, and otherwise reads records on the CPU: `Draw.hpp:43`, `Draw.cpp:823-830`);
+  - general block-generation write tracking for GPU-written surfaces, replacing the interim adjacent block-generation advance from M1–M2. Tomb Raider and Bugsnax FMV depend on it (bean `portps5-c08m`);
+  - redesign capture ordering: resolve buffers on the GPU, resolve images at submit time, and never satisfy a wait from an unexecuted label while a capture depends on it (bean `portps5-ubec`).
 - [ ] Establish Vulkan driver cache and recompiler structurizer GoogleTest suites:
-  - Driver resource caches: port buffer/texture cache overlap, staging ring-buffer exhaustion, and descriptor set lifecycle tests adapted from DXVK and RPCS3 patterns ([spec/gpu-driver.md](spec/gpu-driver.md));
+  - Driver resource caches: port buffer/texture cache overlap, staging ring-buffer exhaustion, and descriptor set lifecycle tests adapted from DXVK and RPCS3 patterns ([spec/gpu-driver.md](spec/gpu-driver.md); bean `portps5-oagr`);
   - Structurizer: recompiler fuzz corpus and synthetic unstructured control-flow graphs covering irreducible loops and goto-elimination fallbacks ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
-- [ ] Recompiler: goto-elimination structurizer fallback, and bounded hash-indexed variants.
-- [ ] Save data: the multi-slot list dialog, for Tomb Raider save/load ([spec/save-data.md](spec/save-data.md)).
+- [ ] Recompiler: goto-elimination structurizer fallback, and bounded hash-indexed variants (bean `portps5-g580`, which also owns the structurizer fuzz corpus).
+- [ ] Save data: the multi-slot list dialog, for Tomb Raider save/load ([spec/save-data.md](spec/save-data.md); bean `portps5-uag4`).
 
 **Exit criteria**
-- [ ] Tomb Raider I-III Remastered passes the full-run protocol.
-- [ ] A Demon's Souls stress run of 3 × 150 s of the intro cinematic has 0 wedges, with 0 skipped dispatches from the "guest memory is not readable" class.
-- [ ] Recompiler fuzz corpus: 0 structurizer throws.
+- [ ] Tomb Raider I-III Remastered passes the full-run protocol (bean `portps5-32ee`).
+- [ ] A Demon's Souls stress run of 3 × 150 s of the intro cinematic has 0 wedges, with 0 skipped dispatches from the "guest memory is not readable" class (bean `portps5-273j`).
+- [ ] Recompiler fuzz corpus: 0 structurizer throws (bean `portps5-g580`).
 
 ## Milestone 4: Middleware (title 4)
 
 **Scope**
-- [ ] UE4 job-system coverage (event flags, semaphores, fibers).
-- [ ] Establish fiber and job-system GoogleTest suites:
+- [ ] UE4 job-system coverage (event flags, semaphores, fibers) (bean `portps5-mv7o`).
+- [ ] Establish fiber and job-system GoogleTest suites (bean `portps5-k34n`):
   - Fibers and event flags: port fiber stack-switching, fiber-local storage (FLS), and event flag race perturbation tests from SharpEMU (`Fiber*Tests`) ([spec/threading.md](spec/threading.md));
   - Wave64 subgroup operations: synthetic compute dispatch validation for 64-wide lanes ([spec/shader-recompiler.md](spec/shader-recompiler.md)).
-- [ ] Wave64 through `VK_EXT_subgroup_size_control` where supported.
-- [ ] A GPU-side descriptor heap for bindless (`VK_EXT_descriptor_indexing` or `VK_EXT_descriptor_buffer`).
-- [ ] Fill and copy kernels recognised by general IR patterns.
+- [ ] Wave64 through `VK_EXT_subgroup_size_control` where supported (bean `portps5-cexw`).
+- [ ] A GPU-side descriptor heap for bindless (`VK_EXT_descriptor_indexing` or `VK_EXT_descriptor_buffer`) (bean `portps5-zqk2`).
+- [ ] Fill and copy kernels recognised by general IR patterns (bean `portps5-sio1`).
 
 **Exit criteria**
-- [ ] Bugsnax passes the full-run protocol.
-- [ ] Every `[workarounds]` key used by a gate title has an entry in `docs/workarounds.md`.
+- [ ] Bugsnax passes the full-run protocol (bean `portps5-td65`).
+- [ ] Every `[workarounds]` key used by a gate title has an entry in `docs/workarounds.md` (bean `portps5-il6p`).
 
 ## Milestone 5: AAA (title 5)
 
 **Scope**
 - [ ] Demon's Souls from the first level to credits:
-  - streaming and resource aliasing at full size;
-  - host-import budget sized automatically (the AnyPS5 PR #5 description on GitHub reports a manual 16 GiB `APS5_HOST_IMPORT_MIB` override for later stages);
+  - streaming and resource aliasing at full size (bean `portps5-951o`);
+  - host-import budget sized automatically (bean `portps5-wvxm`; the AnyPS5 PR #5 description on GitHub reports a manual 16 GiB `APS5_HOST_IMPORT_MIB` override for later stages);
   - direct-memory aliasing (the same physical range mapped at several guest addresses) with write tracking, which `GetWriteWatch` may not cover ([spec/guest-memory.md](spec/guest-memory.md));
-  - audio object-port panning ([spec/audio.md](spec/audio.md)).
-- [ ] Direct-memory multi-mapping and host-import stress suites: perturbation tests covering concurrent aliased writes and memory tracker cache coherency under 16 GiB budget pressure.
-- [ ] Performance pass against the bar.
-- [ ] Spike: llvm-mingw clang with PDBs, adopted only if the DWARF unwinder validates.
+  - audio object-port panning ([spec/audio.md](spec/audio.md); bean `portps5-hwnz`).
+- [ ] Direct-memory multi-mapping and host-import stress suites: perturbation tests covering concurrent aliased writes and memory tracker cache coherency under 16 GiB budget pressure (bean `portps5-9p2i`).
+- [ ] Performance pass against the bar (bean `portps5-vj60`; performance track P3).
+- [ ] Spike: llvm-mingw clang with PDBs, adopted only if the DWARF unwinder validates (bean `portps5-qf1m`).
 
 **Exit criteria**
-- [ ] Demon's Souls passes the full-run protocol, with title-specific behaviour only in its documented TOML.
+- [ ] Demon's Souls passes the full-run protocol, with title-specific behaviour only in its documented TOML (bean `portps5-clbd`).
 
 ## Milestone 6: 1.0 release
 
 **Scope**
-- [ ] A release full run of all five titles on the release commit.
-- [ ] Release docs: user guide (CLI usage, the legal boundary, the ban on sharing converted executables), `docs/workarounds.md`, and the compatibility list.
-- [ ] Record the PRD R1 licence risk status in the release notes.
+- [ ] A release full run of all five titles on the release commit (bean `portps5-vrfx`).
+- [ ] Release docs: user guide (CLI usage, the legal boundary, the ban on sharing converted executables), `docs/workarounds.md`, and the compatibility list (bean `portps5-zl69`).
+- [ ] Record the PRD R1 licence risk status in the release notes (bean `portps5-2t0e`).
 
 **Exit criteria**
-- [ ] 5/5 gate titles pass the full-run protocol on the release commit.
-- [ ] Hosted CI and local regression are green.
-- [ ] The release notes are published.
+- [ ] 5/5 gate titles pass the full-run protocol on the release commit (bean `portps5-vrfx`).
+- [ ] Hosted CI and local regression are green (bean `portps5-vrfx`).
+- [ ] The release notes are published (bean `portps5-zl69`).
 
 ## Performance track (cross-cutting, M2–M5)
 
@@ -174,6 +174,8 @@ The track keeps the steady-state invariants of [PRD §4.5](PRD.md) true while th
 - [ ] Results JSON frame-time percentiles (p50, p90, p99) and `tools/regress.py compare` against a stored baseline (bean `portps5-rrll`).
 - [ ] Per-frame breakdown: CPU record and submit, GPU time from Vulkan timestamp queries, CPU wait on GPU, present wait (bean `portps5-hfiw`).
 - [ ] Violation counters for invariants P1, P2, P3 and P5 (bean `portps5-aifo`).
+- [ ] Telemetry completeness: a crash event producer (`portps5-yhj7`); `run.start` with build preset, commit, device, driver, present mode and scale (`portps5-g2ll`); memory and VRAM peaks (`portps5-ybq3`); stall attribution (`portps5-26s5`); boot and load timing (`portps5-pk9m`); shader and pipeline compile times (`portps5-tg51`); numeric `dialog.open` (`portps5-7qon`); `prepare` copies `config/` (`portps5-3b4e`).
+- [ ] Measurement tools: Tracy CPU and GPU zones behind `[debug] profile` (`portps5-wba0`), perf scenes per gate title (`portps5-52bs`), CPU microbenchmarks with a nightly trend (`portps5-i58o`).
 
 **P1: Per-draw CPU cost** (M2–M3, invariants P2 and P5)
 - [x] Pooled images for resident render-target sampling (PR #74, bean `portps5-r7qk` step 1).
@@ -182,11 +184,17 @@ The track keeps the steady-state invariants of [PRD §4.5](PRD.md) true while th
 - [ ] Resident render-target baseline, then decide step 2 (bean `portps5-r7qk`).
 
 **P2: GPU-side resolution** (M3, invariants P1 and P6). The work is the M3 driver scope: the Recorder in the submit path (bean `portps5-tiod`), the GPU path for the indirect family, block-generation tracking and the capture-ordering redesign. The M3 module split records into a GPU IR with explicit resource states ([spec/gpu-driver.md](spec/gpu-driver.md) Decision), so barrier optimization, multithreaded recording and frame overlap can come later without a rewrite.
-- [ ] M3 exit adds: in the Tomb Raider regression result, the P1 and P2 counters are 0 in steady state, or each nonzero counter has a bean.
+- [ ] M3 exit adds: in the Tomb Raider regression result, the P1 and P2 counters are 0 in steady state, or each nonzero counter has a bean (bean `portps5-32ee`).
 
 **P3: Performance pass** (M5). This is the existing M5 item. Every remaining invariant violation is removed or justified in its owner spec, and these open questions are decided with data: the async-compute queue and HTILE/DCC ([spec/gpu-driver.md](spec/gpu-driver.md) 2–3), multithreaded PM4 recording (gpu-driver 11), pipeline libraries ([spec/pipeline-cache.md](spec/pipeline-cache.md) 3), and host core placement ([spec/threading.md](spec/threading.md) 9).
 
-60/120 fps targets, upscalers and frame-rate unlocks stay post-1.0 (PRD §5).
+**P4: Compiler and host** (M2–M5, invariants P2, P3 and GPU time). Release builds ship without the SPIRV-Tools optimizer (PRD R1), so shader quality depends on our own passes.
+- [ ] Shader optimization: GVN/CSE, copy propagation and control-flow simplification (`portps5-t5qa`), uniformity analysis (`portps5-1uym`), specialization constants for draw state (`portps5-9gsx`), and a spike on running `spirv-opt` out of process (`portps5-m5n7`).
+- [ ] Pipeline compilation off the submit thread with graphics pipeline library fast-link, background optimized relink and parallel warm-up; no draw is ever skipped (`portps5-c1oi`).
+- [ ] Driver: upload engine on timeline semaphores (`portps5-dtiq`), barrier and redundant-state pass on the GPU IR (`portps5-p2qp`), frame pacing with present_wait (`portps5-jy7n`).
+- [ ] Host: `x86-64-v3` with `-ffp-contract=off` and LTO (`portps5-8x1k`), GCC PGO from perf scenes (`portps5-f2r1`), guest allocator measured before any change (`portps5-03bi`).
+- [ ] Large pages for the guest arena and GPU allocations: open question, decided with data in the M5 pass ([spec/guest-memory.md](spec/guest-memory.md)).
+Upscalers, frame generation and HDR are 2.0 (M12). 60/120 fps targets and frame-rate unlock patches are beyond 2.0 (PRD §11).
 
 ### Parallel lanes
 
@@ -203,6 +211,24 @@ A lane can start when its blockers are done. Lanes in the same row can run in pa
 | Frame breakdown | `portps5-hfiw` | `portps5-w1re`, `portps5-tiod` |
 | Violation counters | `portps5-aifo` | `portps5-w1re` |
 | Resident RT step 2 | `portps5-r7qk` | `portps5-w1re` (baseline needs telemetry) |
+| Tracy profiler | `portps5-wba0` | none |
+| Build flags | `portps5-8x1k` | none |
+| Microbenchmarks | `portps5-i58o` | none |
+| Shader passes | `portps5-t5qa`, `portps5-1uym` | none |
+| spirv-opt spike | `portps5-m5n7` | none |
+| Regress config copy | `portps5-3b4e` | none |
+| Perf scenes | `portps5-52bs` | `portps5-3m3u` |
+| Specialization constants | `portps5-9gsx` | `portps5-8gdr` |
+| Async pipeline compile | `portps5-c1oi` | `portps5-8gdr` |
+| Compile-time telemetry, crash, boot, dialogs | `portps5-tg51`, `portps5-yhj7`, `portps5-pk9m`, `portps5-7qon` | `portps5-w1re` |
+| Run metadata | `portps5-g2ll` | `portps5-w1re`, `portps5-c06p` |
+| Memory telemetry | `portps5-ybq3` | `portps5-w1re`, `portps5-l77s` |
+| Frame pacing | `portps5-jy7n` | `portps5-dtwf`, `portps5-w1re` |
+| Upload engine | `portps5-dtiq` | `portps5-hkwd` |
+| Barrier pass | `portps5-p2qp` | `portps5-hkwd`, `portps5-hfiw` |
+| Stall attribution | `portps5-26s5` | `portps5-hfiw`, `portps5-aifo` |
+| Allocator | `portps5-03bi` | `portps5-wba0` |
+| PGO | `portps5-f2r1` | `portps5-52bs`, `portps5-8x1k` |
 
 ## v2 seams in v1 (cross-cutting, M2–M5)
 
@@ -252,7 +278,7 @@ Two spikes de-risk 2.0 and can run any time, in parallel with everything: guest 
 | F6 per-game TOML | M1 | `policy` CI job, `docs/workarounds.md` |
 | F7 disk pipeline cache | M2 | Warm-cache full runs |
 | F8 offline PSN/trophies | M1 | Full runs never blocked |
-| F9 telemetry | M1 | Results JSON present for every run |
+| F9 telemetry | M1 (core, PR #78), M2 (call sites `portps5-w1re`, completeness beans in the performance track P0) | Results JSON present for every run |
 | Performance bar (§4.3) | M1 (sync), M2 (depth/stencil), M3 (driver), M4 (subgroups), M5 (perf pass) | Results JSON fps stats |
 | Performance invariants (§4.5) | Performance track P0–P3 (M2–M5) | Results JSON violation counters, before/after measurements |
 | Ecosystem test suites (GTest, Kyty, SharpEMU, FreeBSD, Mesa, Wine) | M0 (framework), M1 (core runtime), M2 (sandbox/input/audio), M3 (caches/structurizer), M4 (fibers/jobs) | CI `unit`, `recompiler-golden`, `driver-lavapipe` |

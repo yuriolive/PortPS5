@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Configuration
 
-Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-10-01
 
 ## Scope
 
@@ -20,7 +20,7 @@ PRD bar owned here: F6 (a per-game TOML keyed by title ID that holds resolution 
 - **Present mode** is hard-coded to FIFO (`libSceAgcDriver/Execution/src/VulkanDevice.cpp:918`, `:1550`). There is no resolution-scale control.
 - **Title ID** comes from `/app0/sce_sys/param.json` (`libkernel/AppMetadata/src/AppMetadata.cpp:22-37`), so the runtime can select a per-title file.
 - **No TOML parser** is in the tree. The submodules are SDL2, Vulkan-Headers, SPIRV-Headers, SPIRV-Tools, glslang, VMA and LibAtrac9.
-- **PortPS5 `main` (2026-09-30):** `core/libs/prx/libc/src/Config.cpp` (`include/config/Config.hpp`) parses and validates `config/global.toml`, `config/games/<titleId>.toml` and `PORTPS5_DEBUG`, reporting `file:line: key: reason`; toml++ v3.4.0 is vendored at `3rdparty/tomlplusplus/toml.hpp` (pinned in [build-toolchain.md](build-toolchain.md)). Verified still open on `main`: nothing calls `Loader::Initialize` (`libc/src/Config.cpp:1316`) outside tests (bean `portps5-c06p`), the relinker does not copy `config/` at conversion time (same bean), the driver ignores `display.present_mode` / `resolution_scale` and hard-codes FIFO at `Execution/src/VulkanDevice.cpp:501,578` (bean `portps5-dtwf`), and no results-JSON fields are emitted (bean `portps5-3m3u`). `core/` has no `APS5_` string literal and no `getenv` outside `Config`; the `policy` job enforces both. Consumers (`PadInput.cpp:27,35` for `debug.ignore_host_input` and `input.deadzone`, `libSceAudioOut/src/AudioOut2Context.cpp:59` and `libSceAjm.native/src/Ajm.cpp:34` for `debug.trace`) guard with `IsInitialized()` and fall back to defaults, so with no startup call every config value is silently inert. The `[input]` section parses `deadzone` and a binding table, but the binding table is not consumed (bean `portps5-de24`).
+- **PortPS5 `main` (2026-10-01):** `core/libs/prx/libc/src/Config.cpp` (`include/config/Config.hpp`) parses and validates `config/global.toml`, `config/games/<titleId>.toml` and `PORTPS5_DEBUG`, reporting `file:line: key: reason`; toml++ v3.4.0 is vendored and pinned at `3rdparty/tomlplusplus/toml.hpp` (`TOML_LIB_MAJOR/MINOR/PATCH` 3.4.0; see [build-toolchain.md](build-toolchain.md)). Verified still open on `main`: nothing calls `Loader::Initialize` (`libc/src/Config.cpp:1360`) outside tests (bean `portps5-c06p`), the relinker does not copy `config/` at conversion time (same bean), the driver ignores `display.present_mode` / `resolution_scale` and hard-codes FIFO at `Execution/src/VulkanDevice.cpp:507,584` (bean `portps5-dtwf`), and the runtime emits no results-JSON fields: `config_sha256`, `workarounds_set` and `debug_keys_set` are written by `tools/regress.py` (PR #76) from the config files in the install dir ([verification.md](verification.md) §4.2). `core/` has no `APS5_` string literal and no `getenv` outside `Config`; the `policy` step of `build_and_test` enforces both. Consumers (`PadInput.cpp:27,35` for `debug.ignore_host_input` and `input.deadzone`, `libSceAudioOut/src/AudioOut2Context.cpp:42` and `libSceAjm.native/src/Ajm.cpp:42` for `debug.trace`) guard with `IsInitialized()` and fall back to defaults, so with no startup call every config value is silently inert. The `[input]` section parses `deadzone` and a binding table, but the binding table is not consumed (bean `portps5-de24`).
 
 The 310 switches on `main@75a8668` fall into these classes (by name pattern, then reviewed):
 
@@ -81,7 +81,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Conf
 | `debug.relinker.trace_sse4a` | bool | false | Traces the runtime SSE4a trap ([relinker.md](relinker.md)). |
 | `debug.threading.dump_futex_owners` | bool | false | Log owner thread IDs of contended futex words on watchdog softlock ([threading.md](threading.md)). |
 
-**Validation.** The TOML parser is toml++ (MIT, header-only; a proposal, to be pinned in [build-toolchain.md](build-toolchain.md)).
+**Validation.** The TOML parser is toml++ (MIT, header-only), vendored and pinned at v3.4.0 (`3rdparty/tomlplusplus/toml.hpp`, [build-toolchain.md](build-toolchain.md)).
 
 Each of the following is a start-up error, reported as `file:line: key: reason` with a non-zero exit before any guest code runs: an unknown section or key; a wrong type, or an out-of-range or unknown enum value; a missing `schema`, or one newer than the runtime supports; a `title_id` mismatch; `[workarounds]` in the global file; a workaround key that is not registered.
 
@@ -142,7 +142,7 @@ Any `APS5_*` variable in the environment triggers one warning that lists the nam
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] Items:<br>- [x] `Config`, schema, validation and `[debug]` with unit tests and `policy` enforcement;<br>- [x] verbatim export of the cross-prx `Loader` API (`IsInitialized`, `Get`) from `libc.prx`, with unit and death tests (PRs #44, #47);<br>- [ ] startup call with the `param.json` title ID (bean `portps5-c06p`);<br>- [ ] `config/` copy at conversion (same bean);<br>- [ ] `display` key wiring (bean `portps5-dtwf`);<br>- [ ] results-JSON fields (bean `portps5-3m3u`). Per-game TOML (F6) is not closed until the open items land. |
+| M1 | - [ ] Items:<br>- [x] `Config`, schema, validation and `[debug]` with unit tests and `policy` enforcement;<br>- [x] verbatim export of the cross-prx `Loader` API (`IsInitialized`, `Get`) from `libc.prx`, with unit and death tests (PRs #44, #47);<br>- [ ] startup call with the `param.json` title ID (bean `portps5-c06p`);<br>- [ ] `config/` copy at conversion (same bean);<br>- [ ] `display` key wiring (bean `portps5-dtwf`);<br>- [x] results-JSON config fields, written by `tools/regress.py` from the config files (PR #76). Per-game TOML (F6) is not closed until the open items land. |
 | M2 | - [ ] `[input]` bindings (with [input.md](input.md); bean `portps5-de24`). The regression tooling records the config hash (bean `portps5-3m3u`). |
 | M3 | - [ ] Any `[workarounds]` keys Tomb Raider needs, each with a docs entry. |
 | M4 | - [ ] Exit criterion: every `[workarounds]` key used by a gate title has a `docs/workarounds.md` entry. |

@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Image codecs
 
-Status: draft v1 · 2026-09-30 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-30 · synced with `main` 2026-10-01
 
 ## Scope
 
@@ -78,6 +78,7 @@ All tests are GoogleTest through `portps5_add_gtest`, run in hosted CI (no GPU),
 - [x] `decoder_png_tests` (`core/Decoder/Png/tests/Png.cpp`): lossless RGBA round trip, every channel count expanded to RGBA, `ParseHeader` fields and rejection cases, forged 2^31-1 dimensions, truncated input, invalid `Encode` arguments including stride overflow.
 - [x] `guest_jpeg_enc_tests` (`core/libs/tests/GuestJpegEnc.cpp`): lifecycle and handle misuse (null, misaligned, forged, double delete), every argument error class, `height*pitch` overflow, RGBA/BGRA/Y8 encode, padded pitch, small output buffer canary, death tests for MJPEG and restart intervals.
 - [x] `guest_png_dec_tests` (`core/libs/tests/GuestPngDec.cpp`): lifecycle, `ParseHeader` fields (colour spaces, tRNS flag) and errors, RGBA/BGRA decode, alpha fill versus source alpha, pitch handling, forged huge dimensions with a maximal pitch, argument validation order, death test for 16-bit output.
+- [x] Guest-range rejection (PR #83): `JpegEncGuestRanges.CreateRejectsUnusableGuestPointers` and `ForgedHandleInUnreadableMemory` (`GuestJpegEnc.cpp`), `PngDecGuestRanges.UnreadableStructPointers` and `CreateRejectsUnwritableMemory` (`GuestPngDec.cpp`). They build unreadable and read-only pages with the helper `core/libs/tests/GuestTestPages.hpp`.
 
 ## Milestones
 

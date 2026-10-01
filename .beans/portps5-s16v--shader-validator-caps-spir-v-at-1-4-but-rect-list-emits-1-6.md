@@ -1,12 +1,16 @@
 ---
 # portps5-s16v
-title: 'Shader validator caps SPIR-V at 1.4 but rect-list shaders can target 1.6'
+title: Shader validator caps SPIR-V at 1.4 but rect-list shaders can target 1.6
 status: todo
 type: task
 priority: low
 created_at: 2026-10-01T16:40:00Z
-updated_at: 2026-10-01T16:40:00Z
+updated_at: 2026-10-01T18:33:28Z
+parent: portps5-rd6g
+blocked_by:
+    - portps5-z9gy
 ---
+
 
 ## Context
 

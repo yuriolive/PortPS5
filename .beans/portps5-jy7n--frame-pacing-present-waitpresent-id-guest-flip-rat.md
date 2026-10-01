@@ -5,11 +5,32 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-10-01T18:25:10Z
-updated_at: 2026-10-01T18:25:11Z
+updated_at: 2026-10-01T18:32:59Z
 parent: portps5-7fqk
 blocked_by:
     - portps5-dtwf
     - portps5-w1re
 ---
+
+## Context
+
+The swapchain is FIFO and pacing follows the guest flip with no present timing; 1% low is part of the pass bar. Blocked by: portps5-dtwf, portps5-w1re.
+
+## Higher Goal
+
+Performance track (ROADMAP, PRD 4.5) smoother frame times at the same average fps.
+
+## Acceptance Criteria
+
+- [ ] VK_KHR_present_id/present_wait where supported
+- [ ] Pacing to the guest flip rate without Sleep jitter (high-resolution waits)
+- [ ] FIFO-relaxed and mailbox selectable through display.present_mode
+- [ ] Before/after 1% low on a perf scene
+
+## Out of Scope
+
+Frame-rate unlocks (PRD 11).
+
+## Summary of Changes
 
 TBD

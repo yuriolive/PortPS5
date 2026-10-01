@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Relinker
 
-Status: draft v2 · 2026-09-30 (M1 relinker item implemented; AnyPS5 relinker hardening ported; synced with `main` 2026-09-30)
+Status: draft v2 · 2026-09-30 (M1 relinker item implemented; AnyPS5 relinker hardening ported; synced with `main` 2026-10-01)
 
 ## Scope
 
@@ -10,11 +10,11 @@ Status: draft v2 · 2026-09-30 (M1 relinker item implemented; AnyPS5 relinker ha
 
 File references are `core/relinker/...` unless marked `libs/` (= `core/libs/`). "main@e06dbff" is the pre-merge AnyPS5 main (old baseline). "main@75a8668" is the current AnyPS5 main and includes merged PR #5; its line numbers were re-checked there.
 
-**Status as of 2026-09-30 (PortPS5 `main`).** `CodeMap`, `--to-intel`, the conversion report, the hardening ports from PR #56 and the wrap-free `ElfReader` size checks from PR #64 are in. The same `a + b` bounds-wrap hazard remains outside `ElfReader` in `relinker/src/analysis/UnusedNidFilter/EntryPointCollector.cpp:74`, `relinker/src/analysis/UnusedNidFilter/RelativeRelocationIndex.cpp:129` and `relinker/src/guest/GuestImageReader.cpp:65` (all under `core/relinker/`; bean `portps5-ld5w`). Lower-risk `off + relaEntSize <= relaSize` loops are at `relinker/src/pipeline/RelinkerPipeline.cpp:166,284` and `relinker/src/analysis/UnusedNidFilter/RelativeRelocationIndex.cpp:54`. The `0F A8/A9/AA/0F 0F/0F FF` decoder lengths are a known gap (Open question 8, bean `portps5-euov`).
+**Status as of 2026-09-30 (PortPS5 `main`).** `CodeMap`, `--to-intel`, the conversion report, the hardening ports from PR #56, the wrap-free `ElfReader` size checks from PR #64 and the register-form and short-site lowering from PR #73 are in. The same `a + b` bounds-wrap hazard remains outside `ElfReader` in `relinker/src/analysis/UnusedNidFilter/EntryPointCollector.cpp:74`, `relinker/src/analysis/UnusedNidFilter/RelativeRelocationIndex.cpp:129` and `relinker/src/guest/GuestImageReader.cpp:65` (all under `core/relinker/`; bean `portps5-ld5w`). Lower-risk `off + relaEntSize <= relaSize` loops are at `relinker/src/pipeline/RelinkerPipeline.cpp:166,284` and `relinker/src/analysis/UnusedNidFilter/RelativeRelocationIndex.cpp:54`. The `0F A8/A9/AA/0F 0F/0F FF` decoder lengths are a known gap (Open question 8, bean `portps5-euov`).
 
 **M1 implementation** (`feat/m1-relinker-codemap`): `Domain::CodeMap` (`domain/include/domain/CodeMap.hpp`) built once per image by `Relinker::BuildCodeMap` (`relinker/src/analysis/CodeMap.cpp`) from `CodeInstructionCollector::CollectDetailed` (`relinker/include/relinker/analysis/CodeInstructionCollector.hpp`); `Amd64OnlyConverter` matches only at `Starts` with branch checks against `BranchTargets` (`codegen/src/Amd64OnlyConverter.cpp`), EXTRQ/INSERTQ register forms are lowered through a stub (`codegen/src/x86/Sse4aLowering.cpp`), extending a 4-byte site over the following straight-line code when needed, and stay `Residual` only when that is unsafe (`codegen/src/Amd64OnlyConverter.cpp`, `_absorbFollowing`), trampolines emitted by `WindowsTrampolineBuilder` (`elfpatcher/src/windows/WindowsTrampolineBuilder.cpp`) and Linux extra-block stubs (`elfpatcher/src/linux/LinuxElfPatcher.cpp`); conversion report (`relinker/src/output/ConversionReport.cpp`) with NIDs in/out, stubs and residual sites written as `.conversion.json` next to `--registry` output (`main.cpp`).
 
-**Register forms and short sites** (`feat/port-relinker-lowering`, AnyPS5 `ff1fa9eb`, `9d110245`, `671b8c62` ported adapted onto the `CodeMap` converter):
+**Register forms and short sites** (PR #73 (merged), AnyPS5 `ff1fa9eb`, `9d110245`, `671b8c62` ported adapted onto the `CodeMap` converter):
 - EXTRQ (`66 0F 79 /r`) and INSERTQ (`F2 0F 79 /r`) register forms are lowered out of line with SSE2 only (`Sse4aLowering.cpp`, `_emitExtrqRegisterForm`, `_emitInsertqRegisterForm`). Length and index come from `xmm2[5:0]`/`xmm2[13:8]` (EXTRQ) or `xmm2[69:64]`/`xmm2[77:72]` (INSERTQ); `0` means 64; the ignored control bits are masked. Flags, GPRs, the red zone and every XMM register except the destination are preserved; the destination's architecturally undefined upper quadword is zeroed for INSERTQ and left as computed for EXTRQ. The stubs were checked against the real instructions on an SSE4a host (`Sse4aRegisterForm.NativeInstructionAgreesWithModelAndStub`).
 - The 4-byte forms are shorter than the 5-byte `jmp rel32`. `_absorbFollowing` extends the site over the next proven instructions: ordinary ones must be sequential, have no RIP-relative operand and no FS/GS override, and no branch target may land in the moved range; a following EXTRQ/INSERTQ joins the same stub. The stub runs the lowered code first and the moved bytes after it. Anything else leaves the site `Residual` with a logged reason (never silent).
 - Guest modules (`sce_module`) now receive `--to-intel` stubs: `GuestImage::Trampolines` feeds `WriteLinux` (stubs in the appended RWX block) and `WriteWindows` (`.amdstub` through `WindowsTrampolineBuilder`). Before this change a module needing any stub failed the relink.
@@ -64,7 +64,7 @@ The main@75a8668 matcher (`Amd64OnlyInstructionMatcher.cpp`):
 - **Adopt** AnyPS5 main's (merged PR #5) `--to-intel`: `Sse4aLowering`, `Sse4aOperands`, `WindowsTrampolineBuilder` and its tests, re-based onto the new code map below.
 - **Replace** linear sweep everywhere with one `CodeMap` built from `CodeInstructionCollector`.
 - **Change** AnyPS5 main's (merged PR #5) register-form behaviour from "fail the relink" to "leave the bytes and rely on the runtime trap". This implements the decision table in [README.md](README.md#subsystem-specs) §Relinker. The trap moves to libc with no `APS5_*` switch; tracing goes to `[debug]` ([configuration.md](configuration.md)).
-- **Refine** (`feat/port-relinker-lowering`): lower the register forms through a stub whenever the site reaches 5 bytes (own bytes plus safely movable successors); use the `Residual` fallback above only for sites that cannot be extended. This is a strict reduction of `Residual` sites, so it narrows rather than replaces the decision above. Whether the remaining fallback should fail the relink instead is Q10.
+- **Refine** (PR #73 (merged)): lower the register forms through a stub whenever the site reaches 5 bytes (own bytes plus safely movable successors); use the `Residual` fallback above only for sites that cannot be extended. This is a strict reduction of `Residual` sites, so it narrows rather than replaces the decision above. Whether the remaining fallback should fail the relink instead is Q10.
 
 ## Target design
 
@@ -146,9 +146,10 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
     - Jump table and literal pool inside `.text`: linear sweep desyncs, `CodeMap` does not.
     - SSE4a register form that cannot be extended (here: followed by `ret`): relink succeeds and the site appears in `Residual`.
     - Branch into a stub site: expected failure.
-    - Relocation-table consistency: every type `ValidationPolicy` accepts is emitted by the builder.
-    - Golden bytes for `.startup`/`.entry` and the `UNWIND_INFO` block.
-    - Libc trap: call the SSE4a emulator directly on a synthetic `CONTEXT`, host-CPU independent.
+    - `syscallProvenVsUnproven` and `trampolineSiteRecorded` (implemented).
+    - Relocation-table consistency: every type `ValidationPolicy` accepts is emitted by the builder (planned, not implemented).
+    - Golden bytes for `.startup`/`.entry` and the `UNWIND_INFO` block (planned, not implemented).
+    - Libc trap: call the SSE4a emulator directly on a synthetic `CONTEXT`, host-CPU independent (planned, not implemented; the trap itself is open question 9).
   - Hardening regressions ported from AnyPS5 (GoogleTest on synthetic bytes, `portps5_add_gtest`): `relinker_elf_reader_bounds_tests` (full-header check plus `e_phoff` near `UINT64_MAX`), `relinker_buffer_bounds_tests` (wrap-free bounds in `Io::ReadUxx`/`WriteUxx`/`ByteReader`), `relinker_file_writer_tests` (deferred flush failure; the `/dev/full` cases run on Linux only and are skipped elsewhere), `relinker_x64_decoder_emms_tests` (EMMS `0F 77` has no ModRM), `relinker_linux_guest_module_writer_tests` (flagless `PT_LOAD` dropped). `windows_lazy_got` (Python, real ELF-to-PE pipeline): lazy-import GOT slots hold the preferred VA and have DIR64 relocations.
   - `--to-intel` lowering (GoogleTest, synthetic bytes, `portps5_add_gtest`):
     - `relinker_sse4a_lowering_tests` (`codegen/tests/Sse4aRegisterFormTests.cpp`, `Sse4aImmediateFormTests.cpp`, shared `Sse4aExecutionHarness.hpp`): matcher and `MatchSequence` contracts, constant sharing, and **execution** of the lowered EXTRQ/INSERTQ code in a generated harness (all 16 XMM registers, flags and the 128-byte red zone checked) against an architectural model: every defined `(length, index)` of the immediate forms (in-place and stub shapes) and the register forms over representative fields with junk in the ignored control bits. A native-instruction oracle runs on SSE4a hosts and skips elsewhere.
@@ -162,7 +163,10 @@ emit report: {in_place, stubs, residual[] (rva, mnemonic)}
 ## Milestones
 
 - [x] **M0:** rebase keeps main's relinker. Existing relinker tests are wired into `ctest`. Stub magic bytes get "why" comments (CONVENTIONS change).
-- [x] **M1:** `CodeMap` built from `CodeInstructionCollector` as the only instruction-discovery engine (ROADMAP M1 relinker item), which `--to-intel` depends on; `--to-intel` port from AnyPS5 main (merged PR #5), register-form fallback plus the libc trap without `APS5_*`; the `APS5_EXPORT_FN` export macro (the `policy` job); and the conversion report used by the "inventory each gate title's imports" item.
+- [ ] **M1:**
+  - [x] `CodeMap` built from `CodeInstructionCollector` as the only instruction-discovery engine (ROADMAP M1 relinker item), which `--to-intel` depends on; `--to-intel` port from AnyPS5 main (merged PR #5); register-form and short-site lowering (PR #73); the conversion report used by the "inventory each gate title's imports" item.
+  - [ ] The libc SSE4a trap for `Residual` sites (open question 9).
+  - [ ] `APS5_EXPORT_FN` adoption: the macro exists (PR #11) but no export uses it yet, and the `policy` step does not check it ([build-toolchain.md](build-toolchain.md)).
 - [ ] **M2–M5:** no planned relinker scope. Fixes are driven by gate-title conversion failures.
 - [ ] **M6:** CLI usage section of the user guide.
 

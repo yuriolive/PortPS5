@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Save data
 
-Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-10-01
 
 ## Scope
 
@@ -28,7 +28,9 @@ References are relative to `core/libs/prx/`. The `main@e06dbff` column cites Any
 | Params, icons, quota | — | `GetParam` returns zeros (`:241-254`). `DirNameSearch` zeroes params (`:203-205`). `SetParam` and `SaveIcon` are dropped (`:380-408`). `GetMountInfo` reports 32768 free blocks (`:228-239`; `SaveData.hpp:27`). |
 | Other | — | `sceSaveDataTransferringMount` returns `SAVE_DATA_ERROR_NOT_FOUND` (`:528-535`). |
 
-**Dialogs.** In `libSceSaveDataDialog.native/Export.cpp`, `Open` sets `FINISHED` immediately (`:51-74`), and `GetResult` always returns OK, the OK button and the first dir name passed in (`:35-49`). `libSceCommonDialog`'s `IsUsed` returns false. At `main@e06dbff` every export in `libSceMsgDialog/Export.cpp:8-63` throws. On `main@75a8668` that file is a message-dialog state machine with no visible dialog (`libSceMsgDialog/Export.cpp:1-3`), and `libSceMsgDialog.native` exports only a marker variable (`Export.cpp:7`). `docs/TechnicalDebt.md:14-15` lists the two silent dialog stubs.
+**Dialogs.** In `libSceSaveDataDialog.native/Export.cpp`, `Open` sets `FINISHED` immediately (`:51-74`), and `GetResult` always returns OK, the OK button and the first dir name passed in (`:35-49`). `libSceCommonDialog`'s `IsUsed` returns false (AnyPS5 only; PortPS5's `sceCommonDialogIsUsed` returns `IsAnyCommonDialogActive_nid_no_patch()`, `libSceCommonDialog/Export.cpp:27-31`). At `main@e06dbff` every export in `libSceMsgDialog/Export.cpp:8-63` throws. On `main@75a8668` that file is a message-dialog state machine with no visible dialog (`libSceMsgDialog/Export.cpp:1-3`), and `libSceMsgDialog.native` exports only a marker variable (`Export.cpp:7`). PortPS5 replaced both silent stubs with the scripted dialogs below (PRs #46 and #85).
+
+**Known gap: dialog events.** No dialog emits a telemetry `dialog.open` event ([verification.md](verification.md) §4.3). The SaveDataDialog modules write `dialog.open {lib, mode, type, result}` as a text line to the run log (`libSceSaveDataDialog/Export.cpp:194`, `.native/Export.cpp:219`), and `MsgDialog` logs the guest's message text to the run log, not telemetry (`libSceMsgDialog/Export.cpp:233`), which goes against the "no game text in logs" intent of [verification.md](verification.md) §4.1. MsgDialog probes guest pointers with a local `VirtualQuery` copy (`libSceMsgDialog/Export.cpp:119`) instead of `GuestMemoryValidation` (bean `portps5-t4yz`).
 
 **User and system services.** `libSceUserService/Export.cpp:91-97` has one constant initial user, and `GetUserName` and `GetUserNumber` return that user's name and 1 (`:110-127`). `libSceSystemService/Export.cpp:62-77` `ParamGetInt` returns fixed values (English US, 24-hour clock, Cross as enter), and `ParamGetString` throws (`:79-85`).
 
@@ -43,7 +45,7 @@ References are relative to `core/libs/prx/`. The `main@e06dbff` column cites Any
 | Trophy2 | Fixed-constant game, group and trophy info (`libSceNpTrophy2/src/GameInfo.cpp:11-37`). Icon getters throw "icon file not found" (`GameInfo.cpp:39-47`, `GroupInfo.cpp:73-81`, `TrophyInfo.cpp:70-78`). | Same |
 | UniversalDataSystem | `PostEvent` accepts the event and drops it (`src/Event.cpp:36-37`) | Same |
 
-**`/savedata0` mount (PortPS5, M2).** `libc/src/General.cpp` owns a guest mount table (`MountGuestDirectory`, `ResolveGuestPathChecked`). `MountSaveData(titleId, DefaultSaveDataRoot())` creates `<root>/<titleId>/` and mounts it at `/savedata0`; `AppMetadata.cpp` calls it when `param.json` is first read, and a file API that touches `/savedata0` before that triggers the load. `sceKernelOpen/Read/Write/Lseek/Close/Stat/Unlink/Mkdir/Fsync` return SCE error codes (`0x80020000 | errno`) instead of throwing. `..` is resolved on raw components, so a path that leaves `/savedata0` returns `EACCES`; `:` in a component (NTFS streams) is also `EACCES`; an unmounted `/savedata0` returns `ENOENT` and never falls through to the working directory. Title ids accept only `[A-Za-z0-9_-]`, at most 32 characters. Tests: `tests/filesystem/SaveDataMountTests.cpp`.
+**`/savedata0` mount (PortPS5, M2).** `libc/src/General.cpp` owns a guest mount table (`MountGuestDirectory`, `ResolveGuestPathChecked`). `MountSaveData(titleId, DefaultSaveDataRoot())` creates `<root>/<titleId>/` and mounts it at `/savedata0`; `AppMetadata.cpp` calls it when `param.json` is first read, and a file API that touches `/savedata0` before that triggers the load. `sceKernelOpen/Read/Write/Lseek/Close/Stat/Unlink/Mkdir/Fsync` return SCE error codes (`0x80020000 | errno`) instead of throwing. `sceKernelLseek` returns `int`, so a resulting offset of 2 GiB or more returns `EOVERFLOW` (`libkernel/File/src/Open.cpp:211-212`); the 64-bit path is bean `portps5-65h0`. `..` is resolved on raw components, so a path that leaves `/savedata0` returns `EACCES`; `:` in a component (NTFS streams) is also `EACCES`; an unmounted `/savedata0` returns `ENOENT` and never falls through to the working directory. Title ids accept only `[A-Za-z0-9_-]`, at most 32 characters. Tests: `tests/filesystem/SaveDataMountTests.cpp`, `tests/filesystem/SandboxPathTests.cpp`.
 
 ## Decision
 
@@ -113,6 +115,9 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 ## Tests
 
+- `tests/dialogs/MsgDialogTests.cpp`: lifecycle errors, parameter and unmapped-pointer rejection, auto-answer after two polls (focused button, two buttons, system message), buttonless and progress-bar dialogs waiting for close, close/reopen/terminate, and the common-dialog active flag.
+- `tests/modules/ConvertKeycodeTests.cpp` (keyboard type, error precedence, virtual-keycode abort) and `tests/modules/SysmoduleTests.cpp` (unload of an unknown id, reference counting).
+- `tests/filesystem/SaveDataMountTests.cpp` (`/savedata0` mount, SCE error returns, escapes) and `tests/filesystem/SandboxPathTests.cpp` (guest path resolution and traversal clamping).
 - `tests/modules/PlayGoTests.cpp`: confirmed missing XML falls back to `{0}`; status-query and open/read failures return `UNKNOWN` without terminating or changing published state; empty XML and reads across buffer boundaries succeed.
 
 - `OfflineNetStackTests` covers bind-family mismatches, port sharing across families/types, malformed and valid IPv6 groups, and concurrent plus post-abort accept calls using synthetic socket state.
@@ -151,4 +156,5 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 - Multi-user saves: add a `<userId>` level before 1.0 or after? Not gated.
 - Should trophy metadata be parsed from the dump for display only, or skipped entirely?
 - Do any gate titles call `TransferringMount` or backup restore? This is answered by the M1 inventory (bean `portps5-3eh1`). It currently aborts through `Unsupported()` (PR #46).
-- `/savedata0` and guest file calls: on `main` no path maps `/savedata0` to host storage, and `sceKernelOpen/Read/Write/Lseek/...` still throw on ordinary errors. PR #53 (open, not landed) adds the mount and SCE error returns (bean `portps5-10fr`). `sceKernelLseek` also truncates 64-bit offsets (bean `portps5-65h0`).
+- `/savedata0` and guest file calls: resolved by PR #53 (bean `portps5-10fr`, see Current state). Still open: `sceKernelLseek` returns `EOVERFLOW` for offsets of 2 GiB or more instead of carrying 64-bit offsets (bean `portps5-65h0`).
+- Dialog events: emit a numeric-only telemetry `dialog.open` from every dialog `Open` and stop logging guest message text (see "Known gap: dialog events").

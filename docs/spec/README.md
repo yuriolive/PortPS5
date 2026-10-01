@@ -17,6 +17,51 @@ File references in each subsystem spec are relative to the AnyPS5 tree (`core/..
 
 The guest's x86-64 code is not recompiled. The relinker rewrites the decrypted ELF into a Windows PE image. Replacement system libraries (`.prx`, built as shared libraries with NID-patched exports) implement Sony's APIs from public documentation and reverse-engineered behaviour. Host exports use the System V calling convention through `APS5_VABI` (`__attribute__((sysv_abi))`), so calls between guest and host need no thunks. GPU work is translated to Vulkan.
 
+## Target architecture by version
+
+```
+PS5 game (user's own decrypted dump, stays local)
+  │
+  ▼
+Relinker: ELF → PE (v1) · ELF output for Linux (v2) ............ relinker.md
+  │  native x86-64, no CPU translation (never)
+  ▼
+PS5 runtime / HLE: libc, kernel, threading, files, audio (v1) ... libc, threading, guest-memory, audio, save-data
+  │  host platform layer core/host/: Win32 (v1), Linux (v2) ...... host-platform.md
+  ▼
+AGC / PM4 command processor (v1) ................................ gpu-driver.md
+  ▼
+GPU IR: resource states, queue tag, draws, dispatches (v1, M3)
+  │  descriptors heap (v1, M4) · barrier/state pass (v1, M3–M5)
+  │  multithreaded recording, async compute (v2, M9–M10)
+  ▼
+Shader recompiler: RDNA2 → SSA IR → SPIR-V (v1) ................. shader-recompiler.md
+  │  native optimizer passes (v1, M4–M5) · RT and mesh lowering (v2, M9)
+  ▼
+Vulkan 1.3 (v1) · RT, mesh, memory budget (v2) .................. gpu-driver.md, pipeline-cache.md
+  ▼
+Presenter: composition hook (v1 seam) ........................... gpu-driver.md
+  │  frame pacing, FIFO-relaxed/mailbox (v1)
+  │  spatial/temporal upscale, frame generation, HDR (v2, M12)
+  ▼
+Display: 30 fps bar (v1), open-world tier at 30 fps (v2), 60/120/240 Hz (beyond 2.0)
+```
+
+| Layer | v1 (1.0) | v2 (2.0) | Beyond 2.0 / out |
+|---|---|---|---|
+| Relinker | ELF → PE, `--to-intel` | ELF output (Linux) | Profile-guided code layout (v3) |
+| Runtime / HLE | PRX libraries, futex sync, save data, audio | Linux backend | — |
+| Memory manager | Registry (physical allocation → N views), write tracking, aliasing (M5), residency interface | Budgeted residency under VRAM pressure | — |
+| GPU translator | GPU IR, indirect on GPU, bindless heap, capture redesign | Async compute, multithreaded recording, RT, mesh | — |
+| Shader recompiler | Native optimizer passes, Wave64, specialization | RT and mesh ops | Shader-variant autotuning per GPU (v3) |
+| Pipeline cache | Disk cache, async compile with pipeline libraries | — | Ahead-of-time compilation (v3) |
+| Profiler | Telemetry, Tracy, perf scenes, regress compare | Memory and RT metrics | Optimization datasets for v3 research |
+| Presentation | Frame pacing, composition hook | Upscalers, frame generation, HDR, flip-rate override (experimental) | 60/120/240 Hz targets (v3) |
+| Adaptive optimizer (AI) | — | — | v3 research only: proposals verified deterministically, output a local cache (PRD §11) |
+| CPU translator | out (guest code runs natively) | out | out |
+
+Everything derived from a title (caches, profiles, autotuning results, patch files) is produced and kept on the user's machine (PRD §11 local-only principle).
+
 ## Global policy: no title-specific code
 
 - Core subsystems contain **no title-specific code paths**. AnyPS5 `main` (merged PR #5) has examples that PortPS5 will not adopt:

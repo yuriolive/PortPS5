@@ -16,7 +16,7 @@ The schema and the pass rules are in `docs/spec/verification.md` §3–4. The pe
 4. **Set `result`:**
    - `pass` only if all the PRD §4.3 thresholds hold;
    - otherwise `fail`, with the failing field noted in the PR.
-5. **Write** it to `compat/results/<titleId>/<commit>-<run_type>.json` and open a PR.
+5. **Write** it to `compat/results/<titleId>/<commit>-<run_type>.json` (create `compat/results/<titleId>/` if it does not exist) and open a PR.
 
 ## Never include
 
