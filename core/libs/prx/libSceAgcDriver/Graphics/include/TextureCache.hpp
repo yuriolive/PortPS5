@@ -24,9 +24,12 @@ private:
     };
     void trim();
     Context context;
+    std::shared_ptr<ResidentImagePool> residentImages;
     std::list<Entry> entries;
     std::uint64_t retainedBytes = 0;
     static constexpr std::uint64_t budget = 256ull * 1024 * 1024;
+    static constexpr std::uint64_t residentPoolBytes = 128ull * 1024 * 1024;
+    static constexpr std::size_t residentPoolImages = 16;
 };
 
 }

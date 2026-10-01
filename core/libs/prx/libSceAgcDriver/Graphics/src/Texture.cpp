@@ -206,6 +206,12 @@ Texture::~Texture() {
 void Texture::release() noexcept {
     upload.reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+    if (pool && image && memory) {
+        // upload.reset() above waited for the copy; a Texture is released only once no draw holds it,
+        // so the image is idle and can be recycled instead of freed.
+        pool->Release(poolKey, {image, memory, allocationBytes});
+        return;
+    }
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
     if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
 }

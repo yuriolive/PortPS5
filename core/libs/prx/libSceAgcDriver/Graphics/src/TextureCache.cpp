@@ -11,6 +11,11 @@ namespace AgcDriver::Graphics {
 
 TextureCache::TextureCache(const Context& context) : context(context) {
     Require(context.detiler != nullptr, "texture cache requires a device detiler");
+    // Pooled images are idle by construction (see Texture::release), so plain destruction is safe here.
+    residentImages = std::make_shared<ResidentImagePool>([context](const PooledImage& pooled) {
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, pooled.image, nullptr);
+        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, pooled.memory, nullptr);
+    }, residentPoolBytes, residentPoolImages);
 }
 
 void TextureCache::trim() {
@@ -58,7 +63,7 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
         break;
     }
     if (source) {
-        auto texture = std::make_shared<Texture>(context, source, resource, components);
+        auto texture = std::make_shared<Texture>(context, source, resource, components, residentImages);
         entries.push_back({key, {}, texture, source, source->Generation()});
         retainedBytes += texture->AllocationBytes();
         trim();

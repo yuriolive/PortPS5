@@ -20,8 +20,8 @@ Cheap render-to-texture reads without weakening correctness: content equals the 
 
 - [x] Design note in docs/spec/gpu-driver.md (Target design, Open question 10)
 - [ ] Baseline on the `release` preset (avg and 1% low frame time, creations per 400 lookups, Graphics.Wait / DrawQueue.Wait totals), recorded as results JSON via compat-result (needs a local Windows machine and the title dump)
-- [ ] Step 1: pooled destination images keyed by extent and format
-- [ ] GoogleTest regression test over the pool/cache logic with no game data
+- [x] Step 1: pooled destination images keyed by extent and format
+- [x] GoogleTest regression test over the pool logic with no game data (agc_driver_resident_image_pool_tests)
 - [ ] After measurement: decide step 2 (no Flush) and update the spec
 - [ ] Re-measure with identical build flags and run protocol; report before/after
 - [ ] gpu-driver.md and ROADMAP checkboxes ticked
@@ -32,4 +32,4 @@ General per-draw prepare cost and texture memcmp revalidation (another session),
 
 ## Summary of Changes
 
-Design note and bean only so far. No code change: the authoring environment was a Linux cloud container without MinGW-w64, a GPU or the title dump, so nothing could be built or measured.
+Added `ResidentImagePool` (Graphics/include+src), wired through `TextureCache` into `Texture`/`RenderTexture.cpp` so recycled images skip vkCreateImage/AllocateMemory/Bind; unit test target `agc_driver_resident_image_pool_tests`. Built and tested by Windows CI only (authoring session had no toolchain). Baseline and before/after measurement still pending on a local GPU machine.

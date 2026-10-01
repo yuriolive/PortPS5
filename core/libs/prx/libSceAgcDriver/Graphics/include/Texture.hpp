@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ResidentImagePool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 
 namespace AgcDriver::Graphics {
@@ -13,7 +14,11 @@ class CommandBatch;
 class Texture {
 public:
     Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot);
-    Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
+    /**
+     * @brief Copies a resident render target into a sampled image.
+     * @param pool Source of recycled destination images; the Texture returns its image on destruction. Null disables recycling.
+     */
+    Texture(const Context& context, const std::shared_ptr<ResidentColor>& source, const GuestTextureResource& descriptor, VkComponentMapping components, std::shared_ptr<ResidentImagePool> pool);
     ~Texture();
     Texture(const Texture&) = delete;
     Texture& operator=(const Texture&) = delete;
@@ -30,6 +35,8 @@ private:
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceSize allocationBytes = 0;
     std::shared_ptr<ResidentColor> source;
+    std::shared_ptr<ResidentImagePool> pool;
+    ResidentImageKey poolKey;
     std::unique_ptr<CommandBatch> upload;
 };
 
