@@ -1,3 +1,8 @@
+// core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp
+//
+// Subsystem: AGC driver Graphics. Collects the guest memory ranges one draw or dispatch uses (writable ranges and
+// immutable snapshots), uploads them into host buffers, and writes writable ranges back after GPU completion.
+// Threading: owned by one ShaderResources; not internally synchronised. Spec: docs/spec/gpu-driver.md.
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BytesEqual.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
