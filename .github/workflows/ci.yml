@@ -64,9 +64,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: false
-          # Depth 2 so HEAD~1 (PR base or previous main) exists for the
-          # comment-policy diff below.
-          fetch-depth: 2
+          # Full history so the comment-policy diff below can reach
+          # github.event.before on multi-commit pushes.
+          fetch-depth: 0
 
       - name: Setup MinGW + submodules + ccache env
         uses: ./.github/actions/mingw-setup
@@ -252,12 +252,19 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running code comment and docstring policy checks..."
-          # Diff against HEAD~1, not origin/main: a shallow checkout has no
-          # merge-base with origin/main, so the triple-dot diff failed and the
-          # fallback two-dot diff flagged every file main gained after the PR
-          # branched (unrelated audio files). HEAD~1 is the PR base on the merge
-          # ref and the previous commit on a main push.
-          python tools/check_comments.py --base HEAD~1
+          # Never diff against a moving origin/main: it flagged every file main
+          # gained after the PR branched (unrelated audio files). Pull requests
+          # use HEAD~1, the PR base on the merge ref. Pushes use the pre-push
+          # SHA so every commit in the push is checked; a new branch or force
+          # push reports an all-zero or unreachable SHA, so fall back to HEAD~1.
+          $base = 'HEAD~1'
+          $before = '${{ github.event.before }}'
+          if ('${{ github.event_name }}' -eq 'push' -and $before -notmatch '^0+$') {
+            git cat-file -e "$before^{commit}" 2>$null
+            if ($LASTEXITCODE -eq 0) { $base = $before }
+          }
+          Write-Host "Comment policy base: $base"
+          python tools/check_comments.py --base $base
 
       # ── Build hashes (provenance, no uploads) ────────────────────────
       # SHA256 over shipping binaries for release provenance and
