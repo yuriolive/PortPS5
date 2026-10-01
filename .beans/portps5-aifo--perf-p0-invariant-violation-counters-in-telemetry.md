@@ -22,7 +22,7 @@ Violations become visible numbers in every results JSON, so they can't build up 
 ## Acceptance Criteria
 
 - [ ] Numeric `perf.violation` event (`kind`, `n`), counted only after `warmup.end`
-- [ ] Count sites: fence waits not requested by the guest (P1); `vkCreate*` / `vkAllocateMemory` reached from the per-draw/dispatch path (P2); recompile or pipeline creation on the submit thread (P3); full texture/buffer revalidation compares (P5)
+- [ ] Count sites: fence waits and GPU-to-CPU readbacks not requested by the guest (P1); `vkCreate*` / `vkAllocateMemory` reached from the per-draw/dispatch path (P2); recompile or pipeline creation on the submit thread (P3); full compares or full copies of guest memory that the write tracker proves unchanged (P5)
 - [ ] `tools/regress.py` writes `invariants: { p1, p2, p3, p5 }`, not part of the pass rule
 - [ ] GoogleTest per counter site through a test hook (no environment variable)
 - [ ] Each known violation found on a gate title gets a bean and a line in its owner spec
