@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -23,6 +24,7 @@
 
 namespace {
 
+constexpr int kErrUnknown = static_cast<int>(0x80B20001u);
 constexpr int kErrInvalidArgument = static_cast<int>(0x80B20004u);
 constexpr int kErrBadHandle = static_cast<int>(0x80B20009u);
 constexpr int kErrBadPointer = static_cast<int>(0x80B2000Au);
@@ -85,8 +87,9 @@ std::set<std::uint16_t> PlayGoParseChunkDefs(const std::string& xml) {
         // Reads a run of decimal digits at pos; false for none or a value that cannot be a chunk id.
         std::size_t end = pos;
         value = 0;
-        while (end < xml.size() && xml[end] >= '0' && xml[end] <= '9' && end - pos < 6) {
-            value = value * 10 + static_cast<std::uint64_t>(xml[end] - '0');
+        while (end < xml.size() && xml[end] >= '0' && xml[end] <= '9') {
+            // Consume the whole run (saturating) so "0000012" is 12 and "1000000" is rejected, never truncated.
+            value = std::min<std::uint64_t>(value * 10 + static_cast<std::uint64_t>(xml[end] - '0'), 0x10000);
             ++end;
         }
         return end > pos && value <= 0xFFFF;
@@ -135,7 +138,7 @@ int APS5_VABI scePlayGoTerminate(void) noexcept { return 0; }
 /**
  * Opens PlayGo and loads the chunk set from /app0/playgo-chunkdefs.xml.
  * Returns 0 and the process-wide handle; BAD_POINTER for a null out pointer; INVALID_ARGUMENT when
- * `param` is non-null. A missing file leaves the set {0}: a dump may omit it, and failing the open
+ * `param` is non-null; UNKNOWN (0x80B20001) when the file exists but cannot be read. A missing file leaves the set {0}: a dump may omit it, and failing the open
  * would block a title that only needs chunk 0 (inference, noted in docs/spec/save-data.md).
  */
 int APS5_VABI scePlayGoOpen(int* out_handle, const void* param) noexcept {
@@ -146,9 +149,19 @@ int APS5_VABI scePlayGoOpen(int* out_handle, const void* param) noexcept {
         return kErrInvalidArgument;
     }
     std::set<std::uint16_t> chunks = {0};
-    std::ifstream file(ResolvePath_nid_no_patch("/app0/playgo-chunkdefs.xml"), std::ios::binary);
-    if (file) {
-        const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::filesystem::path defs = ResolvePath_nid_no_patch("/app0/playgo-chunkdefs.xml");
+    std::error_code ec;
+    if (std::filesystem::exists(defs, ec)) {
+        // The file is present, so an unreadable one is an error rather than "no chunk definitions".
+        std::ifstream file(defs, std::ios::binary);
+        std::string text;
+        if (file) {
+            text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        if (!file && !file.eof()) {
+            APS5_LOG_OUT("cannot read %s", defs.string().c_str());
+            return kErrUnknown;
+        }
         chunks = PlayGoParseChunkDefs(text);
     }
     std::lock_guard lock(g_lock);

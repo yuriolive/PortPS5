@@ -10,6 +10,7 @@
 #include "prx/libScePlayGo/PlayGoInternal.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -58,6 +59,11 @@ TEST(PlayGoParse, ExtractsChunkIdsAndDefaultRange) {
     EXPECT_EQ(PlayGoParseChunkDefs(""), (std::set<std::uint16_t>{0}));
     EXPECT_EQ(PlayGoParseChunkDefs("<chunk id=\"5\""), (std::set<std::uint16_t>{0}));
     EXPECT_EQ(PlayGoParseChunkDefs("<chunk id=\"65535\"/>"), (std::set<std::uint16_t>{0, 65535}));
+    // Long digit runs are read whole: leading zeros keep the value, an oversized run is dropped
+    // (it used to be truncated after six digits, so "0000012" parsed as chunk 1).
+    EXPECT_EQ(PlayGoParseChunkDefs("<chunk id=\"0000012\"/>"), (std::set<std::uint16_t>{0, 12}));
+    EXPECT_EQ(PlayGoParseChunkDefs("<chunk id=\"1000000\"/>"), (std::set<std::uint16_t>{0}));
+    EXPECT_EQ(PlayGoParseChunkDefs("<chunk id=\"65536\"/>"), (std::set<std::uint16_t>{0}));
 }
 
 class PlayGoTest : public TempDirectoryFixture {
@@ -140,6 +146,15 @@ TEST_F(PlayGoTest, ChunkSetComesFromXmlAtOpen) {
     EXPECT_EQ(count, 0u);
     EXPECT_EQ(scePlayGoGetInstallChunkId(handle, ids, 8, nullptr), kBadPointer);
     EXPECT_EQ(scePlayGoGetChunkId(2, ids, 8, &count), kBadHandle);
+}
+
+// An xml that exists but cannot be read (here: a directory with that name) fails the open with
+// UNKNOWN instead of silently falling back to chunk 0; only a missing file falls back.
+TEST_F(PlayGoTest, UnreadableChunkDefsFailsOpen) {
+    std::filesystem::create_directories(MakeSubPath("playgo-chunkdefs.xml"));
+    int handle = 0;
+    EXPECT_EQ(scePlayGoOpen(&handle, nullptr), static_cast<int>(0x80B20001u));
+    EXPECT_EQ(handle, 0);
 }
 
 // Chunk-array calls (Locus, Eta, Progress, Prefetch) share their validation order: handle, pointers,
