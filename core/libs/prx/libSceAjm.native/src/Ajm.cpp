@@ -1,6 +1,14 @@
-// libSceAjm audio codec job execution, batch management, and ATRAC9 decoding.
-// Implements asynchronous audio processing pipeline and memory buffer registries.
-// Subsystem: audio / ajm. Exports use System V ABI (APS5_VABI) for guest runtime compatibility.
+// Ajm.cpp
+// PortPS5 - Audio Job Manager (AJM) Implementation
+//
+// Subsystem Ownership:
+//   Owned by core/libs/prx/libSceAjm.native. Provides codec decompression
+//   infrastructure for guest audio processing (ATRAC9 support via libatrac9).
+//
+// Threading & Invariants:
+//   - Context and instance maps are protected by g_lock.
+//   - Decodes run synchronously on the calling guest thread.
+//   - Batch parsing validates bounds and immediately aborts corrupted layouts.
 
 #include <cstdint>
 #include <cstddef>
@@ -344,7 +352,12 @@ void Execute(const AjmJobHeader& job, const AjmBuffer* inputs, const AjmBuffer* 
 
 extern "C" {
 
-/// Initializes the AJM context descriptor.
+/**
+ * @brief Initializes the AJM system and allocates a context handle.
+ * @param reserved Reserved parameter, must be 0.
+ * @param context Pointer receiving allocated context ID.
+ * @return 0 on success, or SCE_AJM_ERROR_INVALID_PARAMETER.
+ */
 int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) noexcept {
     (void)reserved;
     if (!context) return SCE_AJM_ERROR_INVALID_PARAMETER;
@@ -352,13 +365,23 @@ int APS5_VABI sceAjmInitialize(int64_t reserved, uint32_t* context) noexcept {
     return 0;
 }
 
-/// Finalizes the AJM context descriptor.
+/**
+ * @brief Finalizes an AJM context and releases associated resources.
+ * @param context Context ID to finalize.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAjmFinalize(uint32_t context) noexcept {
     (void)context;
     return 0;
 }
 
-/// Registers an audio codec module with the AJM context.
+/**
+ * @brief Registers a codec module within an AJM context.
+ * @param context Context ID.
+ * @param codec Codec identifier.
+ * @param reserved Reserved parameter.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAjmModuleRegister(uint32_t context, uint32_t codec, int64_t reserved) noexcept {
     (void)context;
     (void)codec;
@@ -366,14 +389,25 @@ int APS5_VABI sceAjmModuleRegister(uint32_t context, uint32_t codec, int64_t res
     return 0;
 }
 
-/// Unregisters an audio codec module from the AJM context.
+/**
+ * @brief Unregisters a codec module within an AJM context.
+ * @param context Context ID.
+ * @param codec Codec identifier.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAjmModuleUnregister(uint32_t context, uint32_t codec) noexcept {
     (void)context;
     (void)codec;
     return 0;
 }
 
-/// Registers memory region for AJM processing pipeline.
+/**
+ * @brief Registers a memory buffer for AJM batch operations.
+ * @param context Context ID.
+ * @param ptr Pointer to memory buffer.
+ * @param pages Number of pages.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAjmMemoryRegister(uint32_t context, void* ptr, size_t pages) noexcept {
     (void)context;
     (void)ptr;
@@ -381,14 +415,26 @@ int APS5_VABI sceAjmMemoryRegister(uint32_t context, void* ptr, size_t pages) no
     return 0;
 }
 
-/// Unregisters memory region from AJM processing pipeline.
+/**
+ * @brief Unregisters a memory buffer from an AJM context.
+ * @param context Context ID.
+ * @param ptr Pointer to memory buffer.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAjmMemoryUnregister(uint32_t context, void* ptr) noexcept {
     (void)context;
     (void)ptr;
     return 0;
 }
 
-/// Creates a codec processing instance.
+/**
+ * @brief Creates a decoder instance for a specific audio codec.
+ * @param context Context ID.
+ * @param codec Codec type (e.g. AJM_CODEC_AT9).
+ * @param flags Instance flags.
+ * @param instance Pointer receiving created instance handle.
+ * @return 0 on success, or SCE_AJM_ERROR_INVALID_PARAMETER.
+ */
 int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t flags, uint32_t* instance) noexcept {
     (void)context;
     if (!instance) return SCE_AJM_ERROR_INVALID_PARAMETER;
@@ -408,7 +454,12 @@ int APS5_VABI sceAjmInstanceCreate(uint32_t context, uint32_t codec, uint64_t fl
     return 0;
 }
 
-/// Destroys a codec processing instance.
+/**
+ * @brief Destroys a decoder instance and frees decoder state.
+ * @param context Context ID.
+ * @param instance Instance handle to destroy.
+ * @return 0 on success, or SCE_AJM_ERROR_INVALID_INSTANCE.
+ */
 int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) noexcept {
     (void)context;
     AJM_TRACE("[ajm] instance %u destroy\n", instance);
@@ -416,7 +467,12 @@ int APS5_VABI sceAjmInstanceDestroy(uint32_t context, uint32_t instance) noexcep
     return g_instances.erase(instance) ? 0 : SCE_AJM_ERROR_INVALID_INSTANCE;
 }
 
-/// Parses ATRAC9 configuration data and populates codec parameters.
+/**
+ * @brief Parses ATRAC9 configuration header data and populates config info.
+ * @param config_data Pointer to ATRAC9 config bytes.
+ * @param config_info Pointer receiving parsed configuration structure.
+ * @return 0 on success, or SCE_AJM_ERROR_INVALID_PARAMETER.
+ */
 int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9ConfigDataInfo* config_info) noexcept {
     if (!config_data || !config_info) return SCE_AJM_ERROR_INVALID_PARAMETER;
     void* decoder = Atrac9GetHandle();
@@ -436,7 +492,13 @@ int APS5_VABI sceAjmDecAt9ParseConfigData(const void* config_data, AjmDecAt9Conf
     return 0;
 }
 
-/// Initializes an AJM batch buffer.
+/**
+ * @brief Initializes an AJM batch buffer descriptor.
+ * @param buffer User memory allocated for batch.
+ * @param size Buffer size in bytes.
+ * @param info Pointer receiving initialized batch structure.
+ * @return 0 on success, or SCE_AJM_ERROR_INVALID_PARAMETER.
+ */
 int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* info) noexcept {
     if (!buffer || !info) return SCE_AJM_ERROR_INVALID_PARAMETER;
     info->p_buffer = buffer;
@@ -445,7 +507,15 @@ int APS5_VABI sceAjmBatchInitialize(void* buffer, size_t size, AjmBatchInfo* inf
     return 0;
 }
 
-/// Appends an initialization job to an AJM batch.
+/**
+ * @brief Appends an initialization job to an AJM batch.
+ * @param info Batch info structure.
+ * @param instance Instance handle to initialize.
+ * @param codec_parameters Codec configuration parameters.
+ * @param codec_parameters_size Size of configuration parameters in bytes.
+ * @param result Pointer receiving job result code.
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo* info, uint32_t instance, const void* codec_parameters, size_t codec_parameters_size, void* result) noexcept {
     auto header = AjmMakeHeader(AjmJobKind::Initialize, instance, result, sizeof(SidebandResult));
     header.parameterSize = std::min<std::size_t>(codec_parameters_size, sizeof(header.parameters));
@@ -453,12 +523,26 @@ int APS5_VABI sceAjmBatchJobInitialize(AjmBatchInfo* info, uint32_t instance, co
     return AjmAppend(info, header, nullptr, nullptr);
 }
 
-/// Appends a context clearance job to an AJM batch.
+/**
+ * @brief Appends a clear-context job to an AJM batch.
+ * @param info Batch info structure.
+ * @param instance Instance handle.
+ * @param result Pointer receiving job result code.
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAjmBatchJobClearContext(AjmBatchInfo* info, uint32_t instance, void* result) noexcept {
     return AjmAppend(info, AjmMakeHeader(AjmJobKind::ClearContext, instance, result, sizeof(SidebandResult)), nullptr, nullptr);
 }
 
-/// Appends gapless decode parameter setup job to an AJM batch.
+/**
+ * @brief Appends a gapless decode configuration job to an AJM batch.
+ * @param info Batch info structure.
+ * @param instance Instance handle.
+ * @param gapless_decode Gapless decode parameters.
+ * @param reset Whether to reset playback sample counters.
+ * @param result Pointer receiving job result code.
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instance, const void* gapless_decode, int reset, void* result) noexcept {
     auto header = AjmMakeHeader(AjmJobKind::SetGaplessDecode, instance, result, sizeof(SidebandResult));
     if (gapless_decode) std::memcpy(header.parameters, gapless_decode, sizeof(SidebandGaplessDecode));
@@ -466,7 +550,19 @@ int APS5_VABI sceAjmBatchJobSetGaplessDecode(AjmBatchInfo* info, uint32_t instan
     return AjmAppend(info, header, nullptr, nullptr);
 }
 
-/// Appends a split buffer run job to an AJM batch.
+/**
+ * @brief Appends a split run (decode) job to an AJM batch.
+ * @param info Batch info structure.
+ * @param instance Instance handle.
+ * @param flags Decode flags.
+ * @param input_buffers Array of input buffer descriptors.
+ * @param input_buffers_num Number of input buffers.
+ * @param output_buffers Array of output buffer descriptors.
+ * @param output_buffers_num Number of output buffers.
+ * @param sideband_output Pointer receiving sideband decode stats.
+ * @param sideband_output_size Size of sideband output buffer.
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint64_t flags, const AjmBuffer* input_buffers, size_t input_buffers_num, const AjmBuffer* output_buffers, size_t output_buffers_num, void* sideband_output, size_t sideband_output_size) noexcept {
     auto header = AjmMakeHeader(AjmJobKind::Run, instance, sideband_output, sideband_output_size);
     header.flags = flags;
@@ -475,13 +571,27 @@ int APS5_VABI sceAjmBatchJobRunSplit(AjmBatchInfo* info, uint32_t instance, uint
     return AjmAppend(info, header, input_buffers, output_buffers);
 }
 
-/// Appends a statistics query job to an AJM batch.
+/**
+ * @brief Appends a statistics query job to an AJM batch.
+ * @param info Batch info structure.
+ * @param interval Statistics sampling interval.
+ * @param result Pointer receiving statistics output.
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAjmBatchJobGetStatistics(AjmBatchInfo* info, float interval, void* result) noexcept {
     (void)interval;
     return AjmAppend(info, AjmMakeHeader(AjmJobKind::GetStatistics, 0, result, 24), nullptr, nullptr);
 }
 
-/// Starts execution of jobs in an AJM batch buffer.
+/**
+ * @brief Executes all jobs in an AJM batch synchronously.
+ * @param context Context ID.
+ * @param info Batch info structure describing jobs.
+ * @param priority Execution priority.
+ * @param error Pointer receiving batch error details.
+ * @param batch Pointer receiving executed batch ID.
+ * @return 0 on success, or SCE error code.
+ */
 int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int priority, AjmBatchError* error, uint32_t* batch) noexcept {
     (void)context;
     (void)priority;
@@ -495,14 +605,22 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
     while (cursor < end) {
         const std::size_t remaining = static_cast<std::size_t>(end - cursor);
         if (remaining < sizeof(AjmJobHeader)) {
-            if (error) std::memset(error, 0, sizeof(*error));
-            return SCE_AJM_ERROR_INVALID_PARAMETER;
+            // Malformed batch: truncated job header aborts immediately via
+            // Unsupported() rather than corrupting audio ring buffers (docs/spec/audio.md Tests).
+            Unsupported("sceAjmBatchStart: truncated job header in batch");
         }
         AjmJobHeader job;
         std::memcpy(&job, cursor, sizeof(job));
         if (job.bytes < sizeof(AjmJobHeader) || job.bytes > remaining) {
-            if (error) std::memset(error, 0, sizeof(*error));
-            return SCE_AJM_ERROR_INVALID_PARAMETER;
+            // Malformed batch: corrupted job size aborts immediately via
+            // Unsupported() rather than corrupting audio ring buffers (docs/spec/audio.md Tests).
+            Unsupported("sceAjmBatchStart: invalid job bytes in batch");
+        }
+        const std::size_t requiredBuffersSize =
+            (static_cast<std::size_t>(job.inputCount) + job.outputCount) * sizeof(AjmBuffer);
+        if (job.bytes < sizeof(AjmJobHeader) + requiredBuffersSize) {
+            // Malformed batch: buffer descriptors overflow the declared job bytes.
+            Unsupported("sceAjmBatchStart: buffer descriptor overflow in batch");
         }
         const auto* buffers = reinterpret_cast<const AjmBuffer*>(cursor + sizeof(AjmJobHeader));
         try {
@@ -518,7 +636,14 @@ int APS5_VABI sceAjmBatchStart(uint32_t context, const AjmBatchInfo* info, int p
     return 0;
 }
 
-/// Waits for completion of an asynchronous AJM batch.
+/**
+ * @brief Waits for completion of an AJM batch.
+ * @param context Context ID.
+ * @param batch Batch ID returned by sceAjmBatchStart.
+ * @param timeout Timeout in microseconds.
+ * @param error Pointer receiving error info.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAjmBatchWait(uint32_t context, uint32_t batch, uint32_t timeout, AjmBatchError* error) noexcept {
     (void)context;
     (void)batch;
@@ -529,7 +654,12 @@ int APS5_VABI sceAjmBatchWait(uint32_t context, uint32_t batch, uint32_t timeout
     return 0;
 }
 
-/// Dumps error information for a failed AJM batch.
+/**
+ * @brief Dumps error information for a failed AJM batch.
+ * @param info Batch info structure.
+ * @param error Error record structure.
+ * @return 0 on success.
+ */
 int APS5_VABI sceAjmBatchErrorDump(const AjmBatchInfo* info, AjmBatchError* error) noexcept {
     (void)info;
     if (error) std::memset(error, 0, sizeof(*error));
