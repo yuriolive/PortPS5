@@ -1547,8 +1547,14 @@ TEST(RdnaPortedInstructionTests, BdaAccessInContinueTargetEmitsValidModule) {
     try {
         EXPECT_FALSE(Recompile(owned.request).spirv.empty());
     } catch (const std::exception& error) {
+        // Only the documented optimizer limitation may surface here: the emitted module validated, then merge-blocks
+        // produced a loop whose continue target is not post-dominated by the back-edge block. Any other failure
+        // (pre-optimization validation, decode, emission) is a real regression.
         const std::string message = error.what();
-        EXPECT_EQ(message.find("validation before optimization"), std::string::npos) << message;
+        const bool knownOptimizerLimit = message.find("SPIR-V optimization failed") != std::string::npos &&
+                                         message.find("continue construct") != std::string::npos &&
+                                         message.find("not structurally post dominated") != std::string::npos;
+        EXPECT_TRUE(knownOptimizerLimit) << "unexpected Recompile failure: " << message;
     }
 }
 
