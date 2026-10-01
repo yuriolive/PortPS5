@@ -284,6 +284,18 @@ TEST_F(DepthSurfaceDevice, BarriersBetweenDraws) {
     EXPECT_EQ(mock.barriers[1].subresourceRange.aspectMask, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
+// Invariant (review finding on PR #55): eviction never drops the surface being requested and never
+// the whole cache. Under capacity nothing is evicted; at capacity the least recently used other
+// entry goes; a cache holding only the requested surface evicts nothing.
+TEST(DepthEviction, LeastRecentlyUsedNeverTheRequested) {
+    const std::vector<DepthCacheUse> uses{{10, 5}, {20, 1}, {30, 9}};
+    EXPECT_FALSE(SelectDepthEviction(uses, 4, 10).has_value()) << "under capacity";
+    EXPECT_EQ(SelectDepthEviction(uses, 3, 10), std::optional<std::uint64_t>(20));
+    EXPECT_EQ(SelectDepthEviction(uses, 3, 20), std::optional<std::uint64_t>(10)) << "the requested entry is skipped even when oldest";
+    EXPECT_FALSE(SelectDepthEviction({{10, 1}}, 1, 10).has_value()) << "only the requested surface is cached";
+    EXPECT_FALSE(SelectDepthEviction({}, 0, 10).has_value());
+}
+
 // Invariant: a surface is identified by base addresses, extent and formats; any change means a
 // different surface (the cache replaces it with a fresh, undefined one).
 TEST_F(DepthSurfaceDevice, MatchesSurfaceIdentity) {

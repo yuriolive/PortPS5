@@ -30,6 +30,17 @@ std::optional<VkFormat> SelectDepthFormat(DepthSurfaceFormat depth, bool stencil
     return std::nullopt;
 }
 
+std::optional<std::uint64_t> SelectDepthEviction(const std::vector<DepthCacheUse>& entries, std::size_t capacity, std::uint64_t keep) {
+    if (entries.size() < capacity) return std::nullopt;
+    std::optional<DepthCacheUse> oldest;
+    for (const auto& entry : entries) {
+        if (entry.key == keep) continue;
+        if (!oldest || entry.lastUse < oldest->lastUse) oldest = entry;
+    }
+    if (!oldest) return std::nullopt;
+    return oldest->key;
+}
+
 bool DepthFormatHasStencil(VkFormat format) {
     return format == VK_FORMAT_S8_UINT || format == VK_FORMAT_D16_UNORM_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT || format == VK_FORMAT_D32_SFLOAT_S8_UINT;
 }

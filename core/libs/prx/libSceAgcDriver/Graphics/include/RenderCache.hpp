@@ -62,6 +62,8 @@ private:
     Context context;
     std::map<std::uint64_t, std::shared_ptr<ResidentColor>> entries;
     std::map<std::uint64_t, std::shared_ptr<ResidentDepth>> depthEntries;
+    std::map<std::uint64_t, std::uint64_t> depthLastUse;
+    std::uint64_t depthClock = 0;
 };
 
 }

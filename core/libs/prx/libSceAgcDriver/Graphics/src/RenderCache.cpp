@@ -105,13 +105,29 @@ std::shared_ptr<ResidentDepth> RenderCache::GetDepth(const DepthTarget& target) 
     const auto key = target.HasDepth() ? target.depthAddress : target.stencilAddress;
     const auto it = depthEntries.find(key);
     if (it != depthEntries.end()) {
-        if (it->second->Matches(target)) return it->second;
+        if (it->second->Matches(target)) {
+            depthLastUse[key] = ++depthClock;
+            return it->second;
+        }
         depthEntries.erase(it);
+        depthLastUse.erase(key);
     }
-    // Host-only surfaces are cheap to rebuild relative to a leak, so cap the cache and drop all.
-    if (depthEntries.size() >= 16) depthEntries.clear();
+    // The images hold the only copy of the depth data, so evicting one loses its contents (a later
+    // read is then rejected as never-cleared). Bound the cache by dropping the least recently used
+    // surface, never the one being requested and never the whole cache mid-frame. Draws and cached
+    // pipelines still referencing an evicted surface keep its image alive through their shared_ptr.
+    constexpr std::size_t capacity = 32;
+    for (;;) {
+        std::vector<DepthCacheUse> uses;
+        for (const auto& [entryKey, stamp] : depthLastUse) uses.push_back({entryKey, stamp});
+        const auto victim = SelectDepthEviction(uses, capacity, key);
+        if (!victim) break;
+        depthEntries.erase(*victim);
+        depthLastUse.erase(*victim);
+    }
     auto entry = std::make_shared<ResidentDepth>(context, target);
     depthEntries.emplace(key, entry);
+    depthLastUse[key] = ++depthClock;
     return entry;
 }
 

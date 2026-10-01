@@ -46,6 +46,24 @@ std::vector<VkFormat> DepthFormatCandidates(DepthSurfaceFormat depth, bool stenc
  */
 std::optional<VkFormat> SelectDepthFormat(DepthSurfaceFormat depth, bool stencil, const std::function<bool(VkFormat)>& supported);
 
+/// One depth-cache entry as seen by the eviction policy: surface key and last-use stamp.
+struct DepthCacheUse {
+    std::uint64_t key;
+    std::uint64_t lastUse;
+};
+
+/**
+ * @brief Picks the depth surface to evict when the cache is full.
+ * @param entries Current entries with their last-use stamps (larger is more recent).
+ * @param capacity Maximum number of entries; eviction is only requested at or above it.
+ * @param keep Key of the surface being requested right now; it is never evicted, because
+ *        dropping it would discard the contents (and defined-ness) the draw is about to use.
+ * @return Key of the least recently used other entry, or nullopt when the cache is under
+ *         capacity or holds nothing but @p keep. Evicted surfaces lose their contents; a later
+ *         read of one is rejected as never-cleared rather than drawn with garbage.
+ */
+std::optional<std::uint64_t> SelectDepthEviction(const std::vector<DepthCacheUse>& entries, std::size_t capacity, std::uint64_t keep);
+
 /// True when @p format has a stencil aspect.
 bool DepthFormatHasStencil(VkFormat format);
 
