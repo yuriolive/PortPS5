@@ -18,6 +18,7 @@
 #include <utility>
 #include <optional>
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/config/Config.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
 namespace {
@@ -280,12 +281,13 @@ void UnmountGuestDirectory(const char* name) {
 
 std::filesystem::path DefaultSaveDataRoot() {
     // docs/spec/save-data.md: %LOCALAPPDATA%/PortPS5/saves/<titleId>/.
-    const char* base = std::getenv("LOCALAPPDATA");
-    if (base && *base) return std::filesystem::path(base) / "PortPS5" / "saves";
-    const char* xdg = std::getenv("XDG_DATA_HOME");
-    if (xdg && *xdg) return std::filesystem::path(xdg) / "PortPS5" / "saves";
-    const char* home = std::getenv("HOME");
-    if (home && *home) return std::filesystem::path(home) / ".local" / "share" / "PortPS5" / "saves";
+    // Env access goes through Config (CI policy bans getenv outside it).
+    if (const auto base = PortPS5::Config::HostEnvironmentValue("LOCALAPPDATA"))
+        return std::filesystem::path(*base) / "PortPS5" / "saves";
+    if (const auto xdg = PortPS5::Config::HostEnvironmentValue("XDG_DATA_HOME"))
+        return std::filesystem::path(*xdg) / "PortPS5" / "saves";
+    if (const auto home = PortPS5::Config::HostEnvironmentValue("HOME"))
+        return std::filesystem::path(*home) / ".local" / "share" / "PortPS5" / "saves";
     return std::filesystem::path("savedata");
 }
 

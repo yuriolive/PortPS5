@@ -10,6 +10,7 @@
 
 #include "common/TestHarness.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/config/Config.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 
@@ -328,6 +329,28 @@ TEST_F(SaveDataMountTest, PosixWrappersReturnMinusOneAndErrno) {
     EXPECT_EQ(read_nid_postfix(fd, buf, 3), 3);
     EXPECT_EQ(close_nid_postfix(fd), 0);
     EXPECT_EQ(unlink_nid_postfix("/savedata0/p.sav"), 0);
+}
+
+// Invariant (CI policy: no getenv outside Config): the default save root is discovered through
+// Config::HostEnvironmentValue and still honours the platform variable, with empty = unset.
+TEST(SaveDataDefaultRoot, UsesHostEnvironmentThroughConfig) {
+#ifdef _WIN32
+    const char* name = "LOCALAPPDATA";
+    const auto previous = PortPS5::Config::HostEnvironmentValue(name);
+    _putenv_s(name, "C:/portps5_env_probe");
+    EXPECT_EQ(DefaultSaveDataRoot(), std::filesystem::path("C:/portps5_env_probe") / "PortPS5" / "saves");
+    _putenv_s(name, "");
+    EXPECT_FALSE(PortPS5::Config::HostEnvironmentValue(name).has_value());
+    if (previous) _putenv_s(name, previous->c_str());
+#else
+    const char* name = "XDG_DATA_HOME";
+    const auto previous = PortPS5::Config::HostEnvironmentValue(name);
+    setenv(name, "/tmp/portps5_env_probe", 1);
+    EXPECT_EQ(DefaultSaveDataRoot(), std::filesystem::path("/tmp/portps5_env_probe") / "PortPS5" / "saves");
+    setenv(name, "", 1);
+    EXPECT_FALSE(PortPS5::Config::HostEnvironmentValue(name).has_value());
+    if (previous) setenv(name, previous->c_str(), 1); else unsetenv(name);
+#endif
 }
 
 } // namespace
