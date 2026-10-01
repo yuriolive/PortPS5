@@ -303,6 +303,87 @@ jobs:
             Write-Host "::warning::no shipping binaries found to hash under build/ci"
           }
 
+  # ── Driver suites on software Vulkan (Mesa lavapipe) ─────────────────
+  # Runs the ctest label `lavapipe` (libSceAgcDriver suites, Recorder,
+  # HostImport) on a CPU Vulkan device, so hosted CI covers the driver
+  # without a GPU or game data. Windows (not Linux) because the driver and
+  # its tests load vulkan-1.dll through SDL and build only with the pinned
+  # MinGW-w64 toolchain. Suites that cannot find a device GTEST_SKIP
+  # themselves; the "Verify lavapipe" step fails loudly instead, so a
+  # broken install can never turn this job into an all-skipped green.
+  driver_lavapipe:
+    name: Driver on Mesa lavapipe (software Vulkan)
+    runs-on: windows-2022
+    needs: changes
+    if: needs.changes.outputs.code_changed == 'true'
+    env:
+      # Pinned mesa-dist-win release (MSVC build; lavapipe is a plain DLL
+      # plus ICD manifest, so the MSVC runtime is irrelevant to MinGW code).
+      MESA_VERSION: "24.3.4"
+      VULKAN_RT_VERSION: "1.3.296.0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup MinGW + submodules + ccache env
+        uses: ./.github/actions/mingw-setup
+
+      - name: Restore ccache
+        # Restore only: build_and_test owns the cache entry, so this job
+        # reuses its warm objects without writing a second 1 GB entry.
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-ci-${{ hashFiles('cmake/toolchains/mingw-gcc15.cmake', 'cmake/toolchains/mingw-gcc15.sha256', 'CMakePresets.json', 'CMakeLists.txt') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-ci-
+            ccache-${{ runner.os }}-refs/heads/main-
+            ccache-${{ runner.os }}-
+
+      - name: Install Vulkan loader and Mesa lavapipe
+        shell: pwsh
+        run: |
+          # 1. Vulkan loader (vulkan-1.dll): the driver and the test fixtures
+          #    SDL_LoadObject it, so it must be on the system search path.
+          if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) {
+            $rt = "$env:TEMP\VulkanRT.exe"
+            Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/VulkanRT-$env:VULKAN_RT_VERSION-Installer.exe" -OutFile $rt
+            Write-Host "VulkanRT SHA256: $((Get-FileHash $rt -Algorithm SHA256).Hash.ToLowerInvariant())"
+            Start-Process -FilePath $rt -ArgumentList '/S' -Wait
+          }
+          # 2. Mesa lavapipe (CPU Vulkan ICD) from mesa-dist-win.
+          $archive = "$env:TEMP\mesa.7z"
+          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive
+          Write-Host "Mesa SHA256: $((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant())"
+          7z x $archive "-o$env:RUNNER_TEMP\mesa" -y | Out-Null
+          $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd*.json' | Select-Object -First 1
+          if ($null -eq $icd) { throw "lvp_icd manifest not found in the Mesa archive" }
+          # The manifest's library_path is relative to its own directory.
+          # VK_DRIVER_FILES makes the loader use only this ICD (hermetic).
+          "VK_DRIVER_FILES=$($icd.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure CMake (ci preset)
+        run: cmake --preset ci
+
+      - name: Build (ci preset)
+        run: cmake --build --preset ci
+
+      - name: Verify lavapipe is the visible device
+        shell: pwsh
+        run: |
+          # Fail loudly if the software device is missing: individual suites
+          # skip themselves without a device, which would hide the breakage.
+          if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) { throw "vulkan-1.dll not installed" }
+          if (-not (Test-Path $env:VK_DRIVER_FILES)) { throw "VK_DRIVER_FILES manifest missing: $env:VK_DRIVER_FILES" }
+          Write-Host "ICD manifest: $env:VK_DRIVER_FILES"
+
+      - name: Run driver tests (ctest --preset lavapipe)
+        # Bounded parallelism of 4 comes from the preset (execution.jobs).
+        # --no-tests=error: an empty label selection must not pass.
+        run: ctest --preset lavapipe --no-tests=error
+
   python_quality:
     name: Python quality (uv, ruff, pytest, coverage)
     runs-on: ubuntu-latest

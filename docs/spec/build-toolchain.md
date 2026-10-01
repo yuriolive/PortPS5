@@ -103,7 +103,7 @@ Build presets name the `relinker` and `libs` targets explicitly, so that patched
 |---|---|---|
 | `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, libc extras (`guest_lifecycle`, `guest_wide_io`, `guest_libc_extras`, `guest_heap_frontend`, `application_heap_default`), `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, AnyPS5 main's (merged PR #5) `amd64_only_*`, ported Kyty kernel/sync/event suites |
 | `golden` | hosted `recompiler-golden` | `recompiler_golden_tests` (coverage gate + wave32/64 replay) and `agc_shader_replay --golden` over `core/shader/recompiler/tests/golden/corpus/` (M1) |
-| `lavapipe` | hosted `driver-lavapipe` | driver tests that need a Vulkan device (M1) |
+| `lavapipe` | hosted `driver-lavapipe` (`ctest --preset lavapipe`) | driver tests that need a Vulkan device (M1) |
 | `stress` | local / nightly CI | multithreaded futex/umtx concurrency perturbation tests |
 | `local` | maintainer machine only | anything needing a hardware GPU or game data |
 
@@ -169,7 +169,7 @@ Tests are progressively consolidated from standalone single-function executables
   - [x] the AnyPS5 main (merged PR #5) relinker tests (PR #12, PR #56);
   - [x] the `APS5_EXPORT_FN` migration (PR #11);
   - [x] the toml++ pin (`3rdparty/tomlplusplus`);
-  - [ ] `lavapipe` label and job (`driver-lavapipe`): the label exists on the driver suites (`libSceAgcDriver/CMakeLists.txt:351-389`), the job does not (bean `portps5-ekx3`);
+  - [x] `lavapipe` label and job (`driver-lavapipe`): label on the driver suites (`libSceAgcDriver/CMakeLists.txt:351-389`), job `driver_lavapipe` in `ci.yml` (bean `portps5-ekx3`);
   - [ ] the xxHash pin: no xxHash is vendored under `3rdparty/` yet.
 - [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from AnyPS5 main (merged PR #5) (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
 - [ ] **M2:** `tools/regress` build target and its `local` label (bean `portps5-3m3u`). SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:46-48` since PR #20; the pin check against the HIDAPI PS5 driver is still open, bean `portps5-de24`).
