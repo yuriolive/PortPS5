@@ -36,6 +36,8 @@ Lavapipe performance; other driver suites.
 - Local lavapipe (Mesa 24.3.4, same pin as CI): 1600 parallel runs of the failing test and 150 repeats of all Recorder/HostImport tests at -j12 (about 7350 processes), zero crashes.
 - Lead (unconfirmed): fixture teardown (vkDestroyDevice/vkDestroyInstance/vulkan-1.dll unload with lavapipe threads alive); the crash is always after `[ RUN ]`, before `[ OK ]`, near the normal test duration.
 - CI now writes WER LocalDumps minidumps for lavapipe crashes and uploads them with agc_recorder_tests.exe (`lavapipe-crashdumps` artifact) for offline symbolization.
+- 2026-10-01, run 36928318025 (main@616bbd21): `RecorderTest.SyncThroughIgnoresUnwrittenRanges` segfaulted again, but the `lavapipe-crashdumps` artifact held only the exe: WER LocalDumps writes nothing on the hosted runner. GoogleTest has no SEH guard in this MinGW build (GTEST_HAS_SEH is MSVC/Borland-only), so the faulting thread is unknown: main or a driver worker. The reporter prints both ids.
+- `tests/CrashReporter.cpp` (linked into agc_recorder_tests) installs a last-chance unhandled-exception filter: prints code, fault address and the faulting thread's stack as module+RVA to stderr (visible in the ctest log), and writes a full minidump to `$CRASHDUMP_DIR`, which the existing upload step collects. Death test `CrashReporterDeathTest.WorkerThreadFaultIsReportedAndStillFatal` covers it (fails with the filter not installed).
 
 ## Summary of Changes
 
