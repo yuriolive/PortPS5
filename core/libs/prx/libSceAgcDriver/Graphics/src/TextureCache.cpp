@@ -5,7 +5,7 @@
 // Threading: used under the device graphics serialisation lock; not internally synchronised.
 // Spec: docs/spec/gpu-driver.md "Per-draw CPU cost".
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/BytesEqual.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/SnapshotValidity.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RenderCache.hpp"
@@ -60,8 +60,8 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
             break;
         }
         GuestMemory::CheckRange(reinterpret_cast<const void*>(resource.baseAddress), it->snapshot.size(), 1);
-        // Whole-texture revalidation on every lookup: BytesEqual is memcmp==0 semantics at SSE2 speed.
-        if (BytesEqual(reinterpret_cast<const void*>(resource.baseAddress), it->snapshot.data(), it->snapshot.size())) {
+        // Revalidation: skipped when the write tracker proves the range unchanged, else a whole-texture BytesEqual.
+        if (SnapshotStillValid(context.writeTracker, resource.baseAddress, it->snapshot, it->guestGeneration)) {
             auto result = it->texture;
             entries.splice(entries.end(), entries, it);
             return result;
@@ -81,11 +81,13 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
     const auto layers = resource.dimension == TextureDimension::k2DArray || resource.dimension == TextureDimension::kCube ? resource.depthOrLastArray + 1u : 1u;
     const auto bytes = ComputeSurfaceSize(mips, layers);
     Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "texture cache surface size overflow");
+    // Stamp BEFORE reading: a write racing the read then carries a newer generation and is caught on the next lookup.
+    const auto guestGeneration = StampSnapshot(context.writeTracker, resource.baseAddress, static_cast<std::size_t>(bytes));
     std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));
     GuestMemory::Read(resource.baseAddress, snapshot, 1);
     auto texture = std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot);
     const auto retained = snapshot.size() + texture->AllocationBytes();
-    entries.push_back({key, std::move(snapshot), texture});
+    entries.push_back({key, std::move(snapshot), texture, {}, 0, guestGeneration});
     retainedBytes += retained;
     trim();
     return texture;
