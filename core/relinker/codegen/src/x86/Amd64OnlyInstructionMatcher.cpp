@@ -1,3 +1,8 @@
+// Classifies AMD-only instructions and produces their Intel substitution:
+// same-length in-place rewrites (MOVNTSS/MOVNTSD, small SSE4a fields),
+// out-of-line stub bodies (large SSE4a fields and all register forms) or
+// Unsupported markers (MONITORX family). Stateless and thread-safe; it never
+// reads outside the instruction bytes it is handed.
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
@@ -6,6 +11,8 @@
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace Codegen {
 
@@ -17,13 +24,6 @@ Amd64OnlyMatch _unsupported(const Entry& entry, const std::size_t length) {
     return Amd64OnlyMatch{entry.Name, length, Amd64OnlyLowering::Unsupported, {}, {}, 0};
 }
 
-Amd64OnlyMatch _residual(const Entry& entry, const std::size_t length) {
-    // Why Residual and not Unsupported: register forms trap at runtime
-    // (libc SSE4a emulator, traced via debug.relinker.trace_sse4a) instead
-    // of failing the relink, per the relinker spec Target design.
-    return Amd64OnlyMatch{entry.Name, length, Amd64OnlyLowering::Residual, {}, {}, 0};
-}
-
 class Amd64OnlyInstructionMatcher : public IAmd64OnlyInstructionMatcher {
 public:
     [[nodiscard]] std::optional<Amd64OnlyMatch> Match(
@@ -31,11 +31,17 @@ public:
         std::size_t length
     ) const override;
 
+    [[nodiscard]] std::optional<Amd64OnlyMatch> MatchSequence(
+        std::span<const std::span<const std::uint8_t>> instructions,
+        std::span<const std::uint8_t> trailing
+    ) const override;
+
 private:
     Sse4aLowering _lowering;
 
     [[nodiscard]] Amd64OnlyMatch _matchMovnts(const DecodedInstruction& instr, const Entry& entry) const;
     [[nodiscard]] Amd64OnlyMatch _matchSse4a(const DecodedInstruction& instr, const Entry& entry, const Entry& registerFormEntry) const;
+    [[nodiscard]] static const char* _sse4aName(const Sse4aOperands& operands);
 };
 
 Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchMovnts(const DecodedInstruction& instr, const Entry& entry) const {
@@ -53,12 +59,40 @@ Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchMovnts(const DecodedInstructio
 
 Amd64OnlyMatch Amd64OnlyInstructionMatcher::_matchSse4a(const DecodedInstruction& instr, const Entry& entry, const Entry& registerFormEntry) const {
     const auto operands = DecodeSse4a(instr.Data, instr.Length);
-    if (operands.RegisterForm)
-        return _residual(registerFormEntry, instr.Length);
-    if (auto inPlace = _lowering.LowerInPlace(operands, instr.Length))
-        return Amd64OnlyMatch{entry.Name, instr.Length, Amd64OnlyLowering::InPlace, std::move(*inPlace), {}, 0};
+    // Register forms (0F 79) take length/index from a register, so they have
+    // no same-length rewrite and always go out of line. They are 4 or 5 bytes,
+    // shorter than the 5-byte jump to the stub for the REX-less encoding; the
+    // converter then moves the following instructions (see MatchSequence).
+    if (!operands.RegisterForm) {
+        if (auto inPlace = _lowering.LowerInPlace(operands, instr.Length))
+            return Amd64OnlyMatch{entry.Name, instr.Length, Amd64OnlyLowering::InPlace, std::move(*inPlace), {}, 0};
+    }
     auto body = _lowering.LowerOutOfLine(operands);
-    return Amd64OnlyMatch{entry.Name, instr.Length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset};
+    const auto& name = operands.RegisterForm ? registerFormEntry.Name : entry.Name;
+    return Amd64OnlyMatch{name, instr.Length, Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset};
+}
+
+const char* Amd64OnlyInstructionMatcher::_sse4aName(const Sse4aOperands& operands) {
+    if (operands.RegisterForm)
+        return operands.Insertq ? kInsertqRegisterForm.Name : kExtrqRegisterForm.Name;
+    return operands.Insertq ? kInsertq.Name : kExtrq.Name;
+}
+
+std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::MatchSequence(
+    const std::span<const std::span<const std::uint8_t>> instructions,
+    const std::span<const std::uint8_t> trailing
+) const {
+    if (instructions.empty())
+        return std::nullopt;
+    std::vector<Sse4aOperands> sequence;
+    for (const auto& bytes : instructions) {
+        const DecodedInstruction instr{bytes.data(), bytes.size()};
+        if (!instr.IsExtrq() && !instr.IsInsertq())
+            return std::nullopt;
+        sequence.push_back(DecodeSse4a(instr.Data, instr.Length));
+    }
+    auto body = _lowering.LowerOutOfLine(std::span<const Sse4aOperands>(sequence), trailing);
+    return Amd64OnlyMatch{_sse4aName(sequence.front()), instructions.front().size(), Amd64OnlyLowering::Trampoline, {}, std::move(body.Bytes), body.ReturnBranchOffset};
 }
 
 std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
