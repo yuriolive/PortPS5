@@ -299,3 +299,28 @@ portps5_add_gtest(pad_slot_table_tests
     LABELS
         unit
 )
+
+portps5_add_gtest(pad_output_export_tests
+    SOURCES
+        input/PadOutputExportTests.cpp
+    LIBRARIES
+        libScePad libkernel libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+        ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)
+
+portps5_add_gtest(pad_sdl_build_tests
+    SOURCES
+        input/PadSdlBuildTests.cpp
+    LIBRARIES
+        SDL2-static
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)

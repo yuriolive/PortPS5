@@ -94,6 +94,9 @@ int PadManager::Close(int handle) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     slot.opened = false;
+    // A closed handle must not leave the host pad rumbling or showing a stale
+    // light bar / trigger effect: drop back to defaults and let the poller see it.
+    ResetOutput(slot);
     return PAD_OK;
 }
 
@@ -165,14 +168,7 @@ int PadManager::ReadState(int handle, PadData* data) {
     slot.lastData.analog_buttons_r2 = static_cast<std::uint8_t>(
         merged.analogTriggers ? std::max<int>(merged.triggers[1], handle == 1 && (hostInputState.buttons & 0x200) ? 255 : 0)
                               : kbTrigger(0x200));
-    if (handle == 1 && (hostInputState.touchLeft || hostInputState.touchRight)) {
-        slot.lastData.buttons |= 0x100000;
-        slot.lastData.touch_data_touch_num = 1;
-        slot.lastData.touch_data_touch0_x = hostInputState.touchRight ? 1440 : 480;
-        slot.lastData.touch_data_touch0_y = 471;
-    } else {
-        slot.lastData.touch_data_touch_num = 0;
-    }
+    FillMotionAndTouch(slot, handle == 1 ? &hostInputState : nullptr, currentProcessTime);
 
     slot.lastData.connected = slot.connected;
     slot.lastData.connected_count = slot.connectedCount;
@@ -220,7 +216,10 @@ int PadManager::SetMotionSensorState(int handle, bool enable) {
     if (!slot.opened) {
         return PAD_ERROR_INVALID_HANDLE;
     }
-    slot.motionSensorEnabled = enable;
+    if (slot.output.motionEnabled != enable) {
+        slot.output.motionEnabled = enable;
+        ++slot.output.sequence;
+    }
     return PAD_OK;
 }
 
@@ -238,6 +237,11 @@ int PadManager::SetVibration(int handle, const PadVibrationParam* param) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     slot.vibration = *param;
+    if (slot.output.vibrationLarge != param->large_motor || slot.output.vibrationSmall != param->small_motor) {
+        slot.output.vibrationLarge = param->large_motor;
+        slot.output.vibrationSmall = param->small_motor;
+        ++slot.output.sequence;
+    }
     return PAD_OK;
 }
 
@@ -255,6 +259,9 @@ int PadManager::SetLightBar(int handle, const PadLightBarParam* param) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     slot.lightBar = *param;
+    slot.output.lightBarValid = true;
+    slot.output.lightBar = {param->r, param->g, param->b};
+    ++slot.output.sequence;
     return PAD_OK;
 }
 
@@ -269,7 +276,160 @@ int PadManager::ResetLightBar(int handle) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     slot.lightBar = {};
+    slot.output.lightBarValid = false;
+    slot.output.lightBar = {};
+    ++slot.output.sequence;
     return PAD_OK;
+}
+
+int PadManager::CheckOpenHandle(int handle) {
+    if (handle < 1 || handle > PAD_MAX_SLOTS) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    std::lock_guard lock(mutex);
+    if (failure) std::rethrow_exception(failure);
+    return slots[static_cast<std::size_t>(handle - 1)].opened ? PAD_OK : PAD_ERROR_INVALID_HANDLE;
+}
+
+int PadManager::ResetOrientation(int handle) {
+    if (handle < 1 || handle > PAD_MAX_SLOTS) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    std::lock_guard lock(mutex);
+    if (failure) std::rethrow_exception(failure);
+    auto& slot = slots[static_cast<std::size_t>(handle - 1)];
+    if (!slot.opened) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    Pad::ResetFusion(slot.fusion);
+    return PAD_OK;
+}
+
+int PadManager::SetVibrationMode(int handle, int mode) {
+    if (handle < 1 || handle > PAD_MAX_SLOTS) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    // 0 = desktop (USB) layout, 1 = embedded controller layout; both drive the
+    // same host rumble motors, so the value is validated and otherwise ignored.
+    if (mode != 0 && mode != 1) {
+        return PAD_ERROR_INVALID_ARG;
+    }
+    std::lock_guard lock(mutex);
+    if (failure) std::rethrow_exception(failure);
+    if (!slots[static_cast<std::size_t>(handle - 1)].opened) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    return PAD_OK;
+}
+
+int PadManager::SetTriggerEffect(int handle, const Pad::TriggerEffectUpdate& update) {
+    if (handle < 1 || handle > PAD_MAX_SLOTS) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    std::lock_guard lock(mutex);
+    if (failure) std::rethrow_exception(failure);
+    auto& slot = slots[static_cast<std::size_t>(handle - 1)];
+    if (!slot.opened) {
+        return PAD_ERROR_INVALID_HANDLE;
+    }
+    for (std::size_t trigger = 0; trigger < 2; ++trigger) {
+        if ((update.mask & (1u << trigger)) != 0) slot.output.trigger[trigger] = update.request[trigger];
+    }
+    if (update.mask != 0) {
+        slot.output.triggerTouched = true;
+        ++slot.output.sequence;
+    }
+    return PAD_OK;
+}
+
+bool PadManager::FetchOutput(int slot, std::uint32_t* seenSequence, PadOutputState* out) {
+    if (slot < 0 || slot >= PAD_MAX_SLOTS || seenSequence == nullptr || out == nullptr) return false;
+    std::lock_guard lock(mutex);
+    const auto& s = slots[static_cast<std::size_t>(slot)];
+    if (*seenSequence == s.output.sequence) return false;
+    *seenSequence = s.output.sequence;
+    *out = s.output;
+    return true;
+}
+
+/**
+ * Returns a slot's output request to its defaults (no rumble, default light
+ * bar, no trigger effect, motion on) and bumps the sequence so the window thread
+ * pushes the neutral state to the host pad. Caller holds `mutex`.
+ */
+void PadManager::ResetOutput(PadSlotState& slot) {
+    const std::uint32_t next = slot.output.sequence + 1;
+    slot.output = PadOutputState{};
+    slot.output.sequence = next;
+    slot.vibration = {};
+    slot.lightBar = {};
+}
+
+/**
+ * Fills the motion, orientation and touch fields of `slot.lastData`.
+ *
+ * Motion is live only when the controller delivered sensor data and the guest
+ * has the sensors enabled; otherwise the pad reports the rest pose and the
+ * fusion estimate is reset so a later enable does not start from stale state.
+ * Touch fingers come from the controller's touchpad; when none is down, slot 0
+ * falls back to the keyboard TouchLeft/TouchRight emulation (`host`). Caller
+ * holds `mutex`; `now` is the process time in microseconds.
+ */
+void PadManager::FillMotionAndTouch(PadSlotState& slot, const PadInputState* host, std::uint64_t now) {
+    PadData& d = slot.lastData;
+    const bool live = slot.controllerPresent && slot.controllerInput.hasMotion && slot.output.motionEnabled;
+    std::array<float, 3> accel = Pad::RestAcceleration();
+    std::array<float, 3> gyro{0.0f, 0.0f, 0.0f};
+    if (live) {
+        accel = slot.controllerInput.accel;
+        gyro = slot.controllerInput.gyro;
+        const float dt = slot.lastFuseTime != 0 && now > slot.lastFuseTime ? static_cast<float>(now - slot.lastFuseTime) * 1e-6f : 0.0f;
+        Pad::FuseMotion(slot.fusion, dt, accel, gyro);
+    } else {
+        Pad::ResetFusion(slot.fusion);
+    }
+    slot.lastFuseTime = now;
+    d.orientation_x = slot.fusion.q.x;
+    d.orientation_y = slot.fusion.q.y;
+    d.orientation_z = slot.fusion.q.z;
+    d.orientation_w = slot.fusion.q.w;
+    const auto g = Pad::ToGravityUnits(accel);
+    d.acceleration_x = g[0];
+    d.acceleration_y = g[1];
+    d.acceleration_z = g[2];
+    d.angular_velocity_x = gyro[0];
+    d.angular_velocity_y = gyro[1];
+    d.angular_velocity_z = gyro[2];
+
+    d.touch_data_touch0_x = d.touch_data_touch0_y = d.touch_data_touch1_x = d.touch_data_touch1_y = 0;
+    d.touch_data_touch0_id = d.touch_data_touch1_id = 0;
+    std::uint8_t touchNum = 0;
+    if (slot.controllerPresent) {
+        slot.touchIds.Update({slot.controllerInput.touch[0].active, slot.controllerInput.touch[1].active});
+        for (std::size_t i = 0; i < 2; ++i) {
+            const Pad::PadTouchPoint& tp = slot.controllerInput.touch[i];
+            if (!tp.active) continue;
+            if (touchNum == 0) {
+                d.touch_data_touch0_x = tp.x;
+                d.touch_data_touch0_y = tp.y;
+                d.touch_data_touch0_id = slot.touchIds.ids[i];
+            } else {
+                d.touch_data_touch1_x = tp.x;
+                d.touch_data_touch1_y = tp.y;
+                d.touch_data_touch1_id = slot.touchIds.ids[i];
+            }
+            ++touchNum;
+        }
+    } else {
+        slot.touchIds.Update({false, false});
+    }
+    if (touchNum == 0 && host != nullptr && (host->touchLeft || host->touchRight)) {
+        d.buttons |= 0x100000;
+        touchNum = 1;
+        d.touch_data_touch0_x = host->touchRight ? 1440 : 480;
+        d.touch_data_touch0_y = 471;
+    }
+    d.touch_data_touch_num = touchNum;
 }
 
 void PadManager::PublishInput(const PadInputState& input) {
@@ -345,6 +505,12 @@ void PadManager::TestResetSlot(int slot) {
     s.controllerPresent = false;
     s.controllerInput = {};
     s.lastTimestamp = 0;
+    s.output = PadOutputState{};
+    s.vibration = {};
+    s.lightBar = {};
+    s.fusion = {};
+    s.touchIds = {};
+    s.lastFuseTime = 0;
     // Slot 0 is the always-present keyboard/mouse pad (count 1); others start at 0.
     s.connected = (slot == 0);
     s.connectedCount = static_cast<std::uint8_t>(slot == 0 ? 1 : 0);
@@ -375,6 +541,10 @@ extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {
 
 extern "C" void PadPublishControllerInput_nid_postfix(int slot, const PadInputState& input) {
     Pad::PadManager::Get().PublishControllerInput(slot, input);
+}
+
+extern "C" bool PadFetchOutput_nid_postfix(int slot, std::uint32_t* seenSequence, PadOutputState* out) {
+    return Pad::PadManager::Get().FetchOutput(slot, seenSequence, out);
 }
 
 extern "C" void PadSetControllerConnected_nid_postfix(int slot, bool connected) {
