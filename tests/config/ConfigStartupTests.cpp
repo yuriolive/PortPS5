@@ -13,6 +13,7 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#include <stdlib.h>
 #include <windows.h>
 #endif
 
@@ -28,7 +29,9 @@ protected:
     // Config scans the host environment, so inherited profiling must not affect fixtures.
     void SetDebug(const char* value) {
 #ifdef _WIN32
-        ASSERT_NE(SetEnvironmentVariableA("PORTPS5_DEBUG", value), 0);
+        // Config reads the CRT `_environ` copy, which SetEnvironmentVariableA does not update;
+        // _putenv_s does. An empty value removes the variable.
+        ASSERT_EQ(_putenv_s("PORTPS5_DEBUG", value ? value : ""), 0);
 #else
         ASSERT_EQ(value ? ::setenv("PORTPS5_DEBUG", value, 1) : ::unsetenv("PORTPS5_DEBUG"), 0);
 #endif

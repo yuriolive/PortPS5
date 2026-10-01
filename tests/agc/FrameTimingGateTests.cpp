@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -49,6 +50,16 @@ TEST(FrameTimingGate, PrintIsSilentWithoutProfileConfig) {
     timing.Print(1, 0, 0, FrameTiming::Clock::now(), FrameTiming::Clock::duration::zero());
     const std::string out = testing::internal::GetCapturedStdout();
     EXPECT_TRUE(out.empty()) << "unexpected report: " << out;
+}
+
+// Invariant: gating the report must not gate the submission-lineage check. A frame that reaches
+// the flip path with no submission/flip lineage is a driver bug and must still fail fast with the
+// report off (review finding on #71). Precondition: loader uninitialised, so the gate is closed.
+TEST(FrameTimingGate, IncompleteLineageStillThrowsWhenReportIsOff) {
+    FrameTiming timing(1);  // no IncludeSubmission / SetFlip
+    // The exception is uncatchable in this binary (it links libc.prx, whose shared unwinder replaces the
+    // exe's own); the test-suite convention for host fatal paths is a death test matching what().
+    EXPECT_DEATH(timing.Print(1, 0, 0, FrameTiming::Clock::now(), FrameTiming::Clock::duration::zero()), "incomplete submission lineage");
 }
 
 }  // namespace

@@ -32,12 +32,21 @@ namespace AgcDriver {
 // alone costs milliseconds per frame, so it is a profiling aid, not default output. It is
 // enabled by `[debug] profile = ["gpu"]` (docs/spec/configuration.md). Metric collection
 // itself stays on; only the format-and-write step is skipped.
+/**
+ * @brief Reports whether the per-frame [FrameTiming] text report is enabled.
+ * @param debug Resolved `[debug]` configuration.
+ * @return True when `debug.profile` contains `gpu`.
+ */
 inline bool FrameTimingReportEnabled(const PortPS5::Config::DebugConfig& debug) {
     return debug.profile.count(PortPS5::Config::ProfileCategory::Gpu) != 0;
 }
 
 // Same, reading the process-wide resolved config. False before the loader is initialized
 // (unit tests, early boot), so nothing is printed unless profiling was explicitly requested.
+/**
+ * @brief Same as above, reading the process-wide resolved configuration.
+ * @return False until the config loader is initialised, otherwise the profile setting.
+ */
 inline bool FrameTimingReportEnabled() {
     return PortPS5_Config_Loader_IsInitialized_nid_no_patch() && FrameTimingReportEnabled(PortPS5_Config_Loader_Get_nid_no_patch().debug);
 }
@@ -96,9 +105,11 @@ public:
     }
 
     void Print(std::uint32_t outputHandle, std::int32_t buffer, std::int64_t argument, Clock::time_point finished, Clock::duration interval) {
-        if (!FrameTimingReportEnabled()) return;
         std::lock_guard lock(mutex);
+        // The lineage check is the flip path's only submission-ordering invariant, so it runs even when
+        // the report is off; only the formatting and the write are skipped.
         if (firstSerial == 0 || flipSerial == 0) throw std::runtime_error("Frame timing: incomplete submission lineage");
+        if (!FrameTimingReportEnabled()) return;
         std::ostringstream output;
         output.imbue(std::locale::classic());
         output << std::fixed << std::setprecision(3);
