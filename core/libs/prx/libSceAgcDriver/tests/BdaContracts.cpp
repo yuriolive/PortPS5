@@ -1,7 +1,9 @@
 // core/libs/prx/libSceAgcDriver/tests/BdaContracts.cpp
 // Host-only contract tests for the buffer-device-address (BDA) shader ABI: the SPIR-V emitter's BDA
 // target validation and the recompile-request serializer must reject malformed targets with a clear
-// error instead of emitting modules the driver would mis-bind. Runs without a Vulkan device.
+// error instead of emitting modules the driver would mis-bind. Runs without a Vulkan device, before
+// the device checks in BdaDevice.cpp; each contract violation (signature, version, target) is rejected
+// and tested with its own message.
 // Targets mirror VulkanDevice::Target: Vulkan 1.3 with SPIR-V 1.3 (docs/spec/gpu-driver.md).
 
 #include "BdaShader.hpp"
@@ -54,7 +56,12 @@ void RunBdaContractTests() {
     const auto encoded = serializer.Serialize(request);
     const auto decoded = serializer.Deserialize(encoded);
     AgcDriver::Graphics::Require(decoded.request.target.bdaAbiVersion == BdaAbi::Version && decoded.request.target.supportedCapabilities.size() == capabilities.size() && decoded.request.target.supportedExtensions[1] == extensions[1], "BDA request serialization changed target contract");
-    auto invalid = encoded;
-    invalid[0] = invalid[0] == 'A' ? 'B' : 'A';
-    reject([&] { static_cast<void>(serializer.Deserialize(invalid)); }, "serialization version");
+    // Deserialize checks the 'APS5' signature (0x41505335) before the version, so each rejection
+    // needs its own blob. Little-endian u32 pairs, base64-encoded:
+    //   signature 0x41505336 (wrong) + version 2  -> "invalid ... signature"
+    //   signature 0x41505335 (right) + version 99 -> "unsupported ... serialization version"
+    const std::string badSignature = "NlNQQQIAAAA=";
+    const std::string badVersion = "NVNQQWMAAAA=";
+    reject([&] { static_cast<void>(serializer.Deserialize(badSignature)); }, "signature");
+    reject([&] { static_cast<void>(serializer.Deserialize(badVersion)); }, "serialization version");
 }

@@ -1,3 +1,9 @@
+// core/libs/prx/libSceSysmodule/Export.cpp
+// libSceSysmodule: bookkeeping of "loaded" system modules by numeric id. Nothing is loaded for real:
+// the PRX replacements are linked by the relinker, so Load/Unload only keep a reference count per id
+// (under one mutex) and answer IsLoaded from it. Ids missing from kModuleTable are accepted and
+// logged so a title that probes newer modules keeps running. Exports are APS5_VABI.
+
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -92,6 +98,7 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
 
 extern "C" {
 
+/** Fills unwind info for the module containing `addr`. Returns 0; throws when the address is in no module (pre-existing). */
 int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info) {
     (void)flags;
     if (!fillModuleInfoForUnwind(addr, info)) {
@@ -100,6 +107,7 @@ int APS5_VABI sceSysmoduleGetModuleInfoForUnwind(std::uint64_t addr, int flags, 
     return 0;
 }
 
+/** Returns 0 when `id` is loaded or unknown to the table (logged), 0x80A90002 when known but not loaded. */
 int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleIsLoaded: invalid id 0");
@@ -117,6 +125,7 @@ int APS5_VABI sceSysmoduleIsLoaded(std::uint16_t id) {
     return 0;
 }
 
+/** Marks `id` loaded (reference counted). Unknown ids are logged and accepted. Always returns 0 (id 0 throws, pre-existing). */
 int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleLoadModule: invalid id 0");
@@ -131,6 +140,7 @@ int APS5_VABI sceSysmoduleLoadModule(std::uint16_t id) {
     return 0;
 }
 
+/** Internal variant of LoadModule that also reports 0 through `ret`. Throws for id 0 or an unknown id (pre-existing). */
 int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, void* argv, std::uint64_t unk, int* ret) {
     (void)argc;
     (void)argv;
@@ -149,12 +159,16 @@ int APS5_VABI sceSysmoduleLoadModuleInternalWithArg(std::uint32_t id, int argc, 
     return 0;
 }
 
+/** Drops one reference to `id`. Returns 0; unknown ids are logged and treated as a no-op; 0x80A90003 when a known id is not loaded. */
 int APS5_VABI sceSysmoduleUnloadModule(std::uint16_t id) {
     if (id == 0) {
         throw std::runtime_error("sceSysmoduleUnloadModule: invalid id 0");
     }
     if (!findModuleName(id)) {
-        throw std::runtime_error(std::string("sceSysmoduleUnloadModule: unknown id ") + std::to_string(id));
+        // Same policy as sceSysmoduleLoadModule/IsLoaded: an id the project does not know was accepted
+        // on load, so its unload is a no-op (it must not throw across the APS5_VABI boundary).
+        APS5_LOG_OUT("unknown id: %u", static_cast<unsigned>(id));
+        return 0;
     }
     std::lock_guard<std::mutex> lock(gMutex);
     auto it = gLoadCount.find(id);

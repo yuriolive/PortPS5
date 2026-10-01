@@ -1,3 +1,7 @@
+// core/shader/recompiler/SpirvBackend/src/SpirvFlowEmitter.cpp
+// Emits the structured control flow of a program (selections, loops, returns) and dispatches each IR instruction to
+// its emitter. Loop continue targets suppress the BDA invocation stop so the back edge stays reachable. Single-threaded
+// emission.
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include <spirv/unified1/spirv.hpp>
@@ -69,6 +73,14 @@ const BlockInfo* BlockInfoFor(const IrProgram& program, const IrBlock* block) {
 void EmitReturnTerminator(SpirvValueEmitContext& ctx) {
     EmitKillIfPixelValidMaskInactive(ctx.state);
     ctx.state.module.AddFunction(spv::OpReturn);
+}
+
+// Whether `block` (a BlockInfo id) is the continue target of some structured loop.
+bool IsContinueTarget(const IrProgram& program, std::uint32_t block) {
+    for (const auto& info : program.Metadata().blockInfo) {
+        if (info.terminator.loopHeader && info.terminator.continueBlock == block) return true;
+    }
+    return false;
 }
 
 std::uint32_t EmitBranchCondition(SpirvValueEmitContext& ctx, const BlockInfo& info) {
@@ -537,9 +549,15 @@ void EmitControlFlow(SpirvValueEmitContext& context, StructuredFunctionState& fu
         if (info == nullptr) {
             context.Fail("structured control flow block has no terminator metadata");
         }
+        // A continue construct must reach its back edge (the back-edge block post-dominates the continue target), so a
+        // failed BDA lookup in the continue target's instructions does not return from the invocation there; the
+        // fault is recorded all the same.
+        const bool stops = state.bdaStopsInvocations;
+        state.bdaStopsInvocations = stops && !IsContinueTarget(program, info->id);
         EmitStructuredBlock(context, functionState, block);
         functionState.blockExitLabels.emplace(block, state.currentLabel);
         EmitStructuredTerminator(context, program, *info);
+        state.bdaStopsInvocations = stops;
     }
     PatchStructuredPhis(context, functionState);
 }

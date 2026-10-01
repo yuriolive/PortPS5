@@ -47,7 +47,8 @@
       "description": "Hosted CI (inherits dev, warnings as errors for PortPS5 targets)",
       "inherits": "dev",
       "cacheVariables": {
-        "PORTPS5_COMPILE_WARNING_AS_ERROR": "ON"
+        "PORTPS5_COMPILE_WARNING_AS_ERROR": "ON",
+        "PORTPS5_REQUIRE_FFMPEG": "ON"
       }
     },
     {
@@ -96,7 +97,8 @@
       "description": "Runs all unit tests in CI",
       "configurePreset": "ci",
       "execution": {
-        "jobs": 4
+        "jobs": 4,
+        "timeout": 300
       },
       "output": {
         "outputOnFailure": true
@@ -135,6 +137,23 @@
       "filter": {
         "include": {
           "label": "^slow$"
+        }
+      }
+    },
+    {
+      "name": "lavapipe",
+      "displayName": "Driver Tests on Lavapipe",
+      "description": "Runs lavapipe-labeled driver tests on a software Vulkan device (hosted driver-lavapipe job). Suites without a device skip themselves",
+      "configurePreset": "ci",
+      "execution": {
+        "jobs": 4
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^lavapipe$"
         }
       }
     },

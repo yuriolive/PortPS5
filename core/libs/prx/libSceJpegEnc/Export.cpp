@@ -14,9 +14,12 @@
 // through Unsupported() instead of throwing, because the shared unwinder lets
 // guest catch(...) swallow host exceptions.
 //
-// Guest pointers are untrusted: null/alignment/size arithmetic are validated,
-// but no guest-memory range-validation API is exported to PRXs yet (see the
-// Open questions of docs/spec/image-codecs.md).
+// Guest pointers are untrusted: null/alignment/size arithmetic are validated
+// and every guest range the host reads or writes (param structs, handle
+// header, work memory, the pixel buffer, the output JPEG and output_info) goes
+// through GuestMemoryValidation first. An unreadable or unwritable range
+// returns SCE_JPEG_ENC_ERROR_INVALID_ADDR (INVALID_HANDLE for a handle that
+// does not point at readable guest memory) instead of faulting in the host.
 //
 // Ported from AnyPS5 44208261, 16290424, 98a5228c, aa56049f, aad41aa9,
 // 6ef4ae3c and f9f02e37 (see the PR description for the per-commit review).
@@ -31,6 +34,7 @@
 #include "Decoder/Jpeg.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestMemoryValidation.hpp"
 
 // Guest-visible layouts; a size change here silently breaks titles.
 static_assert(sizeof(JpegEncCreateParam) == 0x8);
@@ -78,8 +82,17 @@ struct Encoder {
     Encoder* self;
 };
 
+// True when the host may read/write the whole guest range (see GuestMemoryValidation.hpp).
+bool guestReadable(const void* pointer, std::size_t bytes) {
+    return GuestMemoryValidation::CheckReadable(pointer, bytes) == GuestMemoryValidation::Status::Ok;
+}
+bool guestWritable(const void* pointer, std::size_t bytes) {
+    return GuestMemoryValidation::CheckWritable(pointer, bytes) == GuestMemoryValidation::Status::Ok;
+}
+
 std::int32_t validateCreateParam(const JpegEncCreateParam* param) {
     if (!param) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    if (!guestReadable(param, sizeof(JpegEncCreateParam))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (param->size != sizeof(JpegEncCreateParam)) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
     if (param->attr != ATTRIBUTE_NONE) return SCE_JPEG_ENC_ERROR_INVALID_PARAM;
     return 0;
@@ -88,6 +101,8 @@ std::int32_t validateCreateParam(const JpegEncCreateParam* param) {
 Encoder* toEncoder(void* handle) {
     const auto address = reinterpret_cast<std::uintptr_t>(handle);
     if (address == 0 || address % HANDLE_ALIGNMENT != 0) return nullptr;
+    // A forged handle must not make the host fault while reading the tag.
+    if (!guestReadable(handle, sizeof(Encoder))) return nullptr;
     auto* encoder = reinterpret_cast<Encoder*>(handle);
     return encoder->self == encoder ? encoder : nullptr;
 }
@@ -134,6 +149,16 @@ std::int32_t validateEncodeParam(const JpegEncEncodeParam* param) {
     default:
         return SCE_JPEG_ENC_ERROR_INVALID_PARAM;
     }
+}
+
+// Bytes of the guest image the packing loop reads: (height-1) pitches plus the
+// last row's payload. validateEncodeParam already proved this is <= image_size
+// and that the arithmetic fits in uint64 (height <= 0xFFFF, pitch <= 0xFFFFFFF).
+std::uint64_t imageReadExtent(const JpegEncEncodeParam& param) {
+    std::uint64_t rowBytes = param.image_width;
+    if (param.pixel_format == PIXEL_FORMAT_R8G8B8A8 || param.pixel_format == PIXEL_FORMAT_B8G8R8A8) rowBytes *= 4;
+    else if (param.pixel_format == PIXEL_FORMAT_Y8U8Y8V8) rowBytes = ((rowBytes + 1) & ~std::uint64_t{1}) * 2;
+    return static_cast<std::uint64_t>(param.image_height - 1) * param.image_pitch + rowBytes;
 }
 
 std::uint8_t clampToByte(float value) {
@@ -213,6 +238,8 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
     if (!memory) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (memory_size < MEMORY_SIZE) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
     if (!handle) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    // The header is written inside the first MEMORY_SIZE bytes (alignment padding included).
+    if (!guestWritable(memory, MEMORY_SIZE) || !guestWritable(handle, sizeof(void*))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     // The work area is exactly MEMORY_SIZE; aligning up to 32 bytes never
     // pushes the 8-byte header outside it for any size >= MEMORY_SIZE.
     const auto address = reinterpret_cast<std::uintptr_t>(memory);
@@ -227,7 +254,7 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
 // null, misaligned, forged or already-deleted handles.
 int32_t APS5_VABI sceJpegEncDelete(void* handle) noexcept {
     Encoder* encoder = toEncoder(handle);
-    if (!encoder) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
+    if (!encoder || !guestWritable(handle, sizeof(Encoder))) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
     encoder->self = nullptr;  // invalidates the tag so a second Delete fails
     return 0;
 }
@@ -237,8 +264,12 @@ int32_t APS5_VABI sceJpegEncDelete(void* handle) noexcept {
 // output buffer too small) or INVALID_PARAM. MJPEG mode and restart intervals abort.
 int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param, JpegEncOutputInfo* output_info) noexcept {
     if (!toEncoder(handle)) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
+    if (param && !guestReadable(param, sizeof(JpegEncEncodeParam))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     const std::int32_t result = validateEncodeParam(param);
     if (result != 0) return result;
+    // Argument arithmetic is now sound, so the extents below cannot wrap.
+    if (!guestReadable(param->image, static_cast<std::size_t>(imageReadExtent(*param)))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    if (output_info && !guestWritable(output_info, sizeof(JpegEncOutputInfo))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     // Truly unsupported modes: abort loudly rather than emit a wrong stream.
     if (param->encode_mode == ENCODE_MODE_MJPEG) Unsupported("sceJpegEncEncode: MJPEG encode mode is not implemented");
     if (param->restart_interval > 0) Unsupported("sceJpegEncEncode: restart interval is not implemented");
@@ -252,6 +283,8 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
     if (!jpeg) Unsupported("sceJpegEncEncode: shared JPEG encoder failed");
     if (jpeg->size() > param->jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
+    // Only the bytes actually produced must be writable; jpeg_size is the title's capacity claim.
+    if (!guestWritable(param->jpeg, jpeg->size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     std::memcpy(param->jpeg, jpeg->data(), jpeg->size());
     if (output_info) {
         output_info->size = static_cast<std::uint32_t>(jpeg->size());

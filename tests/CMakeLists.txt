@@ -6,6 +6,19 @@ if(NOT BUILD_TESTING)
 endif()
 
 # Kernel event queue lifetime and race condition verification (ported from KytyPS5)
+# [FrameTiming] report gate: the report is a profiling aid (debug.profile = ["gpu"]), not default output.
+portps5_add_gtest(agc_frame_timing_gate_tests
+    SOURCES
+        agc/FrameTimingGateTests.cpp
+        config/ConfigStartupTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 portps5_add_gtest(kernel_equeue_lifetime_tests
     SOURCES
         kernel/EventQueueLifetimeTests.cpp
@@ -79,6 +92,71 @@ portps5_add_gtest(memory_tracker_tests
         unit
 )
 
+# Guest-pointer range validation API (GuestMemoryValidation.hpp)
+portps5_add_gtest(guest_memory_validation_tests
+    SOURCES
+        memory/GuestMemoryValidationTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Literal SCE error values exposed by DirectMemory.hpp (header-only, runs on any host)
+portps5_add_gtest(kernel_error_value_tests
+    SOURCES
+        kernel/KernelErrorValuesTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# GuestAllocations::Mutation::Unmap: ranges spanning several allocations (FreeBSD munmap semantics)
+portps5_add_gtest(guest_allocations_unmap_tests
+    SOURCES
+        memory/GuestAllocationsUnmapTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Guest-visible direct-memory exports: query, available size, argument hardening
+portps5_add_gtest(direct_memory_export_tests
+    SOURCES
+        memory/DirectMemoryExportTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Mapping placement (hint, NO_OVERWRITE) and munmap spanning, end to end through the exports
+portps5_add_gtest(memory_mapping_tests
+    SOURCES
+        memory/MemoryMappingTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Direct memory physical pool and SceKernelMemoryPool API verification
 portps5_add_gtest(direct_memory_pool_tests
     SOURCES
@@ -130,6 +208,20 @@ portps5_add_gtest(filesystem_sandbox_path_tests
         unit
 )
 
+# /savedata0 per-title save container mount + file I/O + sandbox containment
+portps5_add_gtest(filesystem_savedata_mount_tests
+    SOURCES
+        filesystem/SaveDataMountTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Offline network stack verification (sockets, options, epoll, DNS resolver stubs)
 portps5_add_gtest(offline_net_stack_tests
     SOURCES
@@ -164,6 +256,113 @@ portps5_add_gtest(avplayer_exports_tests
         avplayer/AvPlayerStateMachineTests.cpp
     LIBRARIES
         libSceAvPlayer
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Headless message dialog state machine (transitions, error codes, 44-byte result, auto-answer policy)
+portps5_add_gtest(msgdialog_tests
+    SOURCES
+        dialogs/MsgDialogTests.cpp
+    LIBRARIES
+        libSceMsgDialog
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# H.264 decoding for libSceVideodec2: the FFmpeg wrapper on synthetic I_PCM/P_Skip streams, the guest ABI
+# (layouts, error codes, NV12 layout), and the FFmpeg licence gate script on fixture configure outputs.
+portps5_add_gtest(h264_decoder_tests
+    SOURCES
+        video/H264DecoderTests.cpp
+    LIBRARIES
+        portps5_h264_decoder
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}/video
+    LABELS
+        unit
+)
+
+portps5_add_gtest(videodec2_tests
+    SOURCES
+        video/Videodec2Tests.cpp
+    LIBRARIES
+        libSceVideodec2
+        portps5_h264_decoder
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/video
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Small PRX modules: PlayGo (chunk set, codes), ConvertKeycode, Sysmodule unload policy
+portps5_add_gtest(playgo_tests
+    SOURCES
+        modules/PlayGoTests.cpp
+    LIBRARIES
+        libScePlayGo
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+foreach(case
+        "lgpl_accepted;lgpl;lgpl;PASS"
+        "gpl_rejected;gpl;lgpl;FAIL;GPL"
+        "lgplv3_rejected;lgplv3;lgpl;FAIL;LGPLV3"
+        "gpl_header_rejected;lgpl;gpl;FAIL;GPL"
+        "nonfree_rejected;lgpl;nonfree;FAIL;NONFREE")
+    list(GET case 0 name)
+    list(GET case 1 mak)
+    list(GET case 2 hdr)
+    list(GET case 3 expect)
+    add_test(NAME ffmpeg_license_gate_${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DCONFIG_MAK=${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/fixtures/${mak}.mak
+            -DCONFIG_H=${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/fixtures/${hdr}.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/PortPS5FFmpegLicenseCheck.cmake)
+    set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES LABELS unit)
+    if(expect STREQUAL "FAIL")
+        # Match the specific rejection so a missing fixture or unrelated CMake error cannot pass.
+        list(GET case 4 reject_flag)
+        set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES
+            PASS_REGULAR_EXPRESSION "FFmpeg configure enabled CONFIG_${reject_flag}[;]")
+    endif()
+endforeach()
+
+portps5_add_gtest(convert_keycode_tests
+    SOURCES
+        modules/ConvertKeycodeTests.cpp
+    LIBRARIES
+        libSceConvertKeycode
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+portps5_add_gtest(sysmodule_tests
+    SOURCES
+        modules/SysmoduleTests.cpp
+    LIBRARIES
+        libSceSysmodule
         libc
     INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -244,6 +443,19 @@ portps5_add_test(progress_unit_tests
         -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tools -p "test_progress.py" -v
 )
 
+# Cross-prx named-import check: fails when a prx imports a verbatim/mangled
+# name that the patched provider (usually libc.prx) does not export, which
+# surfaces at runtime as GetLastError 127 on load. Regression for the
+# libScePad -> libc `Unsupported` break that stopped the Dreaming Sarah boot.
+# Reads only the built patched libs; needs objdump on PATH (MinGW binutils).
+portps5_add_test(prx_cross_import_check
+    ${Python3_EXECUTABLE}
+    LABELS
+        unit
+    ARGS
+        ${CMAKE_SOURCE_DIR}/tools/check_prx_imports.py $<TARGET_FILE_DIR:libc>/..
+)
+
 # Compile shared dialog regressions separately to avoid duplicate native exports.
 portps5_add_gtest(savedata_dialog_non_native_tests
     SOURCES savedata/SaveDataDialogScanTests.cpp
@@ -263,6 +475,30 @@ portps5_add_gtest(pad_controller_input_tests
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/core/libs
         ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)
+
+# Telemetry core: record schema, stall/softlock definitions, watchdog latch and
+# audio/A-V sampler on a synthetic clock (header-only, no game data).
+portps5_add_gtest(telemetry_core_tests
+    SOURCES
+        telemetry/TelemetryTests.cpp
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Telemetry runtime exports in libc: Start/Shutdown lifecycle and the run.end
+# end-marker guarantee, writing only to a temp directory.
+portps5_add_gtest(telemetry_runtime_tests
+    SOURCES
+        telemetry/TelemetryRuntimeTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
     LABELS
         unit
 )

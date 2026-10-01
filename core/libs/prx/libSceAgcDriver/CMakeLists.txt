@@ -214,22 +214,6 @@ target_link_libraries(agc_driver_tests PRIVATE
 set_target_properties(agc_driver_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_tests)
 
-add_executable(agc_driver_recompiler_tests EXCLUDE_FROM_ALL
-        tests/Recompiler.cpp
-)
-
-target_include_directories(agc_driver_recompiler_tests PRIVATE
-        ${LIBS_INCLUDE_DIR}
-)
-
-target_link_libraries(agc_driver_recompiler_tests PRIVATE
-        libSceAgcDriver
-        libc
-)
-
-set_target_properties(agc_driver_recompiler_tests PROPERTIES CXX_EXTENSIONS OFF)
-configure_windows_unwind(agc_driver_recompiler_tests)
-
 add_executable(agc_shader_memory_tests EXCLUDE_FROM_ALL
         tests/ShaderMemory.cpp
         Execution/src/ShaderMemory.cpp
@@ -356,7 +340,6 @@ if(BUILD_TESTING)
         agc_driver_bda_device_tests
         agc_driver_pm4_tests
         agc_shader_memory_tests
-        agc_driver_recompiler_tests
     )
 
     foreach(agcTest IN LISTS AGC_DRIVER_TESTS)
@@ -372,6 +355,16 @@ if(BUILD_TESTING)
 
     # Recorder and HostImport (portps5-6): GoogleTest on a real Vulkan device (lavapipe on hosted CI).
     # Labelled 'lavapipe' like the other driver suites; tests skip themselves when no device exists.
+    # Compute dispatch through the real recompiler + Vulkan device. Links the driver DLL; gtest
+    # discovery gives each TEST its own process (the driver latches errors process-wide).
+    portps5_add_gtest(agc_driver_recompiler_tests
+        SOURCES  tests/Recompiler.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+        LIBRARIES libSceAgcDriver libc
+        LABELS   lavapipe
+    )
+    set_target_properties(agc_driver_recompiler_tests PROPERTIES CXX_EXTENSIONS OFF)
+
     portps5_add_gtest(agc_recorder_tests
         SOURCES  ${CMAKE_CURRENT_SOURCE_DIR}/tests/RecorderTests.cpp
                  ${CMAKE_CURRENT_SOURCE_DIR}/tests/HostImportTests.cpp
@@ -414,6 +407,18 @@ if(BUILD_TESTING)
                  ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
                  ${CMAKE_SOURCE_DIR}/3rdparty/SPIRV-Headers/include
         LIBRARIES shader_recompiler_agc_driver libc
+        LABELS   unit
+    )
+
+    # Hosted tests for the render-target sampling image pool (pure logic, fake handles, no device).
+    portps5_add_gtest(agc_driver_resident_image_pool_tests
+        SOURCES  tests/ResidentImagePool.cpp
+                 Graphics/src/ResidentImagePool.cpp
+        INCLUDES ${LIBS_INCLUDE_DIR}
+                 ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+        # libc supplies __gxx_personality_v0, which the project's Windows unwind configuration
+        # references from every test executable (see core/libs/CMakeLists.txt, config_tests).
+        LIBRARIES libc
         LABELS   unit
     )
 

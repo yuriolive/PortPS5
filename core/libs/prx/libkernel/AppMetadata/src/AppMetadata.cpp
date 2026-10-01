@@ -1,3 +1,6 @@
+// AppMetadata: lazily loads /app0/sce_sys/param.json (title, title id) and icon0.png.
+// Loading the title also mounts the per-title save container at /savedata0; the load and mount
+// are serialized by one mutex so no thread observes the title as loaded before the mount exists.
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include "prx/libc/include/General.hpp"
@@ -6,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -28,14 +32,37 @@ void copyToFixedBuffer(char* destination, std::size_t destinationSize, const std
     std::memcpy(destination, source.c_str(), source.size() + 1);
 }
 
-void ensureTitleLoaded() {
-    if (g_titleLoaded) return;
+// Serialized by ensureTitleLoaded: file APIs on several threads can hit /savedata0 first, and
+// the mount must exist before any thread observes the title as loaded.
+void loadTitleOnce() {
     const auto resolvedPath = ResolvePath_nid_no_patch(AppMetadataParamJsonGuestPath);
     if (!std::filesystem::exists(resolvedPath)) throw std::runtime_error("param.json not found");
     const auto parsed = parseParamJson(resolvedPath);
     copyToFixedBuffer(g_title, sizeof(g_title), parsed.title);
     copyToFixedBuffer(g_titleId, sizeof(g_titleId), parsed.titleId);
+    // Mount the per-title save container as /savedata0 (docs/spec/save-data.md).
+    // A title id that is unsafe as a path component leaves /savedata0 unmounted,
+    // so save opens fail with ENOENT rather than landing somewhere unintended.
+    // Keep /savedata0 on the same directory libSceSaveData uses (GetSaveDataBaseDir in
+    // SaveData.hpp): the test/config override is the full per-title directory.
+    const std::string overrideDir = GetSaveDataBaseDirOverride_nid_no_patch();
+    const bool mounted = overrideDir.empty()
+        ? MountSaveData(parsed.titleId, DefaultSaveDataRoot())
+        : MountGuestDirectory(SaveDataMountName, overrideDir);
+    if (!mounted)
+        APS5_LOG_ERR("savedata: could not mount /savedata0 for titleId '%s'", parsed.titleId.c_str());
     g_titleLoaded = true;
+}
+
+// A mutex (not std::call_once): a throw from loadTitleOnce must unwind cleanly through
+// the project's custom unwinding setup, and a plain lock_guard does that without
+// call_once's exception_ptr plumbing. Throwing leaves g_titleLoaded false, so a later
+// call retries.
+void ensureTitleLoaded() {
+    static std::mutex loadMutex;
+    std::lock_guard lock(loadMutex);
+    if (g_titleLoaded) return;
+    loadTitleOnce();
 }
 
 void ensureIconLoaded() {

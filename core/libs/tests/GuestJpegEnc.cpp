@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Decoder/Jpeg.hpp"
+#include "GuestTestPages.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -270,4 +271,91 @@ TEST_F(JpegEncTest, PaddedPitchMatchesTightEncode) {
 TEST_F(JpegEncTest, UnsupportedModesAbort) {
     EXPECT_DEATH(EncodeWith([](JpegEncEncodeParam& p) { p.encode_mode = 1; }), "");
     EXPECT_DEATH(EncodeWith([](JpegEncEncodeParam& p) { p.restart_interval = 4; }), "");
+}
+
+// ---- Guest pointer range validation (GuestMemoryValidation) -----------------
+// Each case hands the export a pointer whose range is unreadable/unwritable.
+// Without the validation the host dereferences it and the process faults;
+// with it the export returns the SCE code and touches nothing.
+
+using GuestTest::GuestPages;
+using GuestTest::PageAccess;
+
+// Invariant: Create/QueryMemorySize never dereference an unreadable param
+// struct, and Create never writes unwritable work memory or handle slot.
+TEST(JpegEncGuestRanges, CreateRejectsUnusableGuestPointers) {
+    GuestPages none(1, PageAccess::None);
+    GuestPages readOnly(1, PageAccess::ReadOnly);
+    ASSERT_NE(none.data(), nullptr);
+    ASSERT_NE(readOnly.data(), nullptr);
+    const JpegEncCreateParam ok{sizeof(JpegEncCreateParam), 0};
+    alignas(32) static unsigned char work[0x800 + 32];
+    void* handle = nullptr;
+
+    EXPECT_EQ(sceJpegEncQueryMemorySize(reinterpret_cast<const JpegEncCreateParam*>(none.data())), kInvalidAddr);
+    EXPECT_EQ(sceJpegEncCreate(reinterpret_cast<const JpegEncCreateParam*>(none.data()), work, 0x800, &handle), kInvalidAddr);
+    EXPECT_EQ(sceJpegEncCreate(&ok, none.data(), 0x800, &handle), kInvalidAddr);      // work memory unreadable
+    EXPECT_EQ(sceJpegEncCreate(&ok, readOnly.data(), 0x800, &handle), kInvalidAddr);  // work memory not writable
+    EXPECT_EQ(sceJpegEncCreate(&ok, work, 0x800, reinterpret_cast<void**>(readOnly.data())), kInvalidAddr);  // handle slot not writable
+    EXPECT_EQ(handle, nullptr);
+    // Work memory that runs off the mapping end is rejected before any write. The pages are
+    // read/write on purpose: the only reason to refuse is the 0x800-byte extent reaching the
+    // guard page, so this fails if the check covers fewer bytes than MEMORY_SIZE.
+    GuestPages rw(1, PageAccess::ReadWrite);
+    ASSERT_NE(rw.data(), nullptr);
+    EXPECT_EQ(sceJpegEncCreate(&ok, rw.end() - 0x100, 0x800, &handle), kInvalidAddr);
+    EXPECT_EQ(handle, nullptr);
+}
+
+// Invariant: a forged handle pointing at unreadable memory is INVALID_HANDLE
+// for both Encode and Delete, never a host fault while reading the live tag.
+TEST(JpegEncGuestRanges, ForgedHandleInUnreadableMemory) {
+    GuestPages none(1, PageAccess::None);
+    ASSERT_NE(none.data(), nullptr);
+    JpegEncOutputInfo info{};
+    JpegEncEncodeParam param{};
+    EXPECT_EQ(sceJpegEncDelete(none.data()), kInvalidHandle);
+    EXPECT_EQ(sceJpegEncEncode(none.data(), &param, &info), kInvalidHandle);
+}
+
+// Invariant: Encode checks every guest range it touches: the param struct, the
+// pixel buffer extent (height-1 pitches + last row), output_info and the bytes
+// of JPEG it will write. image_size/jpeg_size are only the title's claims.
+TEST_F(JpegEncTest, EncodeRejectsUnusableGuestBuffers) {
+    GuestPages none(1, PageAccess::None);
+    GuestPages readOnly(1, PageAccess::ReadOnly);
+    GuestPages rw(1, PageAccess::ReadWrite);
+    ASSERT_NE(none.data(), nullptr);
+    ASSERT_NE(readOnly.data(), nullptr);
+    ASSERT_NE(rw.data(), nullptr);
+
+    // Param struct itself unreadable.
+    EXPECT_EQ(sceJpegEncEncode(handle_, reinterpret_cast<const JpegEncEncodeParam*>(none.data()), &info_), kInvalidAddr);
+
+    // Pixel buffer unreadable.
+    EXPECT_EQ(EncodeWith([&](JpegEncEncodeParam& p) { p.image = none.data(); }), kInvalidAddr);
+
+    // Pixel buffer whose claimed size (image_size is 1024 bytes of RGBA) runs past the mapping.
+    EXPECT_EQ(EncodeWith([&](JpegEncEncodeParam& p) { p.image = rw.end() - 100; }), kInvalidAddr);
+
+    // Output buffer not writable (read-only) and output_info not writable.
+    EXPECT_EQ(EncodeWith([&](JpegEncEncodeParam& p) { p.jpeg = readOnly.data(); p.jpeg_size = 4096; }), kInvalidAddr);
+    JpegEncEncodeParam p = ValidParam();
+    EXPECT_EQ(sceJpegEncEncode(handle_, &p, reinterpret_cast<JpegEncOutputInfo*>(readOnly.data())), kInvalidAddr);
+
+    // A fully valid call still succeeds afterwards (nothing was left half-written).
+    EXPECT_EQ(sceJpegEncEncode(handle_, &p, &info_), 0);
+    EXPECT_GT(info_.size, 0u);
+}
+
+// Invariant: only the produced JPEG bytes must be writable, not the claimed
+// jpeg_size, so a title that over-declares capacity but maps enough still works.
+TEST_F(JpegEncTest, EncodeOnlyNeedsProducedBytesWritable) {
+    GuestPages rw(1, PageAccess::ReadWrite);
+    ASSERT_NE(rw.data(), nullptr);
+    JpegEncEncodeParam p = ValidParam();
+    p.jpeg = rw.end() - 4096;  // 4 KiB writable, jpeg_size claims much more
+    p.jpeg_size = 1 << 20;
+    EXPECT_EQ(sceJpegEncEncode(handle_, &p, &info_), 0);
+    EXPECT_LE(info_.size, 4096u);
 }

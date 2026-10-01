@@ -5,8 +5,10 @@ status: todo
 type: task
 priority: high
 created_at: 2026-09-30T23:49:31Z
-updated_at: 2026-09-30T23:49:31Z
+updated_at: 2026-10-01T17:59:26Z
+parent: portps5-r8mh
 ---
+
 
 ## Context
 
@@ -18,7 +20,7 @@ PRD F6 and the ROADMAP M1 item: per-game TOML drives the runtime, and the typed 
 
 ## Acceptance Criteria
 
-- [ ] Startup calls Loader::Initialize with the param.json title ID and aborts with file:line on a config error
+- [x] Startup calls Loader::Initialize with the param.json title ID and aborts with file:line on a config error
 - [ ] Conversion copies config/ to the install directory
 - [ ] `debug.*` keys are consumed by the subsystems that used `APS5_*` switches upstream
 - [ ] Resolved config hash, workarounds_set and debug_keys_set are available to the results JSON writer
@@ -30,4 +32,4 @@ display.present_mode and display.resolution_scale wiring (own bean), results JSO
 
 ## Summary of Changes
 
-TBD
+Startup is wired by portps5-ftci. Conversion copying, remaining debug consumers and results JSON remain open.

@@ -1,3 +1,7 @@
+// core/shader/recompiler/ControlFlow/src/Structurizer.cpp
+// Turns the control-flow graph of a guest shader into SPIR-V structured control flow: finds natural loops,
+// selection merges and continue blocks, splits merge blocks shared by nested constructs, and annotates each
+// terminator. Throws std::runtime_error for graphs it cannot structure. Pure function of the graph; thread-safe.
 #include "ControlFlow/Structurizer.hpp"
 #include <algorithm>
 #include <functional>
@@ -288,6 +292,26 @@ bool canReachBefore(const ControlFlowGraph& graph, std::uint32_t start, std::uin
     return false;
 }
 
+// Whether `start` reaches `target` without passing the loop's continue or merge block, that is, within one iteration.
+bool reachesWithinIteration(const ControlFlowGraph& graph, const NaturalLoop& loop, std::uint32_t start, std::uint32_t target) {
+    std::vector<std::uint32_t> pending = {start};
+    std::vector<bool> visited(graph.blocks.size(), false);
+    while (!pending.empty()) {
+        const auto blockId = pending.back();
+        pending.pop_back();
+        if (blockId == target) {
+            return true;
+        }
+        if (blockId == loop.continueBlock || blockId == loop.mergeBlock || visited[blockId]) {
+            continue;
+        }
+        visited[blockId] = true;
+        const auto& block = graph.FindBlock(blockId);
+        pending.insert(pending.end(), block.successors.begin(), block.successors.end());
+    }
+    return false;
+}
+
 std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock& block) {
     const auto globalMerge = graph.FindNearestCommonPostDominator(block.terminator.trueBlock, block.terminator.falseBlock);
     const auto* loop = findInnermostContainingLoop(graph, block.id);
@@ -324,6 +348,17 @@ std::uint32_t findSelectionMerge(const ControlFlowGraph& graph, const BasicBlock
     }
     if (isLoopControlGateway(graph, *loop, falseTarget) && graph.Dominates(block.id, falseTarget) && isInsideLoopConstruct(graph, *loop, trueTarget)) {
         return falseTarget;
+    }
+    // The nearest common post-dominator is computed across the loop's back edge. When one arm reaches it only in a
+    // later iteration (it leaves the selection by continuing) and the other reaches it within this one, the merge
+    // is where the other arm goes. Returning the post-dominator instead would leave it shared with an enclosing
+    // selection, and splitting that shared merge would repeat until the split budget throws.
+    if (globalMerge != InvalidControlFlowId) {
+        const bool trueJoins = reachesWithinIteration(graph, *loop, trueTarget, globalMerge);
+        const bool falseJoins = reachesWithinIteration(graph, *loop, falseTarget, globalMerge);
+        if (trueJoins != falseJoins) {
+            return trueJoins ? trueTarget : falseTarget;
+        }
     }
     return globalMerge;
 }

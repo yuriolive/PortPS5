@@ -63,6 +63,13 @@ TEST(VirtualMemoryAllocation, AllocateDirectMemoryInvalidArguments) {
     EXPECT_EQ(sceKernelAllocateDirectMemory(0, 1024 * 1024, PS5_PAGE_SIZE, PS5_PAGE_SIZE, 0, nullptr), ::SCE_KERNEL_ERROR_EINVAL);
 }
 
+// Verifies the API returns the real console value (0x80020016), not a private
+// constant: compares against a hex literal so a wrong definition cannot hide.
+TEST(VirtualMemoryAllocation, InvalidArgumentReturnsRealEinvalLiteral) {
+    int64_t physAddr = -1;
+    EXPECT_EQ(sceKernelAllocateDirectMemory(0, 1024 * 1024, 0, PS5_PAGE_SIZE, 0, &physAddr), static_cast<int>(0x80020016u));
+}
+
 // Verifies flexible memory mapping (anonymous memory), read/write access, and unmapping.
 TEST(VirtualMemoryAllocation, MapFlexibleMemoryReadWrite) {
     constexpr size_t mapSize = 64 * 1024; // 4 pages
