@@ -25,9 +25,11 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
         case 0x0bu: return RdnaOpcode::SBrevB32;
         case 0x0cu: return RdnaOpcode::SBrevB64;
         case 0x0du: return RdnaOpcode::SBcnt0I32B32;
+        case 0x0eu: return RdnaOpcode::SBcnt0I32B64;
         case 0x0fu: return RdnaOpcode::SBcnt1I32B32;
         case 0x10u: return RdnaOpcode::SBcnt1I32B64;
         case 0x11u: return RdnaOpcode::SFf0I32B32;
+        case 0x12u: return RdnaOpcode::SFf0I32B64;
         case 0x13u: return RdnaOpcode::SFf1I32B32;
         case 0x14u: return RdnaOpcode::SFf1I32B64;
         case 0x15u: return RdnaOpcode::SFlbitI32B32;
@@ -50,6 +52,9 @@ RdnaOpcode decodeSop1Opcode(std::uint32_t opcode) {
         case 0x37u: return RdnaOpcode::SAndn1SaveexecB64;
         case 0x3bu: return RdnaOpcode::SBitreplicateB64B32;
         case 0x3cu: return RdnaOpcode::SAndSaveexecB32;
+        case 0x3du: return RdnaOpcode::SOrSaveexecB32;
+        case 0x3eu: return RdnaOpcode::SXorSaveexecB32;
+        case 0x3fu: return RdnaOpcode::SAndn2SaveexecB32;
         case 0x40u: return RdnaOpcode::SOrn2SaveexecB32;
         case 0x44u: return RdnaOpcode::SAndn1SaveexecB32;
         default: throw std::invalid_argument("unsupported SOP1 opcode " + std::to_string(opcode));

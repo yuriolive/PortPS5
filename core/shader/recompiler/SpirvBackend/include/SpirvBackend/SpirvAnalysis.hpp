@@ -1,3 +1,6 @@
+// core/shader/recompiler/SpirvBackend/include/SpirvBackend/SpirvAnalysis.hpp
+// SpirvRequirements: the capabilities, extensions and storage decorations a program needs, computed from its IR
+// before any SPIR-V is emitted. Pure data; one instance per emitted module.
 #ifndef CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVANALYSIS_HPP
 #define CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVANALYSIS_HPP
 
@@ -18,6 +21,8 @@ struct SpirvRequirements {
     bool functionScratch = false;
     bool pixelValidMask = false;
     bool bufferInt64Atomics = false;
+    // Some buffer load or store is coherent (MemoryInfo::coherent): the guest storage buffers are decorated Coherent.
+    bool coherentBuffers = false;
     std::vector<std::uint32_t> capabilities;
     std::vector<std::string> extensions;
 };

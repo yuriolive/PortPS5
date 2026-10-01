@@ -1,3 +1,6 @@
+// core/shader/recompiler/Translation/src/FloatInstructions.cpp
+// Float (f16/f32/packed) arithmetic translation for TranslationContext. Accumulator forms (mac, fmac, dot2c) read
+// the destination through accumulatorOperand so a DPP source modifier never moves the accumulator.
 #include "Translation/FloatInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
@@ -16,7 +19,7 @@ bool TranslationContext::packedFloat16(const RdnaInstruction& inst, IrOpcode opc
         const IrF32 lhs = readF16LaneAsF32(sourceAt(inst, 0u), high, true);
         const IrF32 rhs = readF16LaneAsF32(sourceAt(inst, 1u), high, true);
         if (accumulator) {
-            const IrF32 acc = readF16LaneAsF32(inst.destination, high, true);
+            const IrF32 acc = readF16LaneAsF32(accumulatorOperand(inst), high, true);
             return applyF32ResultModifiers(inst.destination, IrF32(ir.Emit(opcode, IrType::F32, {&lhs.Value(), &rhs.Value(), &acc.Value()})));
         }
         if (inst.sourceCount == 3u) {
@@ -100,7 +103,7 @@ bool TranslationContext::float16Binary(const RdnaInstruction& inst, IrOpcode opc
 bool TranslationContext::float16Ternary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix) {
     std::array<IrValue*, 3> args{};
     for (std::uint32_t index = 0u; index < args.size(); ++index) {
-        const RdnaOperand& operand = accumulator && index == 2u ? inst.destination : sourceAt(inst, index);
+        const RdnaOperand& operand = accumulator && index == 2u ? accumulatorOperand(inst) : sourceAt(inst, index);
         args[index] = mix ? &readMixF32(operand).Value() : &readF16AsF32(operand).Value();
     }
     writeF16(inst.destination, IrF32(ir.Emit(opcode, IrType::F32, {args[0], args[1], args[2]})));
@@ -128,7 +131,7 @@ bool TranslationContext::floatBinary(const RdnaInstruction& inst, IrOpcode opcod
 bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool mix) {
     std::array<IrValue*, 3> args{};
     for (std::uint32_t index = 0u; index < args.size(); ++index) {
-        const RdnaOperand& operand = accumulator && index == 2u ? inst.destination : sourceAt(inst, index);
+        const RdnaOperand& operand = accumulator && index == 2u ? accumulatorOperand(inst) : sourceAt(inst, index);
         const IrType type = IrOpcodeArgumentType(opcode, index);
         args[index] = type == IrType::F32 && mix ? &readMixF32(operand).Value() : readOperand(operand, type);
     }
@@ -169,7 +172,7 @@ bool TranslationContext::vDot2cF32F16(const RdnaInstruction& inst) {
     const IrF32 aHigh = readF16LaneAsF32(a, true);
     const IrF32 bLow = readF16LaneAsF32(b, false);
     const IrF32 bHigh = readF16LaneAsF32(b, true);
-    const IrF32 accumulator = readMixF32(inst.destination);
+    const IrF32 accumulator = readMixF32(accumulatorOperand(inst));
     const IrF32 low(ir.Emit(IrOpcode::FPFma32, IrType::F32, {&aLow.Value(), &bLow.Value(), &accumulator.Value()}));
     const IrF32 result(ir.Emit(IrOpcode::FPFma32, IrType::F32, {&aHigh.Value(), &bHigh.Value(), &low.Value()}));
     writeOperand(inst.destination, &result.Value());
