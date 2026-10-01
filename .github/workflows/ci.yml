@@ -363,24 +363,27 @@ jobs:
           New-Item -ItemType Directory -Path $dl -Force | Out-Null
           # 1. Vulkan loader (vulkan-1.dll): the driver and the test fixtures
           #    SDL_LoadObject it, so it must be on the system search path.
-          # The LunarG runtime installer hangs in /S mode on hosted runners
-          # (observed: never exits within 300 s), so do not run it. It is an
-          # NSIS package that 7-Zip can unpack; take the 64-bit loader from it.
-          if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) {
-            $rt = "$dl\VulkanRT.exe"
-            if (-not (Test-Path $rt)) { Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/VulkanRT-$env:VULKAN_RT_VERSION-Installer.exe" -OutFile $rt }
-            Write-Host "VulkanRT SHA256: $((Get-FileHash $rt -Algorithm SHA256).Hash.ToLowerInvariant())"
-            $rtDir = "$env:RUNNER_TEMP\vulkanrt"
-            7z x $rt "-o$rtDir" -y | Out-Null
-            $cands = @(Get-ChildItem -Recurse -Path $rtDir -Filter 'vulkan-1.dll' -ErrorAction SilentlyContinue)
-            Write-Host "vulkan-1.dll candidates: $($cands.FullName -join '; ')"
-            # Pick the x64 build by PE machine type (0x8664), not by path name.
-            $loader = $cands | Where-Object {
+          # The LunarG installer cannot be used on hosted runners: its /S mode
+          # never exits (killed after 300 s) and 7-Zip finds no vulkan-1.dll
+          # inside it. LunarG also publishes the loader as a plain zip
+          # (vulkan-runtime-components.zip); take the x64 build from that.
+          function Find-X64Loader([string]$dir) {
+            Get-ChildItem -Recurse -Path $dir -Filter 'vulkan-1.dll' -ErrorAction SilentlyContinue | Where-Object {
+              # Select by PE machine type (0x8664 = x64), not by folder name.
               $b = [System.IO.File]::ReadAllBytes($_.FullName)
               $pe = [BitConverter]::ToInt32($b, 0x3C)
               [BitConverter]::ToUInt16($b, $pe + 4) -eq 0x8664
             } | Select-Object -First 1
-            if ($null -eq $loader) { throw "no x64 vulkan-1.dll found inside the VulkanRT installer" }
+          }
+          if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) {
+            $zip = "$dl\vulkan-runtime-components.zip"
+            if (-not (Test-Path $zip)) { Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/vulkan-runtime-components.zip" -OutFile $zip }
+            Write-Host "Vulkan runtime components SHA256: $((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant())"
+            $rtDir = "$env:RUNNER_TEMP\vulkanrt"
+            Expand-Archive -Path $zip -DestinationPath $rtDir -Force
+            Write-Host "Unpacked files:"; Get-ChildItem -Recurse $rtDir | Select-Object -First 40 | ForEach-Object { Write-Host "  $($_.FullName)" }
+            $loader = Find-X64Loader $rtDir
+            if ($null -eq $loader) { throw "no x64 vulkan-1.dll found in vulkan-runtime-components.zip" }
             Copy-Item $loader.FullName "$env:WINDIR\System32\vulkan-1.dll" -Force
           }
           # 2. Mesa lavapipe (CPU Vulkan ICD) from mesa-dist-win.
