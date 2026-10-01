@@ -69,6 +69,7 @@ def parse_imports(text):
 
 
 def main(argv):
+    """Check every prx under argv[1]; return the process exit code (0 ok, 1 missing exports, 2 usage)."""
     if len(argv) != 2 or not os.path.isdir(argv[1]):
         print(__doc__, file=sys.stderr)
         return 2
