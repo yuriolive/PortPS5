@@ -9,6 +9,15 @@ if(BUILD_TESTING)
     include(PortPS5Testing)
     include(PortPS5GTest)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+else()
+    # Test helpers are only defined when BUILD_TESTING is ON. Subsystem
+    # CMakeLists (e.g. core/Decoder/*) call portps5_add_gtest unconditionally,
+    # and the CodeQL deep build configures with BUILD_TESTING=OFF, so provide
+    # no-op stubs instead of failing with "Unknown CMake command".
+    function(portps5_add_gtest)
+    endfunction()
+    function(portps5_add_test)
+    endfunction()
 endif()
 
 option(ANYPS5_ENABLE_SPIRV_TOOLS "Enable SPIRV-Tools validation and optimization" OFF)
