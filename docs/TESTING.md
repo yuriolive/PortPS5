@@ -37,7 +37,7 @@ GoogleTest suites are registered with `portps5_add_gtest` (`cmake/PortPS5GTest.c
 - Creates the executable, links `GTest::gtest_main` and registers individual cases with `gtest_discover_tests()`.
 
 Non-GoogleTest commands (for example Python scripts) use `portps5_add_test` (`cmake/PortPS5Testing.cmake`):
-- Adds the command to CTest and prepends `$<TARGET_FILE_DIR:libc>` to `PATH` on Windows so runtime DLLs are resolved.
+- Adds the command to CTest and, on Windows when the `libc` target exists, prepends `$<TARGET_FILE_DIR:libc>` to `PATH` so runtime DLLs are resolved.
 - Attaches CTest labels:
   - `unit`: Fast CPU/memory/relinker tests running in hosted CI on every PR.
   - `golden`: Recompiler golden SPIR-V diffs validated via `spirv-val`.
