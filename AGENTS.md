@@ -56,6 +56,7 @@ Tasks live as markdown files in `.beans/` (tool: [hmans/beans](https://github.co
 
 - **Before work:** find or create the bean (`beans create "Title" -t task -s in-progress -d ...`). Its body follows rule 10 (Context, Higher Goal, Acceptance Criteria, Out of Scope, Summary of Changes).
 - **Every PR closes the bean(s) it solves.** In the same PR: tick the acceptance checkboxes, add `## Summary of Changes`, set `-s completed`, and run `beans archive` so the bean file moves to `.beans/archive/`. After merge to `main`, the tree then shows the task as done. Name the bean ID(s) in the PR description.
+- **Record dependencies.** When you create a bean, add `--blocked-by <id>` for every bean that must land first, and `--parent <epic>` for its epic. A bean with no blockers says "Blocked by: none" in its Context. Then `beans list --ready` shows what can be worked on in parallel. A ROADMAP section with several open beans keeps a "Parallel lanes" table (lane, beans, blocked by) that matches the bean links.
 - Work deferred or found during the PR gets a new open bean, not a silent TODO.
 - Scrapped work: set `-s scrapped` with a `## Reasons for Scrapping` section, then archive.
 - Commit bean files together with the code change they track.

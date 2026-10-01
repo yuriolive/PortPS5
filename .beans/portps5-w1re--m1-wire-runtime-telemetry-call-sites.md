@@ -5,8 +5,10 @@ status: todo
 type: task
 priority: high
 created_at: 2026-10-01T03:00:00Z
-updated_at: 2026-10-01T17:59:26Z
+updated_at: 2026-10-01T18:08:16Z
 parent: portps5-r8mh
+blocked_by:
+    - portps5-c06p
 ---
 
 
