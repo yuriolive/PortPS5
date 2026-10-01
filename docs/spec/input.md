@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Input
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -35,6 +35,8 @@ References are relative to the AnyPS5 tree and cite `main@75a8668` (current AnyP
 
 the decision table in [README.md](README.md#subsystem-specs) says "`libScePad` implements `scePadRead` over SDL". At `main@e06dbff` that is accurate only for keyboard and mouse events. `main@75a8668` also reads SDL game controllers, but XInput is not referenced, and `SDL_HIDAPI`, `SDL_HAPTIC` and `SDL_SENSOR` are still forced off (`CMakeLists.txt:29-31`), so how far XInput and DualSense USB support goes is unverified here and stays new PortPS5 work.
 
+**Status as of 2026-09-30 (PortPS5 `main`).** The table above cites AnyPS5 trees. On PortPS5 `main`: `SDL_JOYSTICK` and `SDL_HIDAPI` are ON (`CMakeLists.txt:46-48`; `SDL_HAPTIC` and `SDL_SENSOR` stay off); SDL game controllers feed `scePadRead` with hot-plug, per-slot connect and a radial dead zone (PRs #54 and #57, see "Controller polling (implemented)" below; not verified with a physical device); `libSceMouse` keeps a backend and VideoOut routing, but every `sceMouse*` export is an `Unsupported()` abort (`libSceMouse/Export.cpp`, bean `portps5-afme`); `libSceKeyboard` exports are unchanged. Open: TOML bindings, XInput and DualSense matrix, slot reassignment tests (bean `portps5-de24`).
+
 ## Decision
 
 This follows the decision table in [README.md](README.md#subsystem-specs) §Input:
@@ -45,7 +47,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 
 ## Target design
 
-1. **Build.** Turn on `SDL_JOYSTICK` and `SDL_HIDAPI`. Leave `SDL_HAPTIC` and `SDL_SENSOR` off in 1.0. Pin an SDL2 revision whose HIDAPI driver supports PS5 controllers. *Inference:* that arrived in SDL 2.0.14. The pinned submodule commit `4b69833` must be checked against it ([build-toolchain.md](build-toolchain.md)).
+1. **Build.** *(Done: `CMakeLists.txt:46-48`.)* Turn on `SDL_JOYSTICK` and `SDL_HIDAPI`. Leave `SDL_HAPTIC` and `SDL_SENSOR` off in 1.0. Pin an SDL2 revision whose HIDAPI driver supports PS5 controllers. *Inference:* that arrived in SDL 2.0.14. The pinned submodule commit `4b69833` must be checked against it ([build-toolchain.md](build-toolchain.md)).
 2. **Device layer.** An `InputHub` owns SDL `GameController` instances and receives `CONTROLLERDEVICEADDED` / `REMOVED` events from the existing window loop.
    - XInput devices come through SDL's XInput/RawInput backends.
    - DualSense over USB comes through HIDAPI (`SDL_HINT_JOYSTICK_HIDAPI_PS5=1`). Full-report mode is enabled only when a later feature needs it.
@@ -102,10 +104,10 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
   - [x] Button OR-merging and stick displacement arbitration rules (`PadHapticsTests.cpp`).
   - [x] Radial and axial dead-zone mathematics and clamp boundaries (`PadHapticsTests.cpp`).
   - [x] Controller button/axis/trigger translation, slot merge with keyboard, and per-slot connect/disconnect through `scePadRead` (`tests/input/ControllerInputTests.cpp`, synthetic samples, no device).
-  - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection.
-  - [ ] TOML controller binding parsing and rejection of invalid identifiers.
+  - [ ] Slot assignment and reassignment across plug and unplug sequences via synthetic SDL event injection (bean `portps5-de24`).
+  - [ ] TOML controller binding parsing and rejection of invalid identifiers (bean `portps5-de24`).
   - [x] Monotonic timestamp advancement invariants on sequential `scePadRead` calls (`PadHapticsTests.cpp`).
-  - [ ] Mouse open/read/close error contract + SDL routing + ring overflow (`libSceMouse/tests/Mouse.cpp`, M2-gated DISABLED GTest; builds in CI, enables with the M2 exports).
+  - [ ] Mouse open/read/close error contract + SDL routing + ring overflow (`libSceMouse/tests/Mouse.cpp`, M2-gated DISABLED GTest; builds in CI, enables with the M2 exports; bean `portps5-afme`).
 - **Ported Ecosystem Test Suites:**
   - [x] **KytyPS5 `PadHapticsTests`:** DualSense USB report parsing, radial deadzone calculation, motor vibration amplitude translation, and controller orientation telemetry (`core/libs/tests/PadHapticsTests.cpp`).
 - **Replay determinism:** the same recorded input produces identical `PadData` sequences whatever controller backend is present.
@@ -123,8 +125,8 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Inpu
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] Port AnyPS5 main's `scePadRead` (merged PR #5). Import inventory for Mouse and Keyboard. Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input`. Sync status (PR #28): the mouse backend (`libSceMouse/src/mouse_impl.cpp`, `include/MouseState.hpp`, `include/mouse_structs.h`) plus VideoOut routing (`libSceVideoOut/src/MouseInput.cpp`, `include/MouseInput.hpp`) are byte-identical to upstream `53bda68`; `libSceMouse/Export.cpp` still throws, so the Current-state row above stands. `tests/Mouse.cpp` is converted to GTest but DISABLED until the M2 exports land (builds in CI to pin the API). Debt: the process-global `std::mutex mouseMutex` (`mouse_impl.cpp:9`) violates the no-global-locks rule and must go with the M2 work. |
-| M2 | - [ ] Everything in the target design. XInput, DualSense USB and keyboard/mouse pass the matrix on Dreaming Sarah and TMNT (the F5 delivery milestone). |
+| M1 | - [x] Port AnyPS5 main's `scePadRead` (merged PR #5): landed with PR #15, extended with SDL controllers in PRs #54 and #57.<br>- [x] Replace `APS5_NO_PAD_INPUT` with `debug.ignore_host_input` (`PadInput.cpp:27-31`).<br>- [ ] Import inventory for Mouse and Keyboard: only a code comment records that no gate title imports `libSceMouse` at boot; per-title evidence is bean `portps5-3eh1`.<br>Sync status (PR #28): the mouse backend (`libSceMouse/src/mouse_impl.cpp`, `include/MouseState.hpp`, `include/mouse_structs.h`) plus VideoOut routing (`libSceVideoOut/src/MouseInput.cpp`, `include/MouseInput.hpp`) are byte-identical to upstream `53bda68`; `libSceMouse/Export.cpp` still throws, so the Current-state row above stands. `tests/Mouse.cpp` is converted to GTest but DISABLED until the M2 exports land (builds in CI to pin the API). Debt: the process-global `std::mutex mouseMutex` (`mouse_impl.cpp:9`) violates the no-global-locks rule and must go with the M2 work. |
+| M2 | - [ ] Everything in the target design. XInput, DualSense USB and keyboard/mouse pass the matrix on Dreaming Sarah and TMNT (the F5 delivery milestone; bean `portps5-de24`). |
 | M3–M5 | - [ ] Regression only. Add analog-trigger and multi-button coverage as the 3D titles demand. |
 | M6 | - [ ] The release matrix is published in the release notes. |
 

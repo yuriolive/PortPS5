@@ -113,6 +113,7 @@ core/shader/          RDNA2 -> SSA IR -> SPIR-V recompiler
 config/               global.toml and per-title overrides (config/games/<titleId>.toml)
 docs/                 PRD, ROADMAP, subsystem specifications
 seeds/                Milestone work plans for agentic workflows
+.beans/               Task tracker (one markdown file per task; CLI `beans`, see AGENTS.md)
 .agents/              Shared AI rules and skills
 ```
 
