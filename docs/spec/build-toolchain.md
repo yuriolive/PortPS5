@@ -78,6 +78,7 @@ These are consistent with the decision table in [README.md](README.md#subsystem-
 - Replace the no-comments rule with "comment why, not what".
 - llvm-mingw clang is an M5 spike only. MSVC stays out, because it cannot express `sysv_abi`.
 - Keep the objcopy rename and `nid_patcher` pipeline unchanged in behaviour.
+- The M2 local regression runner is `tools/regress.py`, a manually invoked Python script covered by pytest in the `python-quality` job. It is not a build target or a ctest target, so it adds no `local`-labelled test; the `local` label stays reserved for GPU or game-data tests ([verification.md](verification.md) §4.2).
 
 ## Target design
 
@@ -160,7 +161,7 @@ Tests are progressively consolidated from standalone single-function executables
 - **`recompiler-golden` job:** builds `recompiler_golden_tests` and `agc_shader_replay` (ci preset), then runs `ctest --preset golden` plus `agc_shader_replay --golden core/shader/recompiler/tests/golden/corpus`. The golden suite carries its own coverage gate, so no count file is needed.
 - **`policy` job:** the artifact dependency check above, plus the patterns in [verification.md](verification.md) §1.
 - **`doxygen-doc-gate` job:** runs `doxygen docs/Doxyfile` on `core/libs/prx` and `core/relinker` via `.github/workflows/doxygen.yml` on every PR and push to `main` as a required status check. Does not require the MinGW toolchain. Installs the official Doxygen 1.18.0 Windows x64 zip from doxygen.nl, verified against a SHA-256 pinned in the workflow env (cached by version+checksum, retried on download failure). Fails on any malformed Doxygen markup with `WARN_AS_ERROR = FAIL_ON_WARNINGS` so all warnings are logged before failing (`WARN_IF_UNDOCUMENTED` and `WARN_NO_PARAMDOC` are disabled initially to avoid blocking on inherited pre-existing debt). Uploads `build/doxygen_warnings.log` as the `doxygen-warnings` artifact on failure. Complements the Python `check_comments.py` linter, which enforces PortPS5-specific per-file rules (file-level headers, `APS5_VABI` doc coverage, `TEST()` invariant comments) in the main `ci.yml` policy step.
-- **Local:** `ctest -L local` (tests that need a GPU or game data, when any exist) and then `python tools/regress.py` before each regression run ([verification.md](verification.md) §2, §4.2). The runner is a script, not a ctest target.
+- **Local:** `ctest -L local` (tests that need a GPU or game data, when any exist) and then `python tools/regress.py run ...` (or `report ...` on an existing log; required options in [verification.md](verification.md) §4.2) before each regression run ([verification.md](verification.md) §2, §4.2). The runner is a script, not a ctest target.
 
 ## Milestones
 

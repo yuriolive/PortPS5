@@ -456,3 +456,25 @@ def test_empty_runner_override_is_respected(tmp_path):
     (inst / regress.RUNNER_REL).write_text(json.dumps({"killed": True, "exit_code": None}))
     with pytest.raises(KeyError):
         regress.report(args_for(inst), {})
+
+
+def test_non_finite_numbers_are_rejected_with_a_line_number(tmp_path):
+    # Regression (review): dt_ms 1e309 parses to infinity and NaN is accepted by Python's
+    # json, which would put Infinity/NaN (invalid standard JSON) into the results.
+    log = tmp_path / "t.jsonl"
+    for bad in (
+        '{"ev": "frame", "dt_ms": 1e309}',
+        '{"ev": "frame", "dt_ms": NaN}',
+        '{"ev": "frame", "dt_ms": 16, "t_ms": Infinity}',
+        '{"ev": "av.offset", "ms": NaN}',
+        '{"ev": "heartbeat", "t_ms": 1e999}',
+    ):
+        log.write_text(json.dumps(HEADER) + "\n" + bad + "\n", encoding="utf-8")
+        with pytest.raises(regress.RegressError, match="line 2"):
+            regress.parse_telemetry(log)
+
+
+def test_results_json_is_strict_standard_json(tmp_path):
+    # allow_nan=False is the last line of defence: a non-finite value must fail loudly.
+    with pytest.raises(ValueError):
+        regress.write_results({"x": float("inf")}, tmp_path / "o.json")

@@ -20,6 +20,7 @@ holds metrics, hashes and pass/fail only. All work files stay outside the repo.
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -56,20 +57,31 @@ def ensure_outside_repo(path):
         raise RegressError(f"refusing to use a path inside the repository: {p}")
 
 
+def finite(value):
+    """Convert to float and reject NaN and infinity (json.loads accepts both literals)."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite number")
+    return number
+
+
 def event_value(ev, rec):
     """Extract and convert the numeric fields of a known event; None for other events.
 
-    Raises KeyError, TypeError or ValueError on a malformed field, which the
-    caller turns into a RegressError carrying the line number.
+    Every float must be finite: 1e309 parses to infinity and NaN is a valid JSON literal for
+    Python, either of which would reach the results JSON as invalid standard JSON.
+    Raises KeyError, TypeError or ValueError on a malformed field, which the caller turns
+    into a RegressError carrying the line number.
     """
     if ev == "frame":
-        dt = float(rec["dt_ms"])
+        dt = finite(rec["dt_ms"])
         if dt < 0:
             # A negative interval would silently lower duration_s (the 30 minute rule).
             raise ValueError("negative dt_ms")
-        return dt, rec.get("t_ms")
+        t_ms = rec.get("t_ms")
+        return dt, None if t_ms is None else finite(t_ms)
     if ev == "av.offset":
-        return abs(float(rec["ms"]))
+        return abs(finite(rec["ms"]))
     if ev == "audio.underrun":
         return int(rec.get("n", 1))
     if ev == "warmup.end":
@@ -77,7 +89,7 @@ def event_value(ev, rec):
     if ev == "run.end":
         return int(rec.get("capture_split", 0)), int(rec.get("write_faults", 0))
     if ev == "heartbeat":
-        return float(rec["t_ms"])
+        return finite(rec["t_ms"])
     return None
 
 
@@ -257,7 +269,7 @@ def write_results(res, out):
     """Write the results JSON (sorted, trailing newline), creating parent directories."""
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(res, indent=2) + "\n", encoding="utf-8")
+    out.write_text(json.dumps(res, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
 
 def link_app0(install, dump):
