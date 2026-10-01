@@ -64,7 +64,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Conf
 | `debug.trace` | array of enum | `[]` | Categories: `audio`, `ajm`, `pad`, `savedata`, `dialog`, `np`, `label`, `sync`, `timers`, `memory`, `bda`, `bindless`, `fiber`, `exit`, … One category per former `TRACE_*` family. |
 | `debug.dump` | array of enum | `[]` | `shaders`, `targets`, `textures`, `queue`, `rejected`. IR and frame dumps use `debug.recompiler.dump_ir` and `debug.gpu.dump_frames`. |
 | `debug.dump_dir` | path | `<install>/dumps` | Must be outside the saves directory. |
-| `debug.profile` | array of enum | `[]` | `gpu`. Per-draw shader profiling uses `debug.recompiler.profile`. |
+| `debug.profile` | array of enum | `[]` | `gpu`: write the per-frame `[FrameTiming]` report (about 20 KB of text and an `fflush(stdout)` per flip) to stdout. Off by default because that write dominates frame time on a console. Per-draw shader profiling uses `debug.recompiler.profile`. |
 | `debug.validate` | array of enum | `[]` | `recipes`, `barriers`, `copies`, `shadows`, `indirect_args`. Validation only logs mismatches. It never changes what the runtime produces. |
 | `debug.watch` | array of `{addr: u64, write: bool}` | `[]` | Replaces `WATCH_ADDR` and `WATCH_WRITE`. |
 | `debug.ignore_host_input` | bool | false | For recorded-input replay. Replaces `NO_PAD_INPUT`. It filters host input and does not change the guest path. |

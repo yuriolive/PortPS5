@@ -6,6 +6,18 @@ if(NOT BUILD_TESTING)
 endif()
 
 # Kernel event queue lifetime and race condition verification (ported from KytyPS5)
+# [FrameTiming] report gate: the report is a profiling aid (debug.profile = ["gpu"]), not default output.
+portps5_add_gtest(agc_frame_timing_gate_tests
+    SOURCES
+        agc/FrameTimingGateTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 portps5_add_gtest(kernel_equeue_lifetime_tests
     SOURCES
         kernel/EventQueueLifetimeTests.cpp

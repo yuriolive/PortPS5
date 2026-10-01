@@ -1,3 +1,11 @@
+// PerformanceTimer.hpp - per-frame stage timing for the AGC driver and its [FrameTiming] report.
+//
+// Subsystem: libSceAgcDriver Execution, consumed by libSceVideoOut at flip completion.
+// Lifecycle: one FrameTiming per presented frame; PerformanceTimer scopes add metrics to it.
+// Threading: FrameTiming guards its metric map with a mutex (it is therefore not movable);
+// timers may run on the guest, GPU worker and flip threads concurrently.
+// Output: the text report is written only when `[debug] profile` contains "gpu"
+// (FrameTimingReportEnabled); collection itself is always on.
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PERFORMANCETIMER_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PERFORMANCETIMER_HPP
 
@@ -15,6 +23,26 @@
 #include <stdexcept>
 #include <string_view>
 #include <utility>
+#include "prx/libc/include/config/Config.hpp"
+
+namespace AgcDriver {
+
+// True when the per-frame [FrameTiming] report should be formatted and written.
+// The report is ~20 KB of text per frame followed by an fflush(stdout); on a console that
+// alone costs milliseconds per frame, so it is a profiling aid, not default output. It is
+// enabled by `[debug] profile = ["gpu"]` (docs/spec/configuration.md). Metric collection
+// itself stays on; only the format-and-write step is skipped.
+inline bool FrameTimingReportEnabled(const PortPS5::Config::DebugConfig& debug) {
+    return debug.profile.count(PortPS5::Config::ProfileCategory::Gpu) != 0;
+}
+
+// Same, reading the process-wide resolved config. False before the loader is initialized
+// (unit tests, early boot), so nothing is printed unless profiling was explicitly requested.
+inline bool FrameTimingReportEnabled() {
+    return PortPS5_Config_Loader_IsInitialized_nid_no_patch() && FrameTimingReportEnabled(PortPS5_Config_Loader_Get_nid_no_patch().debug);
+}
+
+}
 
 namespace AgcDriver {
 
@@ -68,6 +96,7 @@ public:
     }
 
     void Print(std::uint32_t outputHandle, std::int32_t buffer, std::int64_t argument, Clock::time_point finished, Clock::duration interval) {
+        if (!FrameTimingReportEnabled()) return;
         std::lock_guard lock(mutex);
         if (firstSerial == 0 || flipSerial == 0) throw std::runtime_error("Frame timing: incomplete submission lineage");
         std::ostringstream output;
