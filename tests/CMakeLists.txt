@@ -117,6 +117,20 @@ portps5_add_gtest(direct_memory_export_tests
         unit
 )
 
+# Mapping placement (hint, NO_OVERWRITE) and munmap spanning, end to end through the exports
+portps5_add_gtest(memory_mapping_tests
+    SOURCES
+        memory/MemoryMappingTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Direct memory physical pool and SceKernelMemoryPool API verification
 portps5_add_gtest(direct_memory_pool_tests
     SOURCES
