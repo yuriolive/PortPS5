@@ -213,7 +213,7 @@ def test_report_end_to_end_passes_and_hides_game_text(tmp_path):
     frames = [{"ev": "frame", "dt_ms": 16.0}] * 120
     inst = make_install(tmp_path, [HEADER, *frames, {"ev": "run.end"}])
     (inst / "stdout.txt").write_text("SECRET GAME TEXT")
-    res = regress.report(args_for(inst), killed=False, exit_code=0)
+    res = regress.report(args_for(inst), {"killed": False, "exit_code": 0})
     assert res["result"] == "pass" and res["fps"]["avg"] == 62.5 and res["crashes"] == 0
     blob = (inst / "r.json").read_text()
     assert "SECRET" not in blob and res["log_sha256"] == regress.sha256_file(
@@ -226,17 +226,17 @@ def test_report_flags_debug_key_and_workaround(tmp_path):
     inst = make_install(
         tmp_path, [HEADER, {"ev": "run.end"}], "[debug]\nprofile=['gpu']\n[workarounds]\nx=true\n"
     )
-    res = regress.report(args_for(inst), killed=False, exit_code=0)
+    res = regress.report(args_for(inst), {"killed": False, "exit_code": 0})
     assert res["result"] == "fail" and "debug_keys_set" in res["fail_reasons"]
     assert res["debug_keys_set"] == ["profile"] and res["workarounds_set"] == ["x"]
 
 
 def test_crash_without_run_end_counts_unless_runner_killed(tmp_path):
     inst = make_install(tmp_path, [HEADER, {"ev": "frame", "dt_ms": 16}])
-    assert regress.report(args_for(inst), killed=False, exit_code=0)["crashes"] == 1
-    assert regress.report(args_for(inst), killed=True, exit_code=None)["crashes"] == 0
+    assert regress.report(args_for(inst), {"killed": False, "exit_code": 0})["crashes"] == 1
+    assert regress.report(args_for(inst), {"killed": True, "exit_code": None})["crashes"] == 0
     inst2 = make_install(tmp_path / "b", [HEADER, {"ev": "run.end"}])
-    assert regress.report(args_for(inst2), killed=False, exit_code=3)["crashes"] == 1
+    assert regress.report(args_for(inst2), {"killed": False, "exit_code": 3})["crashes"] == 1
 
 
 def test_checks_file_drives_checkpoints_fmv_and_save(tmp_path):
@@ -258,7 +258,7 @@ def test_checks_file_drives_checkpoints_fmv_and_save(tmp_path):
             }
         )
     )
-    res = regress.report(args_for(inst, checks_file=str(checks)), killed=False, exit_code=0)
+    res = regress.report(args_for(inst, checks_file=str(checks)), {"killed": False, "exit_code": 0})
     assert res["fmv"] == [{"name": "intro", "result": "pass"}] and res["save_roundtrip"] == "pass"
     checks.write_text("[]")
     with pytest.raises(regress.RegressError):
@@ -292,7 +292,8 @@ def test_launch_uses_install_cwd_strips_debug_env_and_discards_output(tmp_path, 
         "open('logs/telemetry.jsonl','w').write(json.dumps({'ev':'run.start','schema':'portps5.telemetry/1',"
         "'dbg':os.environ.get('PORTPS5_DEBUG','')})+'\\n'+json.dumps({'ev':'run.end'})+'\\n')\n")  # fmt: skip
     monkeypatch.setenv("PORTPS5_DEBUG", "trace=audio")
-    assert regress.launch(inst, 30) == (False, 0)
+    out = regress.launch(inst, 30)
+    assert (out["killed"], out["exit_code"]) == (False, 0)
     assert '"dbg": ""' in (inst / regress.TELEMETRY_REL).read_text()
 
 
@@ -301,7 +302,9 @@ def test_launch_ends_a_running_title_at_the_time_limit(tmp_path):
     inst = tmp_path / "inst"
     inst.mkdir()
     fake_exe(inst, "import time\ntime.sleep(60)\n")
-    assert regress.launch(inst, 0.5) == (True, None)
+    out = regress.launch(inst, 0.5)
+    assert (out["killed"], out["exit_code"]) == (True, None)
+    assert json.loads((inst / regress.RUNNER_REL).read_text())["killed"] is True
 
 
 @pytest.mark.skipif(os.name == "nt", reason="uses a POSIX shebang script as the fake relinker")
@@ -360,5 +363,41 @@ def test_run_refuses_portps5_debug(tmp_path, monkeypatch):
 def test_watchdog_abort_is_a_softlock_not_also_a_crash(tmp_path):
     # Regression for the telemetry watchdog: softlock + run.end + non-zero exit.
     inst = make_install(tmp_path, [HEADER, {"ev": "softlock", "idle_ms": 31000}, {"ev": "run.end"}])
-    res = regress.report(args_for(inst), killed=False, exit_code=1)
+    res = regress.report(args_for(inst), {"killed": False, "exit_code": 1})
     assert res["softlocks"] == 1 and res["crashes"] == 0 and res["result"] == "fail"
+
+
+def test_malformed_known_event_fields_are_clean_errors_with_line_number(tmp_path):
+    # Regression: a frame without dt_ms, a null underrun count and a null av offset
+    # used to raise KeyError/TypeError tracebacks instead of RegressError.
+    log = tmp_path / "t.jsonl"
+    for bad in (
+        {"ev": "frame"},
+        {"ev": "audio.underrun", "n": None},
+        {"ev": "av.offset", "ms": None},
+    ):
+        write_log(log, [HEADER, bad])
+        with pytest.raises(regress.RegressError, match="line 2"):
+            regress.parse_telemetry(log)
+
+
+def test_hang_before_the_timeout_kill_is_a_softlock(tmp_path):
+    # Regression: no frame record follows the last present, so only the wall time
+    # since the last present (t_ms) reveals a hang that the watchdog missed.
+    frames = [{"ev": "frame", "dt_ms": 16, "t_ms": 5000}]
+    inst = make_install(tmp_path, [HEADER, *frames])
+    hung = regress.report(args_for(inst), {"killed": True, "exit_code": None, "wall_ms": 36000.0})
+    assert hung["softlocks"] == 1 and hung["crashes"] == 0 and "softlocks" in hung["fail_reasons"]
+    ok = regress.report(args_for(inst), {"killed": True, "exit_code": None, "wall_ms": 35000.0})
+    assert ok["softlocks"] == 0  # exactly 30 s of silence is not a softlock
+
+
+def test_report_reuses_the_persisted_runner_outcome(tmp_path):
+    # Regression: re-reporting a timed-out run must not record a phantom crash.
+    inst = make_install(tmp_path, [HEADER, {"ev": "frame", "dt_ms": 16}])
+    (inst / regress.RUNNER_REL).write_text(
+        json.dumps({"killed": True, "exit_code": None, "wall_ms": 100})
+    )
+    assert regress.report(args_for(inst))["crashes"] == 0
+    (inst / regress.RUNNER_REL).unlink()
+    assert regress.report(args_for(inst))["crashes"] == 1
