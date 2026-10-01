@@ -21,6 +21,7 @@ References are relative to `core/`.
 | Bink 2 (title-decoded) | No verified FMV reach. | Demon's Souls' intro cinematic plays through the title's own decoder. It depends on two fixes:<br>• the `s_*_saveexec` source-before-destination order (`shader/recompiler/Translation/src/ControlFlowInstructions.cpp:18-25`; the comment names the Bink 2 kernels; `APS5_SAVEEXEC_WRITE_FIRST` reverts it);<br>• "adjacent-generation" write-back for video planes packed back to back (`libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp:839-850`, `:2617-2674`; kill switch `APS5_NO_ADJACENT_GENERATION`). |
 | `libSceAvPlayer.native` | All 27 exports are `NotImplemented_nid_no_patch`, which throws `std::runtime_error` (`libs/prx/libc/src/General.cpp:85-87`). For example, `sceAvPlayerInit` is at `libs/prx/libSceAvPlayer.native/Export.cpp:87-91`. | Upstream implements a 28-export state machine simulating player lifecycle (Ready/Play/Pause/Stop) with a 1080p blank clip. PortPS5 ports this state machine with full System V ABI annotations and companion GoogleTest suite. |
 | `libSceAvPlayer` (non-native) | 25 throw-stubs. | Compiles the shared native implementation into its own PRX with C linkage and System V ABI. |
+| `libSceVideodec2` (PS5 hardware video decoder API) | PortPS5: AVC only, through the host H.264 decoder (`H264Decoder`, FFmpeg built LGPL-only from the pinned `3rdparty/FFmpeg`, see [build-toolchain.md](build-toolchain.md)); 10 exports under `core/libs/prx/libSceVideodec2/`. Output is NV12 with a 256-byte pitch and the chroma plane directly after `pitch * height` luma rows. | AnyPS5 `main` has an earlier port with wrong error codes (`ARGUMENT_POINTER` 0x811d0103, `DECODER_INSTANCE` 0x811d0106) and a wrong `AvcPictureInfo` layout; it also returned black pictures without FFmpeg. |
 | Flip pacing | `libSceVideoOut` synthesises a 59.94 Hz vblank from `steady_clock` (`VideoOutDriver.cpp` `vblankLoop`). | Same (`libs/prx/libSceVideoOut/src/VideoOutDriver.cpp:531-553`). A flip waits for `lastFlipVblank + flipRate + 1` (`:391-395`). The swapchain present mode is hard-coded to FIFO (`libSceAgcDriver/Execution/src/VulkanDevice.cpp:918`, `:1550`). |
 | A/V telemetry | None. | None. |
 
@@ -47,6 +48,17 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Vide
 **Interim, M1–M2: adjacent block-generation advance.** Until general tracking lands in M3, AnyPS5 main's write-back (`Texture.cpp:839-850`, `:2617-2674` at `main@75a8668`) is ported with its Bink and video-plane naming removed. It is stated as a general rule: a GPU write to a surface also advances the write generation of the adjacent block it shares with a surface packed back to back, so that surface is not read stale. It has no switch and no title reference, and it applies to every surface. M3 deletes it when general block-generation tracking replaces it.
 
 The `APS5_NO_ADJACENT_GENERATION` and `APS5_SAVEEXEC_WRITE_FIRST` switches are deleted, per the kill-switch rule in [configuration.md](configuration.md).
+
+**Videodec2 path** (title-driven access units, not AvPlayer):
+
+| Piece | Design |
+|---|---|
+| Codec | AVC only. Any other `codec_type` (HEVC is 974921) fails config validation with `CODEC_TYPE`; there is no fallback decoder and never a black picture. Without the host decoder, `CreateDecoder` returns `API_FAIL`. |
+| Input | One Annex B access unit per `sceVideodec2Decode`. Bytes without a start code are `ACCESS_UNIT` (0x811D0301), not guessed at. |
+| Output | NV12, pitch `AlignUp(width, 256)`, chroma at `pitch * height`, zeroed padding, only the NV12 area is written. A frame buffer that is too small is `FRAME_BUFFER_SIZE` and the picture is kept for a retry; a picture above the configured maximum is `OVERSIZE_DECODE` and is dropped. At most one picture per `Decode`/`Flush`; `Flush` drains reordered pictures. |
+| Picture info | `GetPictureInfo` answers from a table keyed by the output frame buffer address, capped at 128 entries and cleared by `Reset`/`Delete`. The real library stores the info after the frame buffer; shadPS4 copies it from there. This design never writes past the title's NV12 area, at the cost of a bounded lookup table. |
+| Metadata | pts, dts and the attached value travel on `AVPacket::opaque_ref` and come back on the right (reordered) picture. |
+| Threads | FFmpeg runs single-threaded; a per-decoder mutex serialises calls. |
 
 **AvPlayer path** (implemented only if the M1 inventory shows a gate title imports it):
 
@@ -104,6 +116,7 @@ Reaching the post-FMV state without the end reference fails the check, so a skip
   - Unit tests of the offset calculator on synthetic timestamps.
   - AvPlayer state machine GoogleTest suite (`AvPlayerStateMachineTests`): verifies player initialization/close, source attachment, automatic transition to Play, Pause/Resume lifecycle, StreamInfo resolution metadata, seeking timestamp offsets (`JumpToTime`), looping and trick-speed controls, stream enable/disable toggling, and video frame delivery with guest texture allocator callbacks (`sceAvPlayerGetVideoDataEx`). The same suite links separately against each AvPlayer PRX; extended-init regressions check both auto-start values, callback delivery, three requested framebuffers and cleanup, plus null initialization parameters.
   - AvPlayer state machine against a project-made H.264 clip in MP4, generated in CI with a permissively licensed encoder. It contains no game data. It asserts PTS ordering, `IsActive` at end of stream, and `pts_minus_clock_ms` within ±40 ms. Runs on the Windows runner, because MF is available there.
+- **Videodec2 (hosted `unit`):** `H264DecoderTests` decodes hand-built Baseline streams (I_PCM and P_Skip macroblocks, no encoder, no media) and requires bit-exact planes, metadata carry-through, cropping, rejection of non-Annex B input, recovery after garbage, decode-after-drain and reset; `Videodec2Tests` covers the guest layouts, every error code and check order, the NV12 layout with a sentinel tail, buffer-too-small retry, oversize drop, picture-info fields and the bounded picture table; `ffmpeg_license_gate_*` and `LinkedFfmpegIsPlainLgpl21OrLater` pin the LGPL-2.1+ requirement. Decode tests skip, loudly, when FFmpeg is not built; the `ci` preset requires it.
 - **Hosted `driver-lavapipe`:** two surfaces packed back to back that share a 64 KiB block. A GPU write to one must not stale the other. This test replaces the Bink-specific evidence.
 - **Local regression:** the first-frame and end-frame references for every FMV of each gate title, frame count ≥ 90%, and `av_offset_ms_max` ≤ 80.
 - **M3 stress:** 3 × 150 s of the Demon's Souls intro with 0 wedges (ROADMAP M3 exit).
@@ -112,7 +125,7 @@ Reaching the post-FMV state without the end reference fails the check, so a skip
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] Items:<br>- [x] saveexec fix ported (PRs #29 and #60, `RecompilerFixesTests`, `recompiler_ported_instruction_tests`);<br>- [ ] interim adjacent block-generation advance (no switch, no title reference): not implemented, no such code exists under `libSceAgcDriver/Graphics` on `main` (bean `portps5-ux18`);<br>- [x] AvPlayer offline state machine and `AvPlayerStateMachineTests` (PR #33), which covers the audit's "never crash or deadlock at boot" goal; real media decoding is still open;<br>- [ ] codec inventory per gate title (bean `portps5-3eh1`);<br>- [ ] offset telemetry skeleton (`video_latency_ms`): no such counter exists (bean `portps5-f9a3`). |
+| M1 | - [ ] Items:<br>- [x] saveexec fix ported (PRs #29 and #60, `RecompilerFixesTests`, `recompiler_ported_instruction_tests`);<br>- [ ] interim adjacent block-generation advance (no switch, no title reference): not implemented, no such code exists under `libSceAgcDriver/Graphics` on `main` (bean `portps5-ux18`);<br>- [x] AvPlayer offline state machine and `AvPlayerStateMachineTests` (PR #33), which covers the audit's "never crash or deadlock at boot" goal; real media decoding is still open;<br>- [x] `libSceVideodec2` AVC decode through the pinned LGPL FFmpeg (bean `portps5-v2dc`);<br>- [ ] codec inventory per gate title (bean `portps5-3eh1`);<br>- [ ] offset telemetry skeleton (`video_latency_ms`): no such counter exists (bean `portps5-f9a3`). |
 | M2 | - [ ] FMV references and the "FMV played" rule wired into `tools/regress` for the 2D titles, if they contain video (bean `portps5-3m3u`). |
 | M3 | - [ ] General block-generation tracking replaces the interim adjacent block-generation advance, which is deleted. Tomb Raider FMV passes. Stress-run exit. |
 | M4 | - [ ] Bugsnax FMV on the general path. |
@@ -122,6 +135,9 @@ Reaching the post-FMV state without the end reference fails the check, so a skip
 ## Open questions
 
 - Do any gate titles use AvPlayer, or only title-decoded Bink? This is answered by the M1 inventory. AvPlayer work is skipped if none do.
+- `libSceVideodec2` uses FFmpeg while the AvPlayer decision above names Media Foundation. They are different paths (the title feeds access units to Videodec2; AvPlayer opens containers), but the maintainers should confirm that one decoder library for system-decoded video is acceptable; this spec does not re-open the AvPlayer decision.
+- Pitch alignment: KytyPS5 and AnyPS5 use 256, shadPS4 uses 64 (and aligns width and height to 16). 256 is used because the first two target the PS5 and agree; it needs confirming on a real title (`frame_buffer_alignment` is reported as 0x100).
+- HEVC (`sceVideodec2GetHevcPictureInfo`, codec type 974921) and the interlaced second picture are not implemented.
 - Is linking Media Foundation (an OS component) compatible with GPL-2.0-only distribution? It is believed to fall under the system-library exception, but this is not verified. Record it next to PRD R1.
 - The 90% frame-count threshold is a starting value. Tune it after the first M2 runs, without title-specific values.
 - Will FIFO-only presentation keep `video_latency_ms` low enough on 60 Hz hosts? Revisit when `[display] present_mode` lands.

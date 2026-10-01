@@ -58,6 +58,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - [x] return codes instead of throws in direct memory and memory pools (PR #39);
   - [ ] the arena, heap spans and registry use them, and the runtime instantiates the tracker.
 - [x] Offline behaviour for network stack (`libSceNet`), AvPlayer playback state machine (`libSceAvPlayer`), NP/PSN, trophies, store, and user-service dialogs, so no gate title blocks on them at boot.
+- [x] `libSceVideodec2` AVC decode (host H.264 decoder: FFmpeg built LGPL-only from the pinned `3rdparty/FFmpeg`, licence gate in [spec/build-toolchain.md](spec/build-toolchain.md)); HEVC and the AJM MP3 path stay open ([spec/video-fmv.md](spec/video-fmv.md)).
 - [x] Rewrite pthread/umtx/cond on futex words (`WaitOnAddress`), with no global mutex and compact guest tids, and make errno returns correct. Unimplemented exports call `Unsupported()`, which logs and aborts; no throw crosses the `APS5_VABI` boundary ([spec/threading.md](spec/threading.md)).
 - [x] Image codecs: shared stb-backed JPEG/PNG layer (`core/Decoder`), `libSceJpegEnc` and `libScePngDec` ([spec/image-codecs.md](spec/image-codecs.md)); `libScePngEnc` remains open.
 - [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
