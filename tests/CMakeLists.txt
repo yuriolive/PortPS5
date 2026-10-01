@@ -172,6 +172,56 @@ portps5_add_gtest(avplayer_exports_tests
         unit
 )
 
+# H.264 decoding for libSceVideodec2: the FFmpeg wrapper on synthetic I_PCM/P_Skip streams, the guest ABI
+# (layouts, error codes, NV12 layout), and the FFmpeg licence gate script on fixture configure outputs.
+portps5_add_gtest(h264_decoder_tests
+    SOURCES
+        video/H264DecoderTests.cpp
+    LIBRARIES
+        portps5_h264_decoder
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}/video
+    LABELS
+        unit
+)
+
+portps5_add_gtest(videodec2_tests
+    SOURCES
+        video/Videodec2Tests.cpp
+    LIBRARIES
+        libSceVideodec2
+        portps5_h264_decoder
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/video
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+foreach(case
+        "lgpl_accepted;lgpl;lgpl;PASS"
+        "gpl_rejected;gpl;lgpl;FAIL"
+        "lgplv3_rejected;lgplv3;lgpl;FAIL"
+        "gpl_header_rejected;lgpl;gpl;FAIL"
+        "nonfree_rejected;lgpl;nonfree;FAIL")
+    list(GET case 0 name)
+    list(GET case 1 mak)
+    list(GET case 2 hdr)
+    list(GET case 3 expect)
+    add_test(NAME ffmpeg_license_gate_${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DCONFIG_MAK=${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/fixtures/${mak}.mak
+            -DCONFIG_H=${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/fixtures/${hdr}.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/PortPS5FFmpegLicenseCheck.cmake)
+    set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES LABELS unit)
+    if(expect STREQUAL "FAIL")
+        set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES WILL_FAIL TRUE)
+    endif()
+endforeach()
+
 # Save data subsystem fidelity tests (mount modes, snapshots, atomic swaps, quotas, patterns, dialogs)
 portps5_add_gtest(savedata_fidelity_tests
     SOURCES
