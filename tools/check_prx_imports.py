@@ -74,6 +74,9 @@ def main(argv):
         return 2
     libs = argv[1]
     modules = sorted(f for f in os.listdir(libs) if f.endswith(".prx"))
+    if not modules:
+        print(f"No .prx modules found in {libs}", file=sys.stderr)
+        return 2
     texts = {m: objdump(os.path.join(libs, m)) for m in modules}
     exports = {m: parse_exports(t) for m, t in texts.items()}
     missing = []
