@@ -55,6 +55,18 @@ TEST(TelemetryLog, HeartbeatCarriesRuntimeClock) {
     EXPECT_EQ(sink.lines[0], "{\"ev\":\"heartbeat\",\"t_ms\":35001}");
 }
 
+// Invariant: Close releases the stream, later writes are dropped and Close is idempotent, so
+// Shutdown can free the file handle without risking a use-after-close.
+TEST(TelemetryFileSink, CloseIsIdempotentAndDropsLaterWrites) {
+    std::FILE* f = std::tmpfile();
+    ASSERT_TRUE(f != nullptr);
+    FileSink sink(f);
+    sink.Write("{}");
+    sink.Close();
+    sink.Close();
+    sink.Write("{}");  // must not touch the closed stream
+}
+
 // Invariant: events carry only numeric fields; integers print without a fraction.
 TEST(TelemetryLog, EventFormatsNumbersOnly) {
     MemorySink sink;

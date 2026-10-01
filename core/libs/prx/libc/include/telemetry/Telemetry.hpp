@@ -53,8 +53,19 @@ class FileSink final : public LineSink {
 public:
     /** @brief Takes ownership of `file`. @param file Open stream, or nullptr (writes are dropped). */
     explicit FileSink(std::FILE* file) : m_file(file) {}
-    ~FileSink() override {
-        if (m_file) std::fclose(m_file);
+    ~FileSink() override { Close(); }
+    /**
+     * @brief Flushes and closes the stream; later Write calls are dropped. Idempotent.
+     *
+     * The caller must guarantee no Write is in flight or follows. Log guarantees that after
+     * run.end (it drops everything past it), so Shutdown can release the file handle, which
+     * on Windows otherwise stays locked for the life of the process.
+     */
+    void Close() {
+        if (m_file) {
+            std::fclose(m_file);
+            m_file = nullptr;
+        }
     }
     FileSink(const FileSink&) = delete;
     FileSink& operator=(const FileSink&) = delete;

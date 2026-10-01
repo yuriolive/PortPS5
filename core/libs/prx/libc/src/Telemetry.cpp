@@ -167,4 +167,8 @@ extern "C" void PortPS5_Telemetry_Shutdown_nid_no_patch(std::uint64_t captureSpl
     if (rt->thread.joinable()) rt->thread.join();
     rt->log.Event("run.end", {{"capture_split", static_cast<double>(captureSplit)},
                               {"write_faults", static_cast<double>(writeFaults)}});
+    // run.end closed the Log, so nothing can Write any more: release the file handle
+    // (a locked handle breaks directory cleanup on Windows). The Runtime itself stays
+    // allocated for straggler safety; its exports are already no-ops.
+    rt->sink.Close();
 }

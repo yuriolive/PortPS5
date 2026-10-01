@@ -48,7 +48,12 @@ TEST(TelemetryRuntime, LogEndsAtRunEndAfterShutdown) {
     EXPECT_NE(lines.back().find("\"ev\":\"run.end\""), std::string::npos);
     EXPECT_NE(lines.back().find("\"capture_split\":3"), std::string::npos);
     EXPECT_NE(lines.back().find("\"write_faults\":7"), std::string::npos);
-    std::filesystem::remove_all(dir);
+    // Shutdown released the file handle, so the log can be deleted (on Windows an open
+    // handle makes this fail, which is exactly the leak this guards against).
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    EXPECT_FALSE(ec) << ec.message();
+    EXPECT_FALSE(std::filesystem::exists(dir));
 }
 
 // Counter source handed to the runtime before Start (the mixer can initialize first).
@@ -79,6 +84,7 @@ TEST(TelemetryRuntime, AudioSourceRegisteredBeforeStartIsSampled) {
     }
     PortPS5_Telemetry_Shutdown_nid_no_patch(0, 0);
     EXPECT_TRUE(seen);
-    std::filesystem::remove_all(dir);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);  // best-effort cleanup must not fail the test
 }
 }  // namespace
