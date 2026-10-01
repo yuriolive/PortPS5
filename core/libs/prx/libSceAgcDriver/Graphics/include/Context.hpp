@@ -16,6 +16,10 @@
 #include <stdexcept>
 #include <string>
 
+namespace PortPS5::GuestMemory {
+struct IWriteTracker;
+}
+
 namespace AgcDriver::Graphics {
 
 class TextureDetiler;
@@ -78,6 +82,10 @@ struct Context {
     VkDeviceSize hostImportAlignment = 0;
     // VkPhysicalDeviceFeatures::depthBounds was enabled at device creation (depth-bounds test).
     bool depthBounds = false;
+    // Optional CPU/GPU write tracker (IWriteTracker). When set, the TextureCache skips its whole-texture compare while the
+    // tracker proves the guest range unchanged. nullptr keeps the compare. Anything that writes guest memory on the GPU
+    // path must report it through MarkWritten before a tracker is wired (docs/spec/gpu-driver.md "Per-draw CPU cost").
+    PortPS5::GuestMemory::IWriteTracker* writeTracker = nullptr;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

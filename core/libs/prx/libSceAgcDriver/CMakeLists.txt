@@ -385,6 +385,7 @@ if(BUILD_TESTING)
     # Hosted BytesEqual tests: pure helper used by the TextureCache revalidation (no GPU, no guest memory).
     portps5_add_gtest(agc_bytes_equal_tests
         SOURCES  tests/BytesEqualTests.cpp
+                 tests/SnapshotValidityTests.cpp
         INCLUDES ${LIBS_INCLUDE_DIR}
         LIBRARIES libc
         LABELS   unit
