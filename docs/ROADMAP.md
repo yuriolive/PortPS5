@@ -60,7 +60,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - [x] `Config` schema, validation and the typed `[debug]` section (`libc/src/Config.cpp`, `core/libs/tests/Config.cpp`); no `APS5_` string literals remain in `core/` and the `policy` job enforces it;
   - [x] startup loads config for the `param.json` title ID before guest initializers (startup portion of bean `portps5-c06p`);
   - [ ] `display.present_mode` and `display.resolution_scale` reach the driver: the swapchain is hard-coded to FIFO (bean `portps5-dtwf`).
-- [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`). Only per-context audio underrun and overrun counters exist (bean `portps5-f9a3`).
+- [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`). The telemetry core, watchdog and mixer counter integration exist ([spec/verification.md](spec/verification.md) 4.3); the start-up, presenter and guest-progress call sites are not wired, so this stays open (bean `portps5-f9a3`).
 - [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI; merged into the `build_and_test` job by PR #38).
 - [ ] Hosted CI job `driver-lavapipe`: driver suites carry the `lavapipe` label but `ci.yml` has no such job (bean `portps5-ekx3`).
 - [ ] Inventory each gate title's imports (NIDs, audio and video codecs, dialogs). One title of five is recorded; a repeatable tool (bean `portps5-zadg`) and the other four (bean `portps5-3eh1`) are open.
@@ -90,7 +90,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Driver: host depth/stencil surface (`DB_Z_INFO` decode, host `VkImage`, render-pass attachment, `DB_RENDER_CONTROL` clears, depth bounds, `DB_DEPTH_CONTROL` bit 31 colour suppression) (`Graphics/src/DepthSurface.cpp`, [spec/gpu-driver.md](spec/gpu-driver.md); PR #55, bean `portps5-mij8` completed).
 - [ ] Per-title `/savedata0` mount for guest file I/O: no mount exists on main. In flight as PR #53, not landed (bean `portps5-10fr`).
 - [ ] Driver: retile depth to guest memory (CPU or shader reads of a depth buffer) and guest-memory upload of never-cleared depth surfaces. A draw that depth-tests a surface that was never cleared is rejected until then (bean `portps5-9s7e`).
-- [ ] `tools/regress` local regression plus results JSON upload, with the config hash and the "FMV played" rule (bean `portps5-3m3u`).
+- [ ] `tools/regress` local regression plus results JSON upload, with the config hash and the "FMV played" rule (bean `portps5-3m3u`). Runner, results JSON and pass rule landed as `tools/regress.py`; frame checks, checkpoint replay, shader corpus step and upload remain, so this stays open.
 
 **Exit criteria**
 - [ ] Dreaming Sarah and TMNT: Shredder's Revenge pass the full-run protocol (average ≥30 fps, 1% low ≥20 fps, 1080p, 0 crashes and 0 softlocks, save round-trip). Dreaming Sarah: bean `portps5-kmb6`.
