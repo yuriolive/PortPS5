@@ -49,10 +49,10 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
  *  @return new offset, or SCE error (EINVAL bad whence, EBADF, EOVERFLOW above INT_MAX) */
 int APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
 /** @brief Fills FileStat for a path.
- *  @return 0, or SCE error (ENOENT, EACCES for a /savedata0 escape); a null path or buffer is an invalid-argument exception */
+ *  @return 0, or SCE error (ENOENT, EACCES for a /savedata0 escape, EFAULT for a null path or buffer) */
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
 /** @brief Removes a file.
- *  @return 0, or SCE error (ENOENT, EACCES) */
+ *  @return 0, or SCE error (ENOENT, EACCES, EFAULT for a null path) */
 int APS5_VABI sceKernelUnlink(const char* path);
 /** @brief Creates one directory level (POSIX semantics; the parent must exist).
  *  @return 0, or SCE error (EEXIST, ENOENT for a missing parent, EACCES, EFAULT) */
@@ -61,7 +61,7 @@ int APS5_VABI sceKernelMkdir(const char* path, std::uint16_t mode);
  *  @return 0, or SCE error (EBADF, EIO) */
 int APS5_VABI sceKernelFsync(int fd);
 /** @brief Removes an empty directory.
- *  @return 0, or SCE error (ENOENT, ENOTEMPTY, EACCES) */
+ *  @return 0, or SCE error (ENOENT, ENOTEMPTY, EACCES, EFAULT for a null path) */
 int APS5_VABI sceKernelRmdir(const char* path);
 
 }

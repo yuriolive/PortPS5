@@ -448,7 +448,7 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
 
 /**
  * Removes an empty directory.
- * Returns: 0, or SCE error (ENOENT, ENOTEMPTY, EACCES).
+ * Returns: 0, or SCE error (ENOENT, ENOTEMPTY, EACCES, EFAULT for a null path).
  */
 int APS5_VABI sceKernelRmdir(const char* path) {
     if (path == nullptr) return SceKernelErrno(EFAULT);

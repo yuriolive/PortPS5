@@ -215,7 +215,7 @@ int APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
 
 /**
  * Fills FileStat for a path.
- * Returns: 0, or SCE error (ENOENT, EACCES for a /savedata0 escape); a null path or buffer is an invalid-argument exception.
+ * Returns: 0, or SCE error (ENOENT, EACCES for a /savedata0 escape); EFAULT for a null path or buffer.
  */
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     // Guest pointers are untrusted: a null is EFAULT as a code, never an exception.
@@ -229,7 +229,7 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
 
 /**
  * Removes a file.
- * Returns: 0, or SCE error (ENOENT, EACCES).
+ * Returns: 0, or SCE error (ENOENT, EACCES, EFAULT for a null path).
  */
 int APS5_VABI sceKernelUnlink(const char* path) {
     if (path == nullptr) return SceKernelErrno(EFAULT);
