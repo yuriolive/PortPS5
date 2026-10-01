@@ -130,7 +130,14 @@ def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha):
     """
     stats = rm.frame_stats(tel["dts"])
     crashes = tel["crashes"]
-    if not killed_by_runner and (not tel["ended"] or exit_code not in (0, None)):
+    # A watchdog abort writes softlock then run.end and exits non-zero; that is
+    # one softlock, not also a crash (verification.md 4.3).
+    watchdog_end = tel["softlocks"] > 0 and tel["ended"]
+    if (
+        not killed_by_runner
+        and not watchdog_end
+        and (not tel["ended"] or exit_code not in (0, None))
+    ):
         crashes += 1
     av_max = round(max(tel["av_offsets"], default=0.0), 1)
     duration = stats["presented_s"]

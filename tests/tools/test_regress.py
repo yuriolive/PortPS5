@@ -355,3 +355,10 @@ def test_run_refuses_portps5_debug(tmp_path, monkeypatch):
         "--name", "S", "--commit", "c", "--gpu-vendor", "amd", "--driver-version", "1",
         "--bench-cpu", "1", "--bench-gpu", "1", "--duration-s", "1"]  # fmt: skip
     assert regress.main(cli) == 1
+
+
+def test_watchdog_abort_is_a_softlock_not_also_a_crash(tmp_path):
+    # Regression for the telemetry watchdog: softlock + run.end + non-zero exit.
+    inst = make_install(tmp_path, [HEADER, {"ev": "softlock", "idle_ms": 31000}, {"ev": "run.end"}])
+    res = regress.report(args_for(inst), killed=False, exit_code=1)
+    assert res["softlocks"] == 1 and res["crashes"] == 0 and res["result"] == "fail"

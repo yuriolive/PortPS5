@@ -266,3 +266,14 @@ portps5_add_gtest(pad_controller_input_tests
     LABELS
         unit
 )
+
+# Telemetry core: record schema, stall/softlock definitions, watchdog latch and
+# audio/A-V sampler on a synthetic clock (header-only, no game data).
+portps5_add_gtest(telemetry_core_tests
+    SOURCES
+        telemetry/TelemetryTests.cpp
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)

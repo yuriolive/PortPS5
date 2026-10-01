@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/telemetry/TelemetryRuntime.hpp"
 
 // ---------------------------------------------------------------------------
 // AudioRingBuffer Implementation
@@ -268,6 +269,12 @@ bool AudioMixer::Initialize() {
         return false;
     }
     m_initialized = true;
+    // Expose the mixer counters to runtime telemetry (audio.underrun, av.offset)
+    // instead of duplicating them; the sampler reads them once per second.
+    PortPS5_Telemetry_SetAudioSource_nid_no_patch([]() {
+        return PortPS5::Telemetry::AudioCounters{AudioMixer::Get().GetUnderruns(),
+                                                 AudioMixer::Get().GetLatencyMs()};
+    });
     return true;
 }
 
