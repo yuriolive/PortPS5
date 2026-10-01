@@ -323,6 +323,12 @@ jobs:
       # plus ICD manifest, so the MSVC runtime is irrelevant to MinGW code).
       MESA_VERSION: "24.3.4"
       VULKAN_RT_VERSION: "1.3.296.0"
+      # SHA-256 of the downloads, checked before anything is extracted. Taken from two
+      # independent downloads that matched (upstream publishes no checksums); bump together
+      # with the versions above. A mismatch fails the job before extraction, including for
+      # files restored from the actions cache.
+      VULKAN_RT_SHA256: e0429f91cf356fe99e381f7d22e568ac81945669f1be1772d933a0d189230452
+      MESA_SHA256: 7ebc711ad1896ac88ab21e142f1017f8ff035f0f342bdb72fbb5e2eb881ba363
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -367,6 +373,11 @@ jobs:
           # never exits (killed after 300 s) and 7-Zip finds no vulkan-1.dll
           # inside it. LunarG also publishes the loader as a plain zip
           # (vulkan-runtime-components.zip); take the x64 build from that.
+          function Assert-Sha256([string]$path, [string]$expected) {
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "$(Split-Path $path -Leaf) SHA256: $actual"
+            if ($actual -ne $expected) { Remove-Item $path -Force; throw "SHA256 mismatch for $path (expected $expected, got $actual)" }
+          }
           function Find-X64Loader([string]$dir) {
             Get-ChildItem -Recurse -Path $dir -Filter 'vulkan-1.dll' -ErrorAction SilentlyContinue | Where-Object {
               # Select by PE machine type (0x8664 = x64), not by folder name.
@@ -378,7 +389,7 @@ jobs:
           if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) {
             $zip = "$dl\vulkan-runtime-components.zip"
             if (-not (Test-Path $zip)) { Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/vulkan-runtime-components.zip" -OutFile $zip }
-            Write-Host "Vulkan runtime components SHA256: $((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant())"
+            Assert-Sha256 $zip $env:VULKAN_RT_SHA256
             $rtDir = "$env:RUNNER_TEMP\vulkanrt"
             Expand-Archive -Path $zip -DestinationPath $rtDir -Force
             Write-Host "Unpacked files:"; Get-ChildItem -Recurse $rtDir | Select-Object -First 40 | ForEach-Object { Write-Host "  $($_.FullName)" }
@@ -389,7 +400,7 @@ jobs:
           # 2. Mesa lavapipe (CPU Vulkan ICD) from mesa-dist-win.
           $archive = "$dl\mesa.7z"
           if (-not (Test-Path $archive)) { Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive }
-          Write-Host "Mesa SHA256: $((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant())"
+          Assert-Sha256 $archive $env:MESA_SHA256
           Write-Host "Extracting Mesa archive"
           7z x $archive "-o$env:RUNNER_TEMP\mesa" -y | Out-Null
           $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd.x86_64.json' | Select-Object -First 1
