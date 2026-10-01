@@ -107,6 +107,16 @@ portps5_add_gtest(guest_arena_extent_tests
         unit
 )
 
+# Full uncapped 10^6-op differential run (spec guest-memory.md). DISABLED_ in
+# the gtest binary keeps it out of the hosted `unit` run; this entry forces it
+# on under the `slow` label, which only the scheduled workflow selects.
+portps5_add_test(GuestArenaExtent.FuzzUncapped guest_arena_extent_tests
+    ARGS --gtest_also_run_disabled_tests
+         --gtest_filter=GuestArenaExtent.DISABLED_MatchesLinearScanFuzzUncapped
+    LABELS slow
+)
+set_tests_properties(GuestArenaExtent.FuzzUncapped PROPERTIES TIMEOUT 900)
+
 # Filesystem sandbox containment & path traversal prevention (ported from SharpEMU)
 portps5_add_gtest(filesystem_sandbox_path_tests
     SOURCES

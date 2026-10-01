@@ -125,6 +125,20 @@
       }
     },
     {
+      "name": "slow",
+      "displayName": "Slow Tests (scheduled)",
+      "description": "Runs slow-labeled tests (full-size fuzz runs) in the scheduled nightly workflow; excluded from the hosted unit run",
+      "configurePreset": "ci",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^slow$"
+        }
+      }
+    },
+    {
       "name": "golden",
       "displayName": "Recompiler Golden Corpus",
       "description": "Runs golden-labeled tests (hosted recompiler-golden job)",
