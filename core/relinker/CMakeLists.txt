@@ -211,6 +211,22 @@ if(BUILD_TESTING)
     # Relinker hardening regression tests (GoogleTest). Each target compiles only
     # the translation units it exercises, like the legacy runners above.
     set(RELINKER_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+    portps5_add_gtest(relinker_windows_config_startup_tests
+        SOURCES
+            ${RELINKER_DIR}/elfpatcher/tests/WindowsConfigStartupTests.cpp
+            ${RELINKER_DIR}/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp
+            ${RELINKER_DIR}/elfpatcher/src/windows/WindowsGuestStartup.cpp
+            ${RELINKER_DIR}/elfpatcher/src/windows/WindowsDependencyStubBuilder.cpp
+            ${RELINKER_DIR}/elfpatcher/src/windows/WindowsStubEmitter.cpp
+            ${RELINKER_DIR}/elfpatcher/src/windows/WindowsImportBuilder.cpp
+            ${RELINKER_DIR}/elfpatcher/src/windows/WindowsPeFormat.cpp
+            ${RELINKER_DIR}/io/src/BufferUtils.cpp
+        INCLUDES
+            ${RELINKER_DIR}/elfpatcher/include
+            ${RELINKER_DIR}/domain/include
+            ${RELINKER_DIR}/io/include
+            ${RELINKER_DIR}/codegen/include
+    )
     portps5_add_gtest(relinker_elf_reader_bounds_tests
         SOURCES
             ${RELINKER_DIR}/relinker/tests/ElfReaderBoundsTests.cpp

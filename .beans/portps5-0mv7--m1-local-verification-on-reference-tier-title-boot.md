@@ -1,14 +1,15 @@
 ---
 # portps5-0mv7
-title: 'M1: Local Verification on Reference Tier (Title boot, 60fps gate, frame capture comparison)'
+title: 'M1: Exit verification on the reference tier (Demon''s Souls intro, perf stats, frame comparison)'
 status: todo
 type: task
 priority: normal
 tags:
     - beads:portps5-5
 created_at: 2026-09-30T22:53:49Z
-updated_at: 2026-09-30T23:56:52Z
+updated_at: 2026-10-01T17:59:13Z
 ---
+
 
 ## Context
 
