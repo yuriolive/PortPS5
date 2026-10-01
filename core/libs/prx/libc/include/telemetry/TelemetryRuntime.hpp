@@ -24,7 +24,7 @@ using PortPS5TelemetryAudioSource = PortPS5::Telemetry::AudioCounters (*)();
 using PortPS5TelemetryDiagnosticsHook = void (*)();
 
 /**
- * @brief Opens <installDir>/logs/telemetry.jsonl, writes run.start, arms the watchdog.
+ * @brief Opens `logs/telemetry.jsonl` under the install directory, writes run.start, arms the watchdog.
  * @param installDir Directory of the converted executable.
  * @param width,height Output resolution. @param warmCache Non-zero when the pipeline cache is warm.
  * @param audioDevice "wasapi-default" or "none".

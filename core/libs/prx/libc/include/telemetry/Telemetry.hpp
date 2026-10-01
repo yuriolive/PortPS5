@@ -98,7 +98,7 @@ public:
 
     /**
      * @brief Records one presented frame.
-     * @param nowMs Monotonic time of the present. The first call only sets the
+     * @param nowMs Monotonic ms since run start at the present; also written as `t_ms` so the runner can see a hang after the last present. The first call only sets the
      *        baseline and writes nothing, since there is no previous present.
      * @return The interval in ms since the previous present, or 0 on the first call.
      */
@@ -108,7 +108,7 @@ public:
         const std::uint64_t dt = first ? 0 : nowMs - m_lastPresentMs;
         m_havePresent = true;
         m_lastPresentMs = nowMs;
-        if (!first) m_sink.Write("{\"ev\":\"frame\",\"dt_ms\":" + std::to_string(dt) + "}");
+        if (!first) m_sink.Write("{\"ev\":\"frame\",\"dt_ms\":" + std::to_string(dt) + ",\"t_ms\":" + std::to_string(nowMs) + "}");
         return dt;
     }
 

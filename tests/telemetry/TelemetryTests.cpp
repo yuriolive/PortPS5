@@ -32,7 +32,7 @@ TEST(TelemetryLog, RunStartHeaderMatchesRunnerContract) {
               "\"pipeline_cache\":\"warm\",\"audio_device\":\"none\"}");
 }
 
-// Invariant: the first present sets the baseline and logs nothing; later presents log dt_ms.
+// Invariant: the first present sets the baseline and logs nothing; later presents log dt_ms and t_ms (the absolute time lets the runner detect a hang after the last present).
 // A failure here would shift every frame time by one frame or invent a first interval.
 TEST(TelemetryLog, FrameLogsIntervalsAfterBaseline) {
     MemorySink sink;
@@ -42,8 +42,8 @@ TEST(TelemetryLog, FrameLogsIntervalsAfterBaseline) {
     EXPECT_EQ(log.Frame(1016), 16u);
     EXPECT_EQ(log.Frame(3016), 2000u);  // a stall is logged as-is; the reader excludes it
     ASSERT_EQ(sink.lines.size(), 2u);
-    EXPECT_EQ(sink.lines[0], "{\"ev\":\"frame\",\"dt_ms\":16}");
-    EXPECT_EQ(sink.lines[1], "{\"ev\":\"frame\",\"dt_ms\":2000}");
+    EXPECT_EQ(sink.lines[0], "{\"ev\":\"frame\",\"dt_ms\":16,\"t_ms\":1016}");
+    EXPECT_EQ(sink.lines[1], "{\"ev\":\"frame\",\"dt_ms\":2000,\"t_ms\":3016}");
 }
 
 // Invariant: events carry only numeric fields; integers print without a fraction.
