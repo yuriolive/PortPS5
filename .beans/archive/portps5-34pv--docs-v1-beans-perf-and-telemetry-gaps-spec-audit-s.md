@@ -27,7 +27,7 @@ Every v1 task is a bean under a milestone, with blockers recorded so parallel wo
   - the flip-rate override is in 2.0 M12 as experimental.
 - [x] ROADMAP Part II M12 and Part III. spec/README.md target architecture by version.
 - [x] Spec audit fixes from four parallel audits applied after re-verification against code. Sync dates bumped to 2026-10-01. All nine headings present; no broken links.
-- [x] Open questions added: gpu-driver 12–13, guest-memory 7, pipeline-cache 5, shader-recompiler 14.
+- [x] Open questions added: gpu-driver 13–14 (renumbered after #75 added 12), guest-memory 7, pipeline-cache 5, shader-recompiler 14.
 - [x] Bugs found during the audit filed: `ojy1`, `vtlf`, `tuet`, `ou5t`, `z797`, `t4yz`.
 
 ## Out of Scope

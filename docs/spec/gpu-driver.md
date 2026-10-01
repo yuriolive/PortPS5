@@ -220,6 +220,21 @@ Invariants kept by every option: the sampled content is the target state at the 
 
 The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` only when the ranges are resolved at submit time. Otherwise, as with an indirect count, it runs the shader.
 
+### Per-draw CPU cost
+
+Converted titles miss the 60 Hz flip rate in draw-heavy scenes (about 53 draws and 530 PM4 packets per frame against about 16 in light frames), so the cost is per draw. Metrics from one gate title on the `release` preset (the `dev` preset runs SPIR-V tools per rect-list draw and is about 2.5x slower; never measure on it): `Driver.Draw.total` about 30 ms per slow frame, `Graphics.ShaderResources.bindings` about 12 ms, fence waits 6 to 7 ms, `Driver.Draw.shaders` about 3.8 ms, `memory_upload` and `vertex_upload` about 3 ms each, `GuestMemory.Read` about 3.6 ms over about 880 calls, and `TextureCache::Get` about 0.15 ms per lookup even on a hit. Read them with `[debug] profile = ["gpu"]`.
+
+Slices, each its own PR with a regression test that needs no game data. A texture changed by the guest or by GPU write-back must still be re-read in every slice.
+
+| # | Mechanism | Status |
+|---|---|---|
+| 1 | `BytesEqual` (SSE2, `memcmp == 0` semantics) for the TextureCache whole-texture revalidation and the `GuestBufferMemory` snapshot consistency checks. Intended to cut the compare cost (not yet measured; see the bean), keeps exact semantics. | - [x] done in PR #75 |
+| 2 | Replace the per-draw compare with write-watch invalidation. The existing `GuestMemoryTracking::Watch` is page-protection based (`PAGE_NOACCESS` / `PAGE_READONLY`) and requires committed, writable, non-executable memory (`MemoryTrackingWindows.cpp` `Query`). A read-only texture page makes a kernel write into it (a file read, DMA) fail with an error instead of faulting, so this needs a design decision before code. | - [ ] open, see Open question 12 |
+| 3 | Reuse prepared `ShaderResources` state (layout, descriptor writes, vertex layout) when shaders, bindings and descriptors are unchanged between draws (the idea behind AnyPS5 `29b4601` draw recipes, behaviour only). | - [ ] open |
+| 4 | Batch guest reads and uploads (`GuestMemory.Read` calls, vertex and memory upload). | - [ ] open |
+
+Out of scope here: the render-target-as-texture copy (`RenderTexture.cpp`), owned by another change.
+
 ## Interfaces
 
 | Peer | Contract |
@@ -281,5 +296,6 @@ The driver executes a `KernelIdiom` as `vkCmdFillBuffer` or `vkCmdCopyBuffer` on
 9. Emit SPIR-V 1.6? It needs `VkPipelineShaderStageRequiredSubgroupSizeCreateInfo` set to `target.subgroupSize` (plus `REQUIRE_FULL_SUBGROUPS` for compute) on every pipeline path, with the `subgroupSizeControl` and `computeFullSubgroups` features enabled, the size checked against the device's min/max range, and each pinned stage checked against `VkPhysicalDeviceSubgroupSizeControlProperties::requiredSubgroupSizeStages` (support is per stage and implementation-dependent; an unsupported stage is rejected with a logged error). `REQUIRE_FULL_SUBGROUPS` is set on a compute pipeline only when `local_size_x` is a multiple of `target.subgroupSize`, which Vulkan requires; any other workgroup size omits the flag or is rejected with a logged error. Until then a 1.6 module may run a wave64 guest shader on a different subgroup size (between draws and dispatches, and where the stage allows it within one command) and silently read the wrong lanes. This lands with the wave64 work in M4. The emitter already accepts 1.6 (`core/shader/recompiler/SpirvBackend/src/RectListShaders.cpp:377` allows up to `0x00010600u`), but the driver's validator caps modules at 1.4 (`Graphics/src/ShaderValidation.cpp:151`, `words[1] <= 0x10400u`), so that cap must be raised in the same change (bean `portps5-s16v`).
 10. Resident render target sampling: after pooling destination images, is the remaining `DrawQueue::Flush()` plus extra submit per read worth removing before the Recorder wiring lands? Decided by the `portps5-r7qk` baseline (Graphics.Wait / DrawQueue.Wait totals).
 11. Multithreaded PM4 recording: can independent command buffers (different queues, or DCBs with no shared label wait) be translated into Vulkan secondary command buffers on worker threads? The GPU IR keeps this open, but it is not built until the frame breakdown (bean `portps5-hfiw`) shows record time (`rec_ms`) on the critical path. It is decided in the M5 performance pass.
-12. Temporal enhancement inputs (2.0 M12): can depth, motion vectors and jitter be identified on the GPU IR by a general rule (formats, usage, per-frame projection deltas), with per-title TOML confirmation keys? Spike bean `portps5-8ov1` (PRD V-R6). If no general rule exists, 2.0 ships spatial upscaling and HDR only.
-13. Upload engine: should uploads use a dedicated transfer queue where the device has one, or stay on the graphics queue with batched copies? Decided by the frame breakdown in bean `portps5-dtiq`.
+12. Per-draw texture revalidation: can write-watch invalidation replace the whole-texture compare? Page protection breaks kernel writes into watched pages (they fail instead of faulting) and costs a fault per guest write. Options to evaluate with measurements: keep the compare but gate it by a cheap per-page dirty probe (Windows write-watch via `MEM_WRITE_WATCH` and `GetWriteWatch`, which does not change protection), or restrict watching to textures the guest has not written for N frames. Not decided; the compare stays until a measured design exists.
+13. Temporal enhancement inputs (2.0 M12): can depth, motion vectors and jitter be identified on the GPU IR by a general rule (formats, usage, per-frame projection deltas), with per-title TOML confirmation keys? Spike bean `portps5-8ov1` (PRD V-R6). If no general rule exists, 2.0 ships spatial upscaling and HDR only.
+14. Upload engine: should uploads use a dedicated transfer queue where the device has one, or stay on the graphics queue with batched copies? Decided by the frame breakdown in bean `portps5-dtiq`.
