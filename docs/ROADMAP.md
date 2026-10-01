@@ -249,6 +249,20 @@ Checks that run on synthetic inputs and so need no GPU and no game data ([spec/v
 | Fuzzing | `portps5-axx6` | `portps5-pbj2` |
 | clang-tidy and stricter warnings | `portps5-hpx7` | `portps5-qf1m` |
 | Local nightly regression | `portps5-e6xg` | `portps5-3m3u`, `portps5-52bs` |
+
+Deliverables:
+
+- [ ] Vulkan validation layers on the lavapipe job (bean `portps5-977n`).
+- [ ] PE structure validation of relinker output (bean `portps5-s9zz`).
+- [ ] Deterministic codegen metrics per PR (bean `portps5-g0n7`).
+- [ ] C++ coverage report (bean `portps5-02a4`).
+- [ ] Synthetic guest ELF end to end (bean `portps5-ktrt`).
+- [ ] Unsupported() counts and compat status tiers (bean `portps5-ba7d`).
+- [ ] Linux sanitizer job (ASan, UBSan, TSan) (bean `portps5-pbj2`).
+- [ ] Fuzzing of ELF, PM4 and shader decoders (bean `portps5-axx6`).
+- [ ] clang-tidy and `-Wcast-function-type` (bean `portps5-hpx7`).
+- [ ] Local nightly regression on the maintainer machine (bean `portps5-e6xg`).
+
 ## v2 seams in v1 (cross-cutting, M2–M5)
 
 Design for 2.0, implement for 1.0. A seam moves into v1 only when v1 code uses it, it is cheap now, and the 2.0 milestone that plugs into it is named. Nothing here adds a 2.0 feature to 1.0. Epic bean `portps5-epoi`.

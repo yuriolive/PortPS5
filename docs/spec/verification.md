@@ -46,6 +46,20 @@ Hosted CI has no GPU and no game data, so reliability comes from checks that run
 | C++ coverage report | Untested modules (report only) | scheduled | `portps5-02a4` |
 | CPU microbenchmarks | Host hot-path regressions (trend only) | `nightly` | `portps5-i58o` |
 
+Deliverables:
+
+- [ ] Vulkan validation layers on the lavapipe job (bean `portps5-977n`).
+- [ ] PE structure validation of relinker output (bean `portps5-s9zz`).
+- [ ] Deterministic codegen metrics per PR (bean `portps5-g0n7`).
+- [ ] C++ coverage report (bean `portps5-02a4`).
+- [ ] Synthetic guest ELF end to end (bean `portps5-ktrt`).
+- [ ] Unsupported() counts and compat status tiers (bean `portps5-ba7d`).
+- [ ] Linux sanitizer job (ASan, UBSan, TSan) (bean `portps5-pbj2`).
+- [ ] Fuzzing of ELF, PM4 and shader decoders (bean `portps5-axx6`).
+- [ ] clang-tidy and `-Wcast-function-type` (bean `portps5-hpx7`).
+- [ ] Local nightly regression on the maintainer machine (bean `portps5-e6xg`).
+- [ ] CPU microbenchmarks with a nightly trend (bean `portps5-i58o`).
+
 Game-run checks stay local. A scheduled job on the maintainer machine runs boot, perf scenes and the baseline compare in a locked environment, and records results JSON only (bean `portps5-e6xg`; perf scenes `portps5-52bs`). `Unsupported()` abort counts feed the compatibility status tiers (bean `portps5-ba7d`). Captured GPU traces and frame references contain game data, so they never reach hosted CI.
 ## 2. Local regression (per build, maintainer GPU machine)
 
