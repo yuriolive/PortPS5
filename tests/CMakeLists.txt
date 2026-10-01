@@ -265,6 +265,35 @@ portps5_add_gtest(msgdialog_tests
         unit
 )
 
+# H.264 decoding for libSceVideodec2: the FFmpeg wrapper on synthetic I_PCM/P_Skip streams, the guest ABI
+# (layouts, error codes, NV12 layout), and the FFmpeg licence gate script on fixture configure outputs.
+portps5_add_gtest(h264_decoder_tests
+    SOURCES
+        video/H264DecoderTests.cpp
+    LIBRARIES
+        portps5_h264_decoder
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}/video
+    LABELS
+        unit
+)
+
+portps5_add_gtest(videodec2_tests
+    SOURCES
+        video/Videodec2Tests.cpp
+    LIBRARIES
+        libSceVideodec2
+        portps5_h264_decoder
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/video
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Small PRX modules: PlayGo (chunk set, codes), ConvertKeycode, Sysmodule unload policy
 portps5_add_gtest(playgo_tests
     SOURCES
@@ -278,6 +307,30 @@ portps5_add_gtest(playgo_tests
     LABELS
         unit
 )
+
+foreach(case
+        "lgpl_accepted;lgpl;lgpl;PASS"
+        "gpl_rejected;gpl;lgpl;FAIL;GPL"
+        "lgplv3_rejected;lgplv3;lgpl;FAIL;LGPLV3"
+        "gpl_header_rejected;lgpl;gpl;FAIL;GPL"
+        "nonfree_rejected;lgpl;nonfree;FAIL;NONFREE")
+    list(GET case 0 name)
+    list(GET case 1 mak)
+    list(GET case 2 hdr)
+    list(GET case 3 expect)
+    add_test(NAME ffmpeg_license_gate_${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DCONFIG_MAK=${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/fixtures/${mak}.mak
+            -DCONFIG_H=${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/fixtures/${hdr}.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/PortPS5FFmpegLicenseCheck.cmake)
+    set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES LABELS unit)
+    if(expect STREQUAL "FAIL")
+        # Match the specific rejection so a missing fixture or unrelated CMake error cannot pass.
+        list(GET case 4 reject_flag)
+        set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES
+            PASS_REGULAR_EXPRESSION "FFmpeg configure enabled CONFIG_${reject_flag}[;]")
+    endif()
+endforeach()
 
 portps5_add_gtest(convert_keycode_tests
     SOURCES
