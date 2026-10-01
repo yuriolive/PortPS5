@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <vector>
 
@@ -59,6 +60,9 @@ static constexpr std::uint32_t AUDIO_OUT2_PORT_CHANNELS_MAX = 8;
 // 0x880 an 8-channel bed. The low byte's meaning is not known.
 static constexpr std::uint32_t AUDIO_OUT2_FORMAT_CHANNELS_SHIFT = 8;
 static constexpr std::uint32_t AUDIO_OUT2_FORMAT_CHANNELS_MASK = 0xFu;
+// data_format bits 0..6 carry the sample type; bit 7 selects the "standard" 8-channel order, which
+// sums to the same stereo fold (KytyPS5 libAudio2.cpp decodes the same fields).
+static constexpr std::uint32_t AUDIO_OUT2_FORMAT_TYPE_MASK = 0x7Fu;
 
 // 8-channel order FL FR C LFE RL RR SL SR (a swapped rear/side pair order sums
 // the same): the rear and side pairs fold into the front at -3 dB and the
@@ -78,6 +82,35 @@ inline std::uint32_t AudioOut2DecodeChannels(std::uint32_t dataFormat) {
     const std::uint32_t channels =
         (dataFormat >> AUDIO_OUT2_FORMAT_CHANNELS_SHIFT) & AUDIO_OUT2_FORMAT_CHANNELS_MASK;
     return (channels == 1 || channels == 2 || channels == 8) ? channels : 0;
+}
+
+// Sample encodings a port can carry in its PCM buffer.
+enum class AudioOut2SampleType : std::uint8_t { Float, Int16, Unknown };
+
+// Decodes the sample type from data_format bits 0..6: 0 is 32-bit float, 1 is signed 16-bit.
+// Anything else is Unknown, and the caller leaves the port unrendered instead of guessing.
+inline AudioOut2SampleType AudioOut2DecodeSampleType(std::uint32_t dataFormat) {
+    switch (dataFormat & AUDIO_OUT2_FORMAT_TYPE_MASK) {
+        case 0: return AudioOut2SampleType::Float;
+        case 1: return AudioOut2SampleType::Int16;
+        default: return AudioOut2SampleType::Unknown;
+    }
+}
+
+// Loads frame `frame` of an interleaved guest PCM buffer into `channels` floats (full scale
+// +-1.0). Int16 divides by 32768 so -32768 maps to exactly -1.0. The caller guarantees `data` is
+// readable for (frame + 1) * channels samples; the port contract is one grain per push.
+inline void AudioOut2LoadFrame(const void* data, AudioOut2SampleType type, std::size_t frame,
+                               std::uint32_t channels, float* out) {
+    const std::size_t first = frame * channels;
+    if (type == AudioOut2SampleType::Int16) {
+        const auto* samples = static_cast<const std::int16_t*>(data);
+        for (std::uint32_t c = 0; c < channels; c++) out[c] = static_cast<float>(samples[first + c]) / 32768.0f;
+    } else {
+        // memcpy: the guest buffer is only 4-byte aligned by contract, and may not be float-aligned
+        // for hostile input.
+        std::memcpy(out, static_cast<const float*>(data) + first, channels * sizeof(float));
+    }
 }
 
 // Downmixes one source frame onto the stereo pair, adding to out[0..1].
@@ -130,12 +163,13 @@ struct AudioOut2Port {
     std::uint32_t samplingFreq = 0;
     std::uint32_t flags = 0;
     // Channel count decoded from dataFormat; 0 when the format is not understood (the port is then
-    // not rendered). Samples are float.
+    // not rendered), which includes an unknown sample type.
     std::uint32_t channels = 0;
-    // The PCM buffer (one grain, float, interleaved) the title last handed over through the data
-    // attribute. It is guest memory the title rewrites every tick, so it is read when the context
-    // mixes, not when it is set.
-    const float* data = nullptr;
+    AudioOut2SampleType sampleType = AudioOut2SampleType::Float;
+    // The PCM buffer (one grain, interleaved, float or signed 16-bit per sampleType) the title last
+    // handed over through the data attribute. It is guest memory the title rewrites every tick, so
+    // it is read when the context mixes, not when it is set.
+    const void* data = nullptr;
     float volume[AUDIO_OUT2_PORT_CHANNELS_MAX] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     std::uint64_t dataSets = 0;
     std::uint64_t attributeTraces = 0;

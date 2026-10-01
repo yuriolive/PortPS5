@@ -1,3 +1,9 @@
+// core/libs/prx/libSceAudioOut/src/AudioOut2Port.cpp
+// AudioOut2 ports: creation, destruction, attribute decoding (PCM pointer, per-channel gain) and the
+// per-context mix of all ports into the stereo grain the mixer source consumes. Ports are guest
+// state: the PCM buffer is guest memory read at mix time, never copied at set time. All exports
+// are APS5_VABI + noexcept and serialise on one port-table mutex; the mix runs on the pushing thread.
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -34,8 +40,9 @@ static AudioOut2Port* FromHandle(AudioOut2PortHandle handle) {
 
 static void AccumulatePort(const AudioOut2Port& port, float* out, std::uint32_t frames) {
     const auto ch = port.channels;
+    float in[AUDIO_OUT2_PORT_CHANNELS_MAX];
     for (std::uint32_t frame = 0; frame < frames; frame++) {
-        const float* in = port.data + static_cast<std::size_t>(frame) * ch;
+        AudioOut2LoadFrame(port.data, port.sampleType, frame, ch, in);
         AudioOut2DownmixFrame(in, ch, port.volume, out + static_cast<std::size_t>(frame) * AUDIO_OUT2_OUTPUT_CHANNELS);
     }
 }
@@ -79,6 +86,12 @@ static void TraceAttribute(AudioOut2PortHandle handle, const AudioOut2Port& port
 
 extern "C" {
 
+/**
+ * Creates a port on `ctx` from a guest SceAudioOut2PortParam.
+ * Returns 0 and the 1-based handle; INVALID_HANDLE for an unknown context; INVALID_ARGUMENT for null
+ * params or handle. A data_format whose channel count or sample type is not understood still
+ * succeeds, but the port stays unrendered (channels == 0) rather than decoding guessed PCM.
+ */
 int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2PortParam* params, AudioOut2PortHandle* port) noexcept {
     if (!ctx || !AudioOut2IsValidContext(ctx)) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!params || !port) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
@@ -103,14 +116,16 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     // A format whose channel count is not understood leaves channels at 0, so
     // the port is skipped by the mix instead of fabricating PCM. sampling_freq
     // is stored for the M2 resampler; the M1 mix runs at 48 kHz throughout.
-    entry.channels = AudioOut2DecodeChannels(params->data_format);
+    entry.sampleType = AudioOut2DecodeSampleType(params->data_format);
+    entry.channels = entry.sampleType == AudioOut2SampleType::Unknown ? 0 : AudioOut2DecodeChannels(params->data_format);
     *port = static_cast<AudioOut2PortHandle>(index) + 1;
-    AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u float ch) sampling_freq=%u flags=0x%x user=%llx\n",
+    AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u ch, sample type %d) sampling_freq=%u flags=0x%x user=%llx\n",
         AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(*port), params->port_type, params->data_format,
-        entry.channels, params->sampling_freq, params->flags, static_cast<unsigned long long>(params->user_handle));
+        entry.channels, static_cast<int>(entry.sampleType), params->sampling_freq, params->flags, static_cast<unsigned long long>(params->user_handle));
     return 0;
 }
 
+/** Destroys a port. Returns 0, or INVALID_HANDLE for an unknown or already destroyed handle. */
 int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle port) noexcept {
     std::lock_guard lock(g_portsLock);
     auto* entry = FromHandle(port);
@@ -120,6 +135,10 @@ int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle port) noexcept {
     return 0;
 }
 
+/**
+ * Reports the fixed main-output state of a port.
+ * Returns 0, INVALID_HANDLE for an unknown handle, or INVALID_ARGUMENT for a null state pointer.
+ */
 int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortState* state) noexcept {
     std::lock_guard lock(g_portsLock);
     if (!FromHandle(port)) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
@@ -132,6 +151,11 @@ int APS5_VABI sceAudioOut2PortGetState(AudioOut2PortHandle port, AudioOut2PortSt
     return 0;
 }
 
+/**
+ * Applies guest attributes to a port: id 0 stores the PCM buffer pointer (8-byte value, read at mix
+ * time), id 1 stores one float gain per channel. Other ids are traced and ignored.
+ * Returns 0, INVALID_HANDLE for an unknown handle, or INVALID_ARGUMENT for a null array with num > 0.
+ */
 int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const AudioOut2Attribute* attributes, uint32_t num) noexcept {
     std::lock_guard lock(g_portsLock);
     auto* entry = FromHandle(port);

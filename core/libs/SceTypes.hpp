@@ -608,14 +608,17 @@ struct Ngs2WaveformFormat {
 };
 
 struct Ngs2WaveformBlock {
-    std::uint32_t data_offset;
-    std::uint32_t data_size;
+    // PS5 widened the offset/size pair to 64 bits: the record is 40 bytes (KytyPS5 ngs2.cpp asserts
+    // the same), not the 32-byte PS4 layout.
+    std::uint64_t data_offset;
+    std::uint64_t data_size;
     std::uint32_t num_repeats;
     std::uint32_t num_skip_samples;
     std::uint32_t num_samples;
     std::uint32_t reserved;
     std::uintptr_t user_data;
 };
+static_assert(sizeof(Ngs2WaveformBlock) == 40, "PS5 Ngs2WaveformBlock is 40 bytes");
 
 struct Ngs2WaveformInfo {
     Ngs2WaveformFormat format;
