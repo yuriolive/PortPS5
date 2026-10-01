@@ -921,7 +921,7 @@ void rectListTests() {
     const std::array<std::uint32_t, 2> capabilities{spv::CapabilityShader, spv::CapabilityTessellation};
     SpirvTarget target{};
     target.vulkanVersion = VK_API_VERSION_1_3;
-    target.spirvVersion = 0x00010600u;
+    target.spirvVersion = 0x00010300u;
     target.supportedCapabilities = capabilities;
     target.tessellation = TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
     for (const auto version : {0x00010300u, 0x00010400u, 0x00010600u}) {

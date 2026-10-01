@@ -198,7 +198,7 @@ struct SyntheticRequest {
 };
 
 // Builds a deterministic request for a case: cache disabled so every replay exercises the
-// full pipeline, Vulkan 1.3 / SPIR-V 1.6 target matching the driver's target.
+// full pipeline, Vulkan 1.3 / SPIR-V 1.3 target matching the driver's target (VulkanDevice::Target).
 [[nodiscard]] inline SyntheticRequest MakeRequest(const SyntheticCase& testCase, std::uint32_t waveSize, std::uint32_t subgroupSize) {
     SyntheticRequest owned;
     owned.code = testCase.code;
@@ -228,7 +228,7 @@ struct SyntheticRequest {
         owned.request.context.vertex = owned.vertex;
     }
     owned.request.target.vulkanVersion = 0x00403000u;
-    owned.request.target.spirvVersion = 0x00010600u;
+    owned.request.target.spirvVersion = 0x00010300u;
     owned.request.target.subgroupSize = subgroupSize;
     owned.request.target.bdaAbiVersion = 0u;
     owned.request.target.fragmentShaderBarycentricEnabled = false;

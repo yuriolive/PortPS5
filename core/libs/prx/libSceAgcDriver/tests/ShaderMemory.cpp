@@ -1,8 +1,8 @@
 // core/libs/prx/libSceAgcDriver/tests/ShaderMemory.cpp
 // Tests for shader memory views and register-source resolution in the recompiler, plus SPIR-V
 // validate/optimize determinism and target rejection when ANYPS5_ENABLE_SPIRV_TOOLS is on.
-// Standalone runner (ctest 'agc_shader_memory'); recompile targets use Vulkan 1.3 / SPIR-V 1.6,
-// which the optimizer accepts (docs/spec/shader-recompiler.md).
+// Standalone runner (ctest 'agc_shader_memory'); recompile targets use Vulkan 1.3 / SPIR-V 1.3,
+// matching VulkanDevice::Target (docs/spec/shader-recompiler.md).
 
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
@@ -109,7 +109,7 @@ int main() {
         request.context.userData = userData;
         request.context.vertex = ShaderVertexStageInfo{};
         request.target.vulkanVersion = 0x00403000u;
-        request.target.spirvVersion = 0x00010600u;
+        request.target.spirvVersion = 0x00010300u;
         request.target.subgroupSize = 64;
         request.target.fragmentShaderBarycentricEnabled = false;
         request.layout.pushConstantSizeBytes = 128;
