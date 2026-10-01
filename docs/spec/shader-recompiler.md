@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Shader recompiler
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 Deepens the decision table in [README.md](README.md#subsystem-specs). The decisions recorded there are fixed: keep the pipeline, replace the structurizer's failure path, add a subgroup-size path and tests, and leave AOT post-1.0. Paths are relative to AnyPS5 `core/shader/recompiler/` unless prefixed. `main@e06dbff` is the pre-merge AnyPS5 main (the old baseline). `main@75a8668` is current AnyPS5 main, which includes merged PR #5. Its delta column cites `main@75a8668`. Anything marked *(inferred)* was not observed at runtime.
 
@@ -247,7 +247,7 @@ emitted IR against an independent C++ statement of the ISA pseudo-code. No game 
 | Milestone | Recompiler deliverables | Exit evidence |
 |---|---|---|
 | M0 | - [x] C++23 flag. `recompiler_tests` and `agc_shader_memory_tests` in ctest. glslang made test-only. | ctest green |
-| M1 | - [ ] Port `87911b3` and the flat-slot and hashed-key parts of `29b4601`. Bindless tables with bounds taken from device limits. Remove every `APS5_*` read.<br>- [x] `agc_shader_replay` and serializer (adapted port: no env switches, return codes).<br>- [x] The `recompiler-golden` job.<br>- [x] The synthetic corpus. | M1 exit: every decoded class covered and green in CI, local corpus with 0 failures, DeS fill/copy kernels running as compiled shaders |
+| M1 | - [ ] Port `87911b3` and the flat-slot and hashed-key parts of `29b4601`. Bindless tables with bounds taken from device limits (bean `portps5-7li6`). Remove every `APS5_*` read (done: none remain in `core/`).<br>- [x] `agc_shader_replay` and serializer (adapted port: no env switches, return codes).<br>- [x] The `recompiler-golden` job.<br>- [x] The synthetic corpus. | M1 exit: every decoded class covered and green in CI, local corpus with 0 failures, DeS fill/copy kernels running as compiled shaders |
 | M2 | - [ ] `SourceKey`/`VariantKey` as defined in [pipeline-cache.md](pipeline-cache.md#target-design), and variant (de)serialisation for the disk cache. Depth and sample-mask export verified. | 0 `spirv_compilations` with a warm cache (F7) |
 | M3 | - [ ] Tier 2 structurizer. Bounded hash-indexed variants that compile outside the lock. V#/SRT loads on the GPU through BDA. SGPRs read from the user-data buffer. | Fuzz corpus with 0 structurizer throws |
 | M4 | - [ ] Subgroup size control. `AnalyzeKernelIdiom` (`KernelIdiom`). Bindless on the GPU heap through the descriptor-heap hash probe, replacing the CPU material scan. | Bugsnax full run |
@@ -290,8 +290,8 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
    of a divergently-controlled loop is likewise deferred to M3 (it needs loop-latch uniformity analysis).
 8. Lane E follow-ups not ported: 64-bit *floating-point* operands with a literal constant take the literal as the
    high dword of the double (low dword zero) on hardware, while `readU32Pair` zero-extends it (correct for integer
-   operands only); it needs the consuming opcode's type. `s_bcnt0_i32_b64`, `s_ff0_i32_b64` and the `_b32` forms of
-   `s_or/xor/andn2_saveexec` are still undecoded. Upstream's `_a` sample aliases, `_cl` LOD clamp and MRT export
+   operands only); it needs the consuming opcode's type (bean `portps5-51d6`). `s_bcnt0_i32_b64`, `s_ff0_i32_b64` and the `_b32` forms of
+   `s_or/xor/andn2_saveexec` are still undecoded (bean `portps5-uqu5`). Upstream's `_a` sample aliases, `_cl` LOD clamp and MRT export
    component masks (`8e66145`) need ISA verification and device-feature plumbing first.
 9. Upstream's buffer-atomic zero-identity rewrite (`87911b3`: add/sub/or/xor of 0 become an atomic load or nothing)
    was tuned to one title's access pattern and is data-dependent at run time; it stays out until a general

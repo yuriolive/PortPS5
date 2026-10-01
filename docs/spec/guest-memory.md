@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Guest memory
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -18,6 +18,16 @@ Everything that places, protects, describes and tracks guest-visible memory: the
 | Page-state cache | — | `PageSpan`: 1 byte per 4 KiB page over the arena and main image, filled lazily from `VirtualQuery`, cleared by the invalidator, with a generation re-check against races (`GuestMemory.cpp:334-387,437-461,473-523`). |
 | Direct memory | `MapAligned` goes to the section backing (`libkernel/DirectMemory/DirectMemory.cpp:87`). `sceKernelVirtualQuery` returns the 16 KiB page around the address (`Export.cpp:93-103`). | `DoMapDirect` validates `physStart`, then maps **fresh anonymous memory**, so two mappings of one physical range do not share bytes (`DirectMemory.cpp:318-337`). The physical pool is `bool _used[884736]` (13824 MiB in 16 KiB pages) with a linear scan (`MemoryPool.cpp:7,15-31,69-75,85`), plus an `_ranges` map that records each allocated block. Flexible memory has a 448 MiB budget (`Export.cpp:26,83-92`). `sceKernelVirtualQuery` scans a full lease linearly (`Export.cpp:208-267`). |
 | Errors | EINVAL-class errors throw `std::invalid_argument`. The intended return codes survive only as comments (`DirectMemory.cpp:166-194,268,289` on main@75a8668; the same pattern appears in main@e06dbff). | Same. |
+
+**Status as of 2026-09-30 (PortPS5 `main`).** The two tables above describe the AnyPS5 baselines. What PortPS5 has landed, all as building blocks the runtime does not instantiate yet:
+
+| Piece | State on `main` | Where |
+|---|---|---|
+| Extent allocator | Landed (PR #32): treap with subtree-max, no throws, 10^6-operation differential test against the reference linear first-fit. Referenced only by tests; no arena uses it. | `libc/include/GuestArenaExtent.hpp`, `libc/src/GuestArenaExtent.cpp`, `tests/memory/GuestArenaExtentTests.cpp` |
+| Direct memory and pools | Landed (PR #39): physical block tracking, pool exports, SCE error codes without host exceptions. | `libkernel/DirectMemory/MemoryPool.cpp`, `tests/memory/DirectMemoryPoolTests.cpp` |
+| Write tracker | Landed (PR #40): `WriteWatchTracker` (64 KiB blocks, 64-bit global generations, 1 GiB shards), `PageStateTable`, explicit `PinToken`s, flush hook, `MarkWritten`. Referenced only by tests; the runtime still has `NullTracker` semantics. | `libc/include/WriteTracker.hpp`, `libc/src/WriteTracker.cpp`, `core/libs/tests/WriteTracker.cpp` |
+| Tracking tests | Landed (PR #52): `GuestMemoryTracking::Watch` behaviour. | `tests/memory/MemoryTrackerTests.cpp` |
+| Arena reservation, heap spans, registry interval map | Not landed. `GuestAllocations` is still the baseline `std::map` registry. | bean `portps5-421p` |
 
 ## Decision
 
@@ -37,7 +47,7 @@ Per the decision table in [README.md](README.md#subsystem-specs): **adopt** `Gue
 - Guest page size is 16 KiB (`PS5_PAGE_SIZE`). Host commit granularity is 4 KiB inside the arena.
 - A fixed mapping outside the arena returns `SCE_KERNEL_ERROR_ENOMEM` and is logged. AnyPS5 main's 64 KiB-granular `VirtualAlloc` fallback (`DirectMemory.cpp:90-91`) is removed.
 
-**Arena allocator.** Free extents live in an address-ordered balanced tree. Each node is augmented with the largest free extent in its subtree, the same technique as Linux `rb_subtree_gap`. The search descends to the lowest-address extent that is at least `bytes + align - 16 KiB`, then checks alignment. That gives exactly the first-fit result in O(log n). Free coalesces with both neighbours. A buddy allocator is rejected because it changes address order and rounds sizes up.
+**Arena allocator.** Free extents live in an address-ordered balanced tree. Each node is augmented with the largest free extent in its subtree, the same technique as Linux `rb_subtree_gap`. The search descends to the lowest-address extent that fits, then checks alignment. That gives exactly the first-fit result in O(log n) for the aligned sizes the arena sees. *Correction from PR #32:* the `bytes + align - 16 KiB` pruning bound originally written here can skip a fitting extent (a 32 KiB extent at a 64 KiB-aligned base serving a 16 KiB request at 64 KiB alignment), so the implementation prunes only on `maxInSubtree >= bytes` and runs the exact aligned-fit check at each candidate. Its worst case is O(n) for a request that no extent can satisfy because of alignment padding. Free coalesces with both neighbours. A buddy allocator is rejected because it changes address order and rounds sizes up.
 
 ```cpp
 struct Extent { u64 base, size; u64 maxInSubtree; Extent *l, *r, *parent; bool red; };
@@ -147,7 +157,8 @@ struct IWriteTracker {
 - **Ported Ecosystem Test Suites:**
   - **KytyPS5 `VirtualMemoryAllocationTests`:** 16 KB page rounding, direct-memory allocations (`sceKernelAllocateDirectMemory`), alignment constraints, protection transitions (`PROT_READ`, `PROT_WRITE`, `PROT_EXEC`), and out-of-memory error codes (`SCE_KERNEL_ERROR_ENOMEM`).
   - **KytyPS5 `MemoryTrackerTests`:** ported in behaviour onto `GuestMemoryTracking::Watch` (`tests/memory/MemoryTrackerTests.cpp`): range validation, page rounding, protection and fault resolution, invalidate on unmap, the resolver-must-release and no-re-entry contracts (death tests), and concurrent publication and resolution.
-    - [ ] Not ported, no counterpart yet: dirty-page collecting, generation advancement and aliased-memory tracking. They need the `IWriteTracker` implementation (`Collect`, `MarkWritten`), which is still `NullTracker` only.
+    - [x] Dirty-page collecting and generation advancement now have a counterpart in `WriteWatchTracker` (PR #40) and are covered by `core/libs/tests/WriteTracker.cpp` (`Collect`, `MarkWritten`, global generations, pins, flush hook).
+    - [ ] Aliased-memory tracking is not ported: it needs alias support (M5).
   - **FreeBSD 12 `mmap`/`mprotect` Suites:** POSIX address-space layout and page-permission semantics.
   - **Wine / Proton Virtual Memory Suites:** Win32 `VirtualAlloc`/`VirtualProtect`/`GetWriteWatch` state transitions under concurrent queries.
 - **Microbenchmarks:**
@@ -161,7 +172,7 @@ struct IWriteTracker {
 
 | Milestone | Delivers |
 |---|---|
-| M1 | - [ ] Port `GuestArena`/`GuestHeap` behind `IWriteTracker` (ROADMAP M1), with the extent tree, span-level heap registration, explicit pins, the flush hook and the registry-owned page-state table. Return codes replace throws. Remove `APS5_*` memory switches. |
+| M1 | - [ ] Port `GuestArena`/`GuestHeap` behind `IWriteTracker` (ROADMAP M1; bean `portps5-421p`):<br>- [x] extent tree (PR #32, unwired);<br>- [x] explicit pins, the flush hook and the page-state table in `WriteWatchTracker` (PR #40, unwired);<br>- [x] return codes replace throws in direct memory and pools (PR #39);<br>- [ ] arena reservation and `GuestHeap` use them, with span-level heap registration and the registry interval map;<br>- [ ] the runtime instantiates the tracker and the driver registers the flush hook;<br>- [x] no `APS5_*` memory switches remain in `core/`. |
 | M3 | - [ ] General block-generation write tracking for GPU-written surfaces (`MarkWritten`), replacing the interim adjacent block-generation advance, and the tracker-side support for the capture-ordering redesign (ROADMAP M3). |
 | M5 | - [ ] Direct-memory aliasing through section windows, and full-size streaming and resource aliasing. Host-import budget sized automatically (ROADMAP M5). |
 
@@ -171,4 +182,5 @@ struct IWriteTracker {
 2. Can a `MEM_WRITE_WATCH` reservation coexist with placeholder splitting? This is unverified, and it decides where the alias window lives.
 3. Does any title rely on `sceKernelDirectMemoryQuery` returning real extents? AnyPS5 main@75a8668 returns the recorded block from its pool `_ranges` map and a single page only for unrecorded offsets (`Export.cpp:136-153`, `MemoryPool.cpp:46-54`).
 4. Is a 64 KiB block granularity too coarse for per-job label slots? AnyPS5 main@75a8668 notes slots 0x20 apart (`GuestMemory.cpp:628-630`). Decide from profiles.
-5. Sync assessment (PR #28): upstream `GuestArena` (`libc/src/GuestArena.cpp`, `include/GuestArena.hpp`) was trial-ported and reverted. Verdict: a raw port cannot land — the O(n) first-fit scan (`GuestArena.cpp:43-55` on AnyPS5 main@75a8668) contradicts the extent-tree decision below, `throw std::runtime_error` sites break the no-throw rule (a guest `catch(...)` swallows host exceptions), the file is unwired, and there are no file headers. It returns with the M1 extent-tree port (adapted, return codes, headers). `HostThreadLocal.hpp` stays: it compiles and its GTest balance suite is green.
+5. Sync assessment (PR #28): upstream `GuestArena` (`libc/src/GuestArena.cpp`, `include/GuestArena.hpp`) was trial-ported and reverted. Verdict: a raw port cannot land — the O(n) first-fit scan (`GuestArena.cpp:43-55` on AnyPS5 main@75a8668) contradicts the extent-tree decision below, `throw std::runtime_error` sites break the no-throw rule (a guest `catch(...)` swallows host exceptions), the file is unwired, and there are no file headers. It returns with the M1 extent-tree port (adapted, return codes, headers); the extent-tree core landed in PR #32 and the wiring is open (bean `portps5-421p`). `HostThreadLocal.hpp` stays: it compiles and its GTest balance suite is green.
+6. Guest-memory range-validation API for PRX libraries: none is exported yet, so codec exports cannot check a guest range against the arena (bean `portps5-8l0d`). The page-state table from PR #40 is the data source.

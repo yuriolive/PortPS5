@@ -89,7 +89,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Driver: depth/stencil and conditional colour-write state decode, `VkPipelineDepthStencilStateCreateInfo` emission and pipeline-cache keying (`Graphics/src/State.cpp`).
 - [x] Driver: host depth/stencil surface (`DB_Z_INFO` decode, host `VkImage`, render-pass attachment, `DB_RENDER_CONTROL` clears, depth bounds, `DB_DEPTH_CONTROL` bit 31 colour suppression) (`Graphics/src/DepthSurface.cpp`, [spec/gpu-driver.md](spec/gpu-driver.md); PR #55, bean `portps5-mij8` completed).
 - [ ] Per-title `/savedata0` mount for guest file I/O: no mount exists on main. In flight as PR #53, not landed (bean `portps5-10fr`).
-- [ ] Driver: retile depth to guest memory (CPU or shader reads of a depth buffer) and guest-memory upload of never-cleared depth surfaces. A draw that depth-tests a surface that was never cleared is rejected until then (bean `portps5-DEPTHRETILE`).
+- [ ] Driver: retile depth to guest memory (CPU or shader reads of a depth buffer) and guest-memory upload of never-cleared depth surfaces. A draw that depth-tests a surface that was never cleared is rejected until then (bean `portps5-9s7e`).
 - [ ] `tools/regress` local regression plus results JSON upload, with the config hash and the "FMV played" rule (bean `portps5-3m3u`).
 
 **Exit criteria**

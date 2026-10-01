@@ -1,6 +1,6 @@
 # PortPS5 — Technical Specification: Verification
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 Verification has three layers. Hosted CI has no GPU and never sees game data. Game checks run locally on a maintainer's GPU machine that meets the reference PC tier (PRD §4.4), and only their results are uploaded.
 
@@ -24,6 +24,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | **progress-report** | Runs `tools/progress.py` on every PR (no `main` filter): renders the base and head implementation counts (declared `APS5_VABI` functions in `core/libs/prx`, RDNA opcodes vs `tools/rdna_isa.txt`) and posts the delta as a PR comment (`progress-comment.yml`). Static source scan, no GPU, no game data. Full-site render plus badges deploy from `main` pushes via `workflows/progress.yml` (needs GitHub Pages enabled). |
 | **python-quality** | Astral toolchain gate for every Python file (`tools/`, `tests/tools/`, relinker self-tests): `ruff check` + `ruff format --check` and `pytest` with coverage over `tools/` (`fail_under = 85`, `pyproject.toml`). Runs on `ubuntu-latest` via pinned `uv` (`uv.lock` committed); versions pinned in `pyproject.toml` (`dependency-groups.dev`). CTest keeps running the same suites through stdlib `unittest` on Windows so hosted unit execution never depends on PyPI. |
 
+- **Status as of 2026-09-30:** every job above exists in `.github/workflows/` except `driver-lavapipe` (driver suites carry the `lavapipe` ctest label but no job runs them; bean `portps5-ekx3`). The Doxygen gate's Chocolatey install can fail for an infrastructure reason unrelated to documentation (bean `portps5-xl4k`). Sections 2 to 4 are design only: `tools/regress`, the results JSON writer and the telemetry they read (frame-time log, watchdog, structured logs) do not exist yet (beans `portps5-3m3u`, `portps5-f9a3`).
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
 ## 2. Local regression (per build, maintainer GPU machine)
