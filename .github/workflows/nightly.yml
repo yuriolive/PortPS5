@@ -1,0 +1,60 @@
+# Nightly slow tests
+#
+# Runs ctest tests labelled `slow`: full-size fuzz/soak runs that are too long
+# for the hosted PR `unit` job (see docs/spec/verification.md). Today that is
+# the uncapped 10^6-op extent-allocator differential run
+# (GuestArenaExtent.FuzzUncapped, ~3 min). Hosted CI keeps a capped variant of
+# the same test, so PRs still cover the invariant; this job covers the full
+# spec acceptance run and catches drift the capped run cannot.
+#
+# Builds only the targets the slow tests need, reusing the same toolchain
+# bootstrap and ccache key scope as ci.yml. Needs no game data.
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  slow_tests:
+    name: Slow tests (MinGW GCC 15.2)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup MinGW + submodules + ccache env
+        uses: ./.github/actions/mingw-setup
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          # Same key scope as ci.yml so nightly reuses main's warm objects.
+          key: ccache-${{ runner.os }}-ci-${{ hashFiles('cmake/toolchains/mingw-gcc15.cmake', 'cmake/toolchains/mingw-gcc15.sha256', 'CMakePresets.json', 'CMakeLists.txt') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-ci-
+            ccache-${{ runner.os }}-refs/heads/main-
+            ccache-${{ runner.os }}-
+
+      - name: Configure CMake (ci preset)
+        run: cmake --preset ci
+
+      # Keep this target list in sync with the tests labelled `slow`.
+      - name: Build slow-test targets
+        run: cmake --build --preset ci --target guest_arena_extent_tests
+
+      - name: Run slow tests (ctest --preset slow)
+        run: ctest --preset slow

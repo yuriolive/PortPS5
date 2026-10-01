@@ -135,7 +135,7 @@ struct IWriteTracker {
 ## Tests
 
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
-  - Extent tree differential-tested against a reference linear first-fit with 10^6 random operations, with identical addresses required.
+  - Extent tree differential-tested against a reference linear first-fit, with identical addresses required. Hosted `unit` run: 3 seeds x 10^6 operations at a live-set cap of 1024 (a few seconds; the reference scan is O(live)). The full uncapped 10^6-operation run (`GuestArenaExtent.FuzzUncapped`, label `slow`, live set grows to ~22k, ~3 min) runs in the scheduled `nightly` workflow via `ctest --preset slow`.
   - Heap class boundaries, alignment invariants, and flexible memory pools.
   - Registry pin, wait and release, with the waiter observed to run with the lock released.
   - Generation bumps only on map, unmap, protect and decommit.

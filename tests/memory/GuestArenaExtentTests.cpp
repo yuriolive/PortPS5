@@ -128,6 +128,105 @@ void ExpectFreeSetsEqual(const LinearModel& model, const PortPS5::GuestMemory::E
     }
 }
 
+// Differential fuzz driver: replays `ops` random operations against the tree
+// and the reference linear first-fit model, requiring bit-identical results.
+//
+// `maxLive` caps simultaneously live allocations (0 = uncapped). The reference
+// model scans every used range per Allocate, so its cost is O(live). Uncapped,
+// tiny high-alignment allocations (almost no address space) let the live set
+// grow to ~22k, making the 10^6-op run quadratic (~3 min on hosted CI). The cap
+// keeps the same op mix and invariants at a small steady live set, so the
+// hosted `unit` run takes seconds while the uncapped run still executes in the
+// scheduled `slow` job (docs/spec/guest-memory.md, Tests).
+void RunDifferentialFuzz(int ops, std::uint64_t seed, std::size_t maxLive) {
+    constexpr std::uint64_t kBase = 0x10'0000'0000ULL;  // arena-like placement above 1 TiB
+    constexpr std::uint64_t kSize = 0x4000'0000ULL;     // 1 GiB
+    constexpr std::uint64_t kAligns[] = {1ULL, 16ULL, 0x1000ULL, 0x4000ULL, 0x10000ULL, 0x200000ULL};
+
+    PortPS5::GuestMemory::ExtentAllocator tree;
+    LinearModel model;
+    ASSERT_TRUE(tree.Init(kBase, kSize));
+    ASSERT_TRUE(model.Init(kBase, kSize));
+
+    Rng rng(seed);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> live;
+    live.reserve(8192);
+    for (int i = 0; i < ops; ++i) {
+        const std::uint64_t roll = rng.Next() % 100;
+        if (roll < 4 && !live.empty()) {
+            // Invalid-free probe: corrupt a live entry's base or size, or
+            // probe inside a free gap. Both implementations must reject
+            // without mutating (ownership gate). Skipped when the corrupted
+            // range accidentally matches a live entry exactly.
+            const auto [lb, ls] = live[static_cast<std::size_t>(rng.Next() % live.size())];
+            std::uint64_t fb = lb;
+            std::uint64_t fs = ls;
+            if (rng.Next() % 2) {
+                fb = lb + 1 + rng.Next() % 255;
+            } else {
+                fs = ls + 1 + rng.Next() % 255;
+            }
+            bool exact = false;
+            for (const auto& e : live) {
+                exact = exact || (e.first == fb && e.second == fs);
+            }
+            if (exact) {
+                continue;
+            }
+            EXPECT_FALSE(model.Free(fb, fs)) << "op " << i << " model accepted invalid free";
+            EXPECT_FALSE(tree.Free(fb, fs)) << "op " << i << " base=" << fb << " size=" << fs;
+            continue;
+        }
+        if (roll < 8) {
+            // Invalid-alloc probe: both implementations return 0.
+            std::uint64_t bytes = 0x100ULL;
+            std::uint64_t align = 3ULL;  // non-pow2
+            switch (rng.Next() % 3) {
+                case 0: bytes = 0ULL; align = 1ULL; break;
+                case 1: bytes = 0x100ULL; align = 3ULL; break;
+                default: bytes = kSize * 2ULL; align = 1ULL; break;  // oversized
+            }
+            EXPECT_EQ(tree.Allocate(bytes, align), model.Allocate(bytes, align)) << "op " << i;
+            continue;
+        }
+        // Past the live cap, force a free so the reference model stays cheap.
+        const bool capped = maxLive != 0 && live.size() >= maxLive;
+        const bool doAlloc = !capped && (live.empty() || (rng.Next() % 100) < 70);
+        if (doAlloc) {
+            // Size mix: tiny grains, 16 KiB-page multiples, and large spans.
+            const std::uint64_t pick = rng.Next() % 100;
+            std::uint64_t bytes = 0;
+            if (pick < 40) {
+                bytes = 1 + rng.Next() % 256;
+            } else if (pick < 80) {
+                bytes = (1 + rng.Next() % 64) * 0x4000ULL;
+            } else {
+                bytes = (1 + rng.Next() % 16) * 0x100000ULL;
+            }
+            const std::uint64_t align = kAligns[rng.Next() % 6];
+            const std::uint64_t want = model.Allocate(bytes, align);
+            const std::uint64_t got = tree.Allocate(bytes, align);
+            ASSERT_EQ(got, want) << "op " << i << " alloc bytes=" << bytes << " align=" << align;
+            if (want != 0) {
+                live.emplace_back(want, bytes);
+            }
+        } else {
+            const std::size_t idx = static_cast<std::size_t>(rng.Next() % live.size());
+            const auto [base, bytes] = live[idx];
+            ASSERT_TRUE(model.Free(base, bytes)) << "op " << i;
+            ASSERT_TRUE(tree.Free(base, bytes)) << "op " << i << " base=" << base;
+            live[idx] = live.back();
+            live.pop_back();
+        }
+        if ((i & 0x3FFF) == 0) {
+            SCOPED_TRACE(::testing::Message() << "op " << i);
+            ExpectFreeSetsEqual(model, tree);
+        }
+    }
+    SCOPED_TRACE(::testing::Message() << "final drain check");
+    ExpectFreeSetsEqual(model, tree);
+}
+
 }  // namespace
 
 // Verifies fresh allocations come back in ascending address order (the
@@ -285,90 +384,23 @@ TEST(GuestArenaExtent, ForEachFreeReentrantVisitorSafe) {
 
 // Verifies the tree returns bit-identical addresses to the reference linear
 // scan across a mixed alloc/free stream, with periodic free-set comparison.
+// Hosted-CI variant: 10^6 ops at a capped live set, over several seeds so
+// distinct alignment/size interleavings are exercised. Any divergence is a
+// first-fit order (guest-visible) bug and fails the test.
 TEST(GuestArenaExtent, MatchesLinearScanFuzz) {
-    constexpr std::uint64_t kBase = 0x10'0000'0000ULL;  // arena-like placement above 1 TiB
-    constexpr std::uint64_t kSize = 0x4000'0000ULL;     // 1 GiB
-    constexpr int kOps = 1000000;  // spec guest-memory.md: 10^6 random operations
-    constexpr std::uint64_t kAligns[] = {1ULL, 16ULL, 0x1000ULL, 0x4000ULL, 0x10000ULL, 0x200000ULL};
-
-    PortPS5::GuestMemory::ExtentAllocator tree;
-    LinearModel model;
-    ASSERT_TRUE(tree.Init(kBase, kSize));
-    ASSERT_TRUE(model.Init(kBase, kSize));
-
-    Rng rng(0x12345678ULL);
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> live;
-    live.reserve(8192);
-    for (int i = 0; i < kOps; ++i) {
-        const std::uint64_t roll = rng.Next() % 100;
-        if (roll < 4 && !live.empty()) {
-            // Invalid-free probe: corrupt a live entry's base or size, or
-            // probe inside a free gap. Both implementations must reject
-            // without mutating (ownership gate). Skipped when the corrupted
-            // range accidentally matches a live entry exactly.
-            const auto [lb, ls] = live[static_cast<std::size_t>(rng.Next() % live.size())];
-            std::uint64_t fb = lb;
-            std::uint64_t fs = ls;
-            if (rng.Next() % 2) {
-                fb = lb + 1 + rng.Next() % 255;
-            } else {
-                fs = ls + 1 + rng.Next() % 255;
-            }
-            bool exact = false;
-            for (const auto& e : live) {
-                exact = exact || (e.first == fb && e.second == fs);
-            }
-            if (exact) {
-                continue;
-            }
-            EXPECT_FALSE(model.Free(fb, fs)) << "op " << i << " model accepted invalid free";
-            EXPECT_FALSE(tree.Free(fb, fs)) << "op " << i << " base=" << fb << " size=" << fs;
-            continue;
-        }
-        if (roll < 8) {
-            // Invalid-alloc probe: both implementations return 0.
-            std::uint64_t bytes = 0x100ULL;
-            std::uint64_t align = 3ULL;  // non-pow2
-            switch (rng.Next() % 3) {
-                case 0: bytes = 0ULL; align = 1ULL; break;
-                case 1: bytes = 0x100ULL; align = 3ULL; break;
-                default: bytes = kSize * 2ULL; align = 1ULL; break;  // oversized
-            }
-            EXPECT_EQ(tree.Allocate(bytes, align), model.Allocate(bytes, align)) << "op " << i;
-            continue;
-        }
-        const bool doAlloc = live.empty() || (rng.Next() % 100) < 70;
-        if (doAlloc) {
-            // Size mix: tiny grains, 16 KiB-page multiples, and large spans.
-            const std::uint64_t pick = rng.Next() % 100;
-            std::uint64_t bytes = 0;
-            if (pick < 40) {
-                bytes = 1 + rng.Next() % 256;
-            } else if (pick < 80) {
-                bytes = (1 + rng.Next() % 64) * 0x4000ULL;
-            } else {
-                bytes = (1 + rng.Next() % 16) * 0x100000ULL;
-            }
-            const std::uint64_t align = kAligns[rng.Next() % 6];
-            const std::uint64_t want = model.Allocate(bytes, align);
-            const std::uint64_t got = tree.Allocate(bytes, align);
-            ASSERT_EQ(got, want) << "op " << i << " alloc bytes=" << bytes << " align=" << align;
-            if (want != 0) {
-                live.emplace_back(want, bytes);
-            }
-        } else {
-            const std::size_t idx = static_cast<std::size_t>(rng.Next() % live.size());
-            const auto [base, bytes] = live[idx];
-            ASSERT_TRUE(model.Free(base, bytes)) << "op " << i;
-            ASSERT_TRUE(tree.Free(base, bytes)) << "op " << i << " base=" << base;
-            live[idx] = live.back();
-            live.pop_back();
-        }
-        if ((i & 0x3FFF) == 0) {
-            SCOPED_TRACE(::testing::Message() << "op " << i);
-            ExpectFreeSetsEqual(model, tree);
+    for (const std::uint64_t seed : {0x12345678ULL, 0xC0FFEEULL, 0xDEADBEEFULL}) {
+        SCOPED_TRACE(::testing::Message() << "seed " << seed);
+        RunDifferentialFuzz(1000000, seed, 1024);
+        if (::testing::Test::HasFatalFailure()) {
+            return;
         }
     }
-    SCOPED_TRACE(::testing::Message() << "final drain check");
-    ExpectFreeSetsEqual(model, tree);
+}
+
+// Full spec acceptance run: 10^6 uncapped random operations (guest-memory.md).
+// DISABLED_ keeps it out of the hosted `unit` ctest run (~3 min, quadratic in
+// the live set). tests/CMakeLists.txt registers it under the `slow` label and
+// runs it with --gtest_also_run_disabled_tests from the scheduled workflow.
+TEST(GuestArenaExtent, DISABLED_MatchesLinearScanFuzzUncapped) {
+    RunDifferentialFuzz(1000000, 0x12345678ULL, 0);
 }
