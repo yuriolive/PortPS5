@@ -368,6 +368,7 @@ if(BUILD_TESTING)
     portps5_add_gtest(agc_recorder_tests
         SOURCES  ${CMAKE_CURRENT_SOURCE_DIR}/tests/RecorderTests.cpp
                  ${CMAKE_CURRENT_SOURCE_DIR}/tests/HostImportTests.cpp
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/CrashReporter.cpp
                  ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
                  ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/HostImport.cpp
                  ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
@@ -381,6 +382,10 @@ if(BUILD_TESTING)
         LIBRARIES SDL2-static libc
         LABELS   lavapipe
     )
+    # tests/CrashReporter.cpp (portps5-3maf): minidump + module/RVA stack for unguarded-thread faults.
+    if(WIN32)
+        target_link_libraries(agc_recorder_tests PRIVATE dbghelp)
+    endif()
 
     # Hosted BytesEqual tests: pure helper used by the TextureCache revalidation (no GPU, no guest memory).
     portps5_add_gtest(agc_bytes_equal_tests
