@@ -20,7 +20,8 @@ A performance PR states its effect as a mechanical compare against a stored base
 ## Acceptance Criteria
 
 - [ ] `frame_ms: { p50, p90, p99 }` over non-stall frames
-- [ ] `tools/regress.py compare --baseline --result`: per-field deltas, refusal on mismatched title pin / run_type / host_tier / resolution / pipeline_cache / config_sha256, non-zero exit on regression thresholds
+- [ ] Results JSON records `build: { preset, flags_sha256 }` and `protocol: { scene, duration_s }`
+- [ ] `tools/regress.py compare --baseline --result`: per-field deltas, refusal when title pin / run_type / host_tier / resolution / pipeline_cache / config_sha256 / build (preset, flags hash) / protocol (scene, duration) differ or are missing, non-zero exit on regression thresholds
 - [ ] pytest on synthetic results JSON (match, refusal, each threshold)
 - [ ] verification.md §4.4 checkboxes ticked; thresholds updated once run-to-run noise is measured
 
