@@ -2,7 +2,9 @@
 // Guest-visible parameter and result structs shared by the PS5 replacement
 // libraries (prx). Layouts are ABI: guest code fills and reads these in place,
 // so fields use explicit-width types and each consumer static_asserts sizes.
-
+// Handle aliases (KernelSema, Pthread*, PthreadSem, ...) are 8-byte guest
+// slots; for sync objects the slot holds either an in-place futex word or a
+// host pointer (see docs/spec/threading.md "Handle objects").
 #ifndef CORE_LIBS_SCE_TYPES_HPP
 #define CORE_LIBS_SCE_TYPES_HPP
 
@@ -163,6 +165,7 @@ struct PthreadRwlockPrivate;
 struct PthreadRwlockattrPrivate;
 struct PthreadCondattrPrivate;
 struct PthreadCondPrivate;
+struct PthreadSemPrivate;
 
 using KernelSema = KernelSemaPrivate*;
 using KernelEventFlag = KernelEventFlagPrivate*;
@@ -174,6 +177,15 @@ using PthreadMutexattr = PthreadMutexattrPrivate*;
 using PthreadRwlock = PthreadRwlockPrivate*;
 using PthreadRwlockattr = PthreadRwlockattrPrivate*;
 using PthreadCond = PthreadCondPrivate*;
+/**
+ * @brief Guest handle of a scePthreadSem* semaphore.
+ *
+ * An 8-byte guest slot holding a host pointer to PthreadSemPrivate (futex
+ * words, see Pthread/include/SemBarrierTypes.hpp). Unlike mutex/cond/rwlock
+ * slots it is not an in-place futex word: 0 means uninitialised and the value 2
+ * is the destroyed marker written by scePthreadSemDestroy.
+ */
+using PthreadSem = PthreadSemPrivate*;
 using PthreadCondattr = PthreadCondattrPrivate*;
 using PthreadKey = int;
 using pthread_entry_func_t = void* (*)(void*);

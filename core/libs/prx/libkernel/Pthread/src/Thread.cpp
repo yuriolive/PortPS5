@@ -6,11 +6,13 @@
 #include "prx/libkernel/Pthread/include/GuestTid.hpp"
 #include "prx/libkernel/Pthread/include/SyncWords.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <future>
 #include <memory>
+#include <new>
 #include <thread>
 
 #ifndef _WIN32
@@ -139,6 +141,11 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) noexcept {
 
 #ifdef _WIN32
 static void ReleaseThread(PthreadPrivate* thread) noexcept {
+    // An adopted handle is never reference-counted: it has no native handle to
+    // close and must not be freed here (e.g. when an adopted host thread calls
+    // scePthreadExit).
+    if (thread->adopted)
+        return;
     if (thread->references.fetch_sub(1, std::memory_order_acq_rel) != 1)
         return;
     CloseHandle(thread->nativeHandle);
@@ -438,6 +445,47 @@ void APS5_VABI scePthreadExit(void* retval) noexcept {
  * @return Status or error code.
  */
 Pthread APS5_VABI scePthreadSelf() noexcept {
+    if (currentThread)
+        return currentThread;
+    // Host thread that never went through scePthreadCreate (the guest main
+    // thread, driver workers): adopt a lazily created, detached handle so the
+    // guest never sees a null "self" (scePthreadGetprio(scePthreadSelf(), ...)
+    // and scePthreadRename(scePthreadSelf(), ...) are routine on the main
+    // thread). AnyPS5 76b7f998. Allocation failure keeps the old null answer.
+    //
+    // Ownership: the handle lives in HostThreadLocal storage (an FLS slot whose
+    // callback deletes it when the host thread exits). A C++ thread_local with
+    // a non-trivial destructor (the first attempt used a unique_ptr) registers
+    // through __cxa_thread_atexit, which libc.prx overrides
+    // (CxxAbiSupport.cpp); that hook has the destruction-order/concurrency
+    // hazard GuestTid.cpp already documents, and the adopted-handle test
+    // segfaulted intermittently (~1 in 40 ctest repeats). FLS callbacks are
+    // the project's established answer (HostThreadLocal, GuestTid). The
+    // handle is only ever dereferenced by its own thread or via a guest that
+    // kept it, and is invalid once the thread is gone, like any pthread_t.
+    struct AdoptedTag {};
+    PthreadPrivate* handle = nullptr;
+    try {
+        handle = &HostThreadLocal<PthreadPrivate, AdoptedTag>();
+    } catch (...) {
+        return nullptr;  // slot exhaustion / OOM keeps the old null answer.
+    }
+    handle->adopted = true;
+    handle->_detached.store(true, std::memory_order_release);  // join/detach -> EINVAL.
+#ifdef _WIN32
+    // threadId exists only in the Windows layout of PthreadPrivate (Pthread.hpp);
+    // the POSIX layout identifies the thread through std::thread instead.
+    handle->threadId = std::this_thread::get_id();
+#endif
+    handle->guestTid = GuestTid::Ensure();
+    // Ensure() returns 0 when the compact tid allocator is exhausted (>2^24
+    // live threads), the same condition scePthreadCreate reports as EAGAIN. A
+    // handle with tid 0 would own no futex word, so keep the old null answer
+    // and do NOT publish it as currentThread: the next call retries once a tid
+    // has been recycled.
+    if (handle->guestTid == 0)
+        return nullptr;
+    currentThread = handle;
     return currentThread;
 }
 

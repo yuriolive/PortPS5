@@ -16,6 +16,12 @@ namespace {
 
 using namespace PortPS5::Testing;
 
+// Equeue.hpp now pulls in the shared SCE codes (KernelErrors.hpp) at global
+// scope, which would make the same-valued harness constants ambiguous. Pin the
+// shared ones explicitly; the values are identical by design.
+using ::SCE_KERNEL_ERROR_EBADF;
+using ::SCE_KERNEL_ERROR_ENOENT;
+
 void CheckConcurrentResult(int result) {
     EXPECT_TRUE(result == SCE_OK || result == SCE_KERNEL_ERROR_EBADF || result == SCE_KERNEL_ERROR_ENOENT)
         << "Unexpected concurrent result: " << result;
