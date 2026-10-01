@@ -314,6 +314,8 @@ jobs:
   driver_lavapipe:
     name: Driver on Mesa lavapipe (software Vulkan)
     runs-on: windows-2022
+    # A hung installer once held this job for hours; bound the whole job.
+    timeout-minutes: 45
     needs: changes
     if: needs.changes.outputs.code_changed == 'true'
     env:
@@ -353,7 +355,10 @@ jobs:
 
       - name: Install Vulkan loader and Mesa lavapipe
         shell: pwsh
+        timeout-minutes: 10
         run: |
+          # Progress rendering makes Invoke-WebRequest very slow on big files.
+          $ProgressPreference = 'SilentlyContinue'
           $dl = "$env:RUNNER_TEMP\lvp-dl"
           New-Item -ItemType Directory -Path $dl -Force | Out-Null
           # 1. Vulkan loader (vulkan-1.dll): the driver and the test fixtures
@@ -362,12 +367,16 @@ jobs:
             $rt = "$dl\VulkanRT.exe"
             if (-not (Test-Path $rt)) { Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/VulkanRT-$env:VULKAN_RT_VERSION-Installer.exe" -OutFile $rt }
             Write-Host "VulkanRT SHA256: $((Get-FileHash $rt -Algorithm SHA256).Hash.ToLowerInvariant())"
-            Start-Process -FilePath $rt -ArgumentList '/S' -Wait
+            Write-Host "Running VulkanRT installer (/S, 300 s cap)"
+            $proc = Start-Process -FilePath $rt -ArgumentList '/S' -PassThru
+            if (-not $proc.WaitForExit(300000)) { $proc.Kill(); throw "VulkanRT installer did not finish within 300 s" }
+            if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) { throw "VulkanRT installer exited ($($proc.ExitCode)) but vulkan-1.dll is still missing" }
           }
           # 2. Mesa lavapipe (CPU Vulkan ICD) from mesa-dist-win.
           $archive = "$dl\mesa.7z"
           if (-not (Test-Path $archive)) { Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive }
           Write-Host "Mesa SHA256: $((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant())"
+          Write-Host "Extracting Mesa archive"
           7z x $archive "-o$env:RUNNER_TEMP\mesa" -y | Out-Null
           $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd.x86_64.json' | Select-Object -First 1
           if ($null -eq $icd) { throw "lvp_icd.x86_64.json not found in the Mesa archive (must be the x64 ICD, never x86/arm64)" }
