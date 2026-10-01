@@ -394,6 +394,7 @@ if(BUILD_TESTING)
         SOURCES  tests/BytesEqualTests.cpp
                  tests/SnapshotValidityTests.cpp
         INCLUDES ${LIBS_INCLUDE_DIR}
+        LIBRARIES libc
         LABELS   unit
     )
 
