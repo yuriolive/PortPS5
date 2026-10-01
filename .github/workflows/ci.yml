@@ -360,9 +360,14 @@ jobs:
           7z x $archive "-o$env:RUNNER_TEMP\mesa" -y | Out-Null
           $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd.x86_64.json' | Select-Object -First 1
           if ($null -eq $icd) { throw "lvp_icd.x86_64.json not found in the Mesa archive (must be the x64 ICD, never x86/arm64)" }
-          # The manifest's library_path is relative to its own directory.
-          # VK_DRIVER_FILES makes the loader use only this ICD (hermetic).
-          "VK_DRIVER_FILES=$($icd.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Hosted Windows runners are elevated, and the Vulkan loader ignores
+          # VK_DRIVER_FILES in high-integrity processes, so register the ICD
+          # in the registry instead (DWORD 0 = enabled). The manifest's
+          # library_path is relative to its own directory.
+          $key = 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name $icd.FullName -PropertyType DWord -Value 0 -Force | Out-Null
+          "LVP_ICD_MANIFEST=$($icd.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure CMake (ci preset)
         run: cmake --preset ci
@@ -376,8 +381,9 @@ jobs:
           # Fail loudly if the software device is missing: individual suites
           # skip themselves without a device, which would hide the breakage.
           if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) { throw "vulkan-1.dll not installed" }
-          if (-not (Test-Path $env:VK_DRIVER_FILES)) { throw "VK_DRIVER_FILES manifest missing: $env:VK_DRIVER_FILES" }
-          Write-Host "ICD manifest: $env:VK_DRIVER_FILES"
+          if (-not (Test-Path $env:LVP_ICD_MANIFEST)) { throw "lavapipe ICD manifest missing: $env:LVP_ICD_MANIFEST" }
+          if ((Get-ItemProperty 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers').PSObject.Properties.Name -notcontains $env:LVP_ICD_MANIFEST) { throw "lavapipe ICD not registered in HKLM Khronos Vulkan Drivers" }
+          Write-Host "ICD manifest: $env:LVP_ICD_MANIFEST"
 
       - name: Run driver tests (ctest --preset lavapipe)
         # Bounded parallelism of 4 comes from the preset (execution.jobs).
