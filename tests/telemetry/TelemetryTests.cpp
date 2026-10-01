@@ -46,6 +46,15 @@ TEST(TelemetryLog, FrameLogsIntervalsAfterBaseline) {
     EXPECT_EQ(sink.lines[1], "{\"ev\":\"frame\",\"dt_ms\":2000,\"t_ms\":3016}");
 }
 
+// Invariant: the heartbeat carries the runtime clock the runner uses for the tail-hang check.
+TEST(TelemetryLog, HeartbeatCarriesRuntimeClock) {
+    MemorySink sink;
+    Log log(sink);
+    log.Heartbeat(35001);
+    ASSERT_EQ(sink.lines.size(), 1u);
+    EXPECT_EQ(sink.lines[0], "{\"ev\":\"heartbeat\",\"t_ms\":35001}");
+}
+
 // Invariant: events carry only numeric fields; integers print without a fraction.
 TEST(TelemetryLog, EventFormatsNumbersOnly) {
     MemorySink sink;

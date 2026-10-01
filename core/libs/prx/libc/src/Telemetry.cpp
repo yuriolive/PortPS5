@@ -72,7 +72,9 @@ void WatchdogLoop(Runtime* rt) {
         PortPS5TelemetryAudioSource src = rt->audio.load();
         rt->sampler.Sample(src ? src() : AudioCounters{});
         std::uint64_t idleMs = 0;
-        const WatchdogVerdict v = rt->watchdog.Evaluate(rt->NowMs(), &idleMs);
+        const std::uint64_t now = rt->NowMs();
+        rt->log.Heartbeat(now);
+        const WatchdogVerdict v = rt->watchdog.Evaluate(now, &idleMs);
         if (v != WatchdogVerdict::Ok) {
             rt->log.Event("softlock", {{"idle_ms", static_cast<double>(idleMs)},
                                        {"reason", v == WatchdogVerdict::PresentStall ? 1.0 : 2.0}});

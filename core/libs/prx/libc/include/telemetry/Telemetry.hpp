@@ -114,6 +114,16 @@ public:
     }
 
     /**
+     * @brief Writes a `heartbeat` record carrying the runtime clock.
+     *
+     * Written about once per second by the watchdog thread. tools/regress.py
+     * compares the last heartbeat with the last present, both on this clock, to
+     * see a hang after the final present of a run it had to kill.
+     * @param nowMs Monotonic ms since run start.
+     */
+    void Heartbeat(std::uint64_t nowMs) { Event("heartbeat", {{"t_ms", static_cast<double>(nowMs)}}); }
+
+    /**
      * @brief Writes a structured event with numeric fields.
      * @param name Event name literal (e.g. "audio.underrun", "dialog.open", "video_latency_ms").
      * @param fields Key literal and number pairs.
