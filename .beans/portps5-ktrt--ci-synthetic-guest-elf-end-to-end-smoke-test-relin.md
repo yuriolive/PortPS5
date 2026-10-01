@@ -5,15 +5,13 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-10-01T19:01:21Z
-updated_at: 2026-10-01T19:01:21Z
+updated_at: 2026-10-01T19:28:31Z
 parent: portps5-7n6b
-blocked_by:
-    - portps5-sjuv
 ---
 
 ## Context
 
-The relinker tests relink a synthetic ELF but never run it, so a broken loader or export table is found only with a game dump. A hand-assembled guest ELF (no Sony SDK, no game code) importing our own libkernel/libc NIDs can be relinked and run on the Windows runner. Blocked by: portps5-sjuv (cross-prx imports must resolve on main).
+The relinker tests relink a synthetic ELF but never run it, so a broken loader or export table is found only with a game dump. A hand-assembled guest ELF (no Sony SDK, no game code) importing our own libkernel/libc NIDs can be relinked and run on the Windows runner. Blocked by: none (the cross-prx import failure, portps5-sjuv, was fixed in PR #94).
 
 ## Higher Goal
 
