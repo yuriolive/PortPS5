@@ -104,6 +104,7 @@ public:
      */
     std::uint64_t Frame(std::uint64_t nowMs) {
         std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_closed) return 0;
         const bool first = !m_havePresent;
         const std::uint64_t dt = first ? 0 : nowMs - m_lastPresentMs;
         m_havePresent = true;
@@ -124,7 +125,11 @@ public:
         }
         line += "}";
         std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_closed) return;
         m_sink.Write(line);
+        // run.end is the documented end marker: nothing may follow it, even from a
+        // thread that raced past the runtime's stopped flag.
+        if (std::string_view(name) == "run.end") m_closed = true;
     }
 
     /** @brief Formats a number as JSON (integers without a fraction, others with 3 decimals). */
@@ -138,6 +143,7 @@ public:
 private:
     LineSink& m_sink;
     std::mutex m_mutex;
+    bool m_closed = false;
     bool m_havePresent = false;
     std::uint64_t m_lastPresentMs = 0;
 };
@@ -163,8 +169,18 @@ public:
         m_lastGuestMs.store(nowMs, std::memory_order_relaxed);
         m_armed.store(true, std::memory_order_release);
     }
-    /** @brief Records a present (called from the presenter). */
-    void NotePresent(std::uint64_t nowMs) { m_lastPresentMs.store(nowMs, std::memory_order_relaxed); }
+    /**
+     * @brief Records a present (called from the presenter).
+     *
+     * The present check stays disabled until the first call, like the guest
+     * check, so boot, a cold cache or a long first load cannot trip it and an
+     * unwired presenter cannot false-positive. A title that never presents is
+     * caught by tools/regress.py instead (silence from run start to the kill).
+     */
+    void NotePresent(std::uint64_t nowMs) {
+        m_lastPresentMs.store(nowMs, std::memory_order_relaxed);
+        m_presentSeen.store(true, std::memory_order_release);
+    }
     /**
      * @brief Records guest thread progress (any guest-visible forward step).
      *
@@ -190,7 +206,7 @@ public:
         const std::uint64_t guestIdle = nowMs > guest ? nowMs - guest : 0;
         WatchdogVerdict v = WatchdogVerdict::Ok;
         std::uint64_t idle = 0;
-        if (presentIdle > m_limitMs) {
+        if (m_presentSeen.load(std::memory_order_acquire) && presentIdle > m_limitMs) {
             v = WatchdogVerdict::PresentStall;
             idle = presentIdle;
         } else if (m_guestWired.load(std::memory_order_acquire) && guestIdle > m_limitMs) {
@@ -209,6 +225,7 @@ private:
     std::atomic<bool> m_armed{false};
     std::atomic<bool> m_tripped{false};
     std::atomic<bool> m_guestWired{false};
+    std::atomic<bool> m_presentSeen{false};
     std::atomic<std::uint64_t> m_lastPresentMs{0};
     std::atomic<std::uint64_t> m_lastGuestMs{0};
 };

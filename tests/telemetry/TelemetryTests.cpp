@@ -72,8 +72,32 @@ TEST(TelemetryWatchdog, PresentStallTripsAboveLimitOnly) {
 TEST(TelemetryWatchdog, VerdictLatches) {
     Watchdog wd(100);
     wd.Arm(0);
+    wd.NotePresent(0);
     EXPECT_EQ(wd.Evaluate(101), WatchdogVerdict::PresentStall);
     EXPECT_EQ(wd.Evaluate(5000), WatchdogVerdict::Ok);
+}
+
+// Invariant (review finding): the present check is off until the first present, so a long
+// boot, a cold pipeline cache or an unwired presenter cannot abort the run.
+TEST(TelemetryWatchdog, NoPresentYetNeverTrips) {
+    Watchdog wd(100);
+    wd.Arm(0);
+    EXPECT_EQ(wd.Evaluate(1000000), WatchdogVerdict::Ok);
+    wd.NotePresent(1000000);
+    EXPECT_EQ(wd.Evaluate(1000101), WatchdogVerdict::PresentStall);
+}
+
+// Invariant (review finding): run.end is final. Frames and events racing past the runtime's
+// stopped flag are dropped by the Log, so the log always ends at the documented marker.
+TEST(TelemetryLog, NothingIsWrittenAfterRunEnd) {
+    MemorySink sink;
+    Log log(sink);
+    log.Frame(0);
+    log.Event("run.end", {{"capture_split", 0}, {"write_faults", 0}});
+    log.Frame(16);
+    log.Event("dialog.open");
+    ASSERT_EQ(sink.lines.size(), 1u);
+    EXPECT_EQ(sink.lines[0], "{\"ev\":\"run.end\",\"capture_split\":0,\"write_faults\":0}");
 }
 
 // Invariant: a hung guest thread is detected while presents keep flowing, but only once

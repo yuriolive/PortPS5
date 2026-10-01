@@ -38,6 +38,9 @@ struct Runtime {
     std::mutex stopMutex;
     std::condition_variable stopCv;
     bool stop = false;
+    // Set before run.end is written so late callers (straggler presenter, teardown
+    // dialogs) cannot append records after the documented end marker.
+    std::atomic<bool> stopped{false};
 
     /** Milliseconds since Start on the monotonic clock. */
     std::uint64_t NowMs() const {
@@ -47,6 +50,12 @@ struct Runtime {
 };
 
 std::atomic<Runtime*> g_runtime{nullptr};
+
+/** The runtime if started and not yet shut down, else nullptr (every export is then a no-op). */
+Runtime* Active() {
+    Runtime* rt = g_runtime.load();
+    return (rt && !rt->stopped.load(std::memory_order_acquire)) ? rt : nullptr;
+}
 
 /**
  * Watchdog thread body: once per second sample the audio counters and check
@@ -101,7 +110,7 @@ extern "C" bool PortPS5_Telemetry_Start_nid_no_patch(const char* installDir, int
 }
 
 extern "C" void PortPS5_Telemetry_NotePresent_nid_no_patch() {
-    if (Runtime* rt = g_runtime.load()) {
+    if (Runtime* rt = Active()) {
         const std::uint64_t now = rt->NowMs();
         rt->watchdog.NotePresent(now);
         rt->log.Frame(now);
@@ -109,11 +118,11 @@ extern "C" void PortPS5_Telemetry_NotePresent_nid_no_patch() {
 }
 
 extern "C" void PortPS5_Telemetry_NoteGuestProgress_nid_no_patch() {
-    if (Runtime* rt = g_runtime.load()) rt->watchdog.NoteGuestProgress(rt->NowMs());
+    if (Runtime* rt = Active()) rt->watchdog.NoteGuestProgress(rt->NowMs());
 }
 
 extern "C" void PortPS5_Telemetry_Event_nid_no_patch(const char* name, const char* key, double value) {
-    if (Runtime* rt = g_runtime.load()) {
+    if (Runtime* rt = Active()) {
         if (key) {
             rt->log.Event(name, {{key, value}});
         } else {
@@ -123,19 +132,19 @@ extern "C" void PortPS5_Telemetry_Event_nid_no_patch(const char* name, const cha
 }
 
 extern "C" void PortPS5_Telemetry_SetAudioSource_nid_no_patch(PortPS5TelemetryAudioSource source) {
-    if (Runtime* rt = g_runtime.load()) rt->audio.store(source);
+    if (Runtime* rt = Active()) rt->audio.store(source);
 }
 
 extern "C" void PortPS5_Telemetry_SetDiagnosticsHook_nid_no_patch(PortPS5TelemetryDiagnosticsHook hook) {
-    if (Runtime* rt = g_runtime.load()) rt->hook.store(hook);
+    if (Runtime* rt = Active()) rt->hook.store(hook);
 }
 
 extern "C" void PortPS5_Telemetry_SetVideoLatencyMs_nid_no_patch(double ms) {
-    if (Runtime* rt = g_runtime.load()) rt->sampler.SetVideoLatencyMs(ms);
+    if (Runtime* rt = Active()) rt->sampler.SetVideoLatencyMs(ms);
 }
 
 extern "C" void PortPS5_Telemetry_SetFmvWindow_nid_no_patch(bool open) {
-    if (Runtime* rt = g_runtime.load()) rt->sampler.SetFmvWindow(open);
+    if (Runtime* rt = Active()) rt->sampler.SetFmvWindow(open);
 }
 
 extern "C" void PortPS5_Telemetry_Shutdown_nid_no_patch(std::uint64_t captureSplit, std::uint64_t writeFaults) {
@@ -145,6 +154,7 @@ extern "C" void PortPS5_Telemetry_Shutdown_nid_no_patch(std::uint64_t captureSpl
         std::lock_guard<std::mutex> lock(rt->stopMutex);
         if (rt->stop) return;
         rt->stop = true;
+        rt->stopped.store(true, std::memory_order_release);
     }
     rt->stopCv.notify_all();
     if (rt->thread.joinable()) rt->thread.join();
