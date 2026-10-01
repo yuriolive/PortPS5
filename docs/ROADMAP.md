@@ -233,6 +233,36 @@ A lane can start when its blockers are done. Lanes in the same row can run in pa
 | PGO | `portps5-f2r1` | `portps5-52bs`, `portps5-8x1k` |
 | P5 texture revalidation | `portps5-2k6d` | `portps5-421p` |
 
+## CI reliability (cross-cutting, M2–M5)
+
+Checks that run on synthetic inputs and so need no GPU and no game data ([spec/verification.md](spec/verification.md) §1.1). Epic bean `portps5-7n6b`.
+
+| Lane | Bean | Blocked by |
+|---|---|---|
+| Vulkan validation layers | `portps5-977n` | none |
+| PE structure validation | `portps5-s9zz` | none |
+| Codegen metrics per PR | `portps5-g0n7` | none |
+| C++ coverage report | `portps5-02a4` | none |
+| Synthetic guest ELF end to end | `portps5-ktrt` | none (`portps5-sjuv` fixed in PR #94) |
+| Unsupported() counts and compat tiers | `portps5-ba7d` | `portps5-w1re`, `portps5-4bkt` |
+| Linux sanitizers | `portps5-pbj2` | `portps5-37j0` |
+| Fuzzing | `portps5-axx6` | `portps5-pbj2` |
+| clang-tidy and stricter warnings | `portps5-hpx7` | `portps5-qf1m` |
+| Local nightly regression | `portps5-e6xg` | `portps5-3m3u`, `portps5-52bs` |
+
+Deliverables:
+
+- [ ] Vulkan validation layers on the lavapipe job (bean `portps5-977n`).
+- [ ] PE structure validation of relinker output (bean `portps5-s9zz`).
+- [ ] Deterministic codegen metrics per PR (bean `portps5-g0n7`).
+- [ ] C++ coverage report (bean `portps5-02a4`).
+- [ ] Synthetic guest ELF end to end (bean `portps5-ktrt`).
+- [ ] Unsupported() counts and compat status tiers (bean `portps5-ba7d`).
+- [ ] Linux sanitizer job (ASan, UBSan, TSan) (bean `portps5-pbj2`).
+- [ ] Fuzzing of ELF, PM4 and shader decoders (bean `portps5-axx6`).
+- [ ] clang-tidy and `-Wcast-function-type` (bean `portps5-hpx7`).
+- [ ] Local nightly regression on the maintainer machine (bean `portps5-e6xg`).
+
 ## v2 seams in v1 (cross-cutting, M2–M5)
 
 Design for 2.0, implement for 1.0. A seam moves into v1 only when v1 code uses it, it is cheap now, and the 2.0 milestone that plugs into it is named. Nothing here adds a 2.0 feature to 1.0. Epic bean `portps5-epoi`.
