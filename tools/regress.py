@@ -189,7 +189,10 @@ def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha, 
         last_frame = None  # frames without t_ms: no common clock, skip the tail check
     seen = tel["last_seen_t_ms"]
     tail_softlock = int(
-        killed_by_runner and seen is not None and seen - last_frame > rm.SOFTLOCK_MS
+        killed_by_runner
+        and seen is not None
+        and last_frame is not None
+        and seen - last_frame > rm.SOFTLOCK_MS
     )
     av_max = round(max(tel["av_offsets"], default=0.0), 1)
     duration = stats["presented_s"]
