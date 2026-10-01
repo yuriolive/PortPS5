@@ -216,6 +216,7 @@ Design for 2.0, implement for 1.0. A seam moves into v1 only when v1 code uses i
 | Guest memory registry: physical allocation with N views | 1 view, plus a synthetic 2-view test | aliasing at full size (M5), streaming (M8) | M3 | `portps5-gkef` |
 | One device capability table | subgroup size, descriptor model | ray tracing, mesh shaders (M9) | M3 | `portps5-l77s` |
 | Recompiler decodes RT and NGG/mesh ops into IR | `Unsupported()` with a log | RT and mesh lowering (M9) | M4 | `portps5-jehk` |
+| Presenter composition hook and swapchain colour-space selection | final pass is a copy; SDR swapchain | spatial upscale, HDR output, frame generation (M12) | M3 | `portps5-71o2` |
 | Pipeline cache `EnvKey` hashes enabled features | current stages | new stages without a format break | M2 | `portps5-8gdr` |
 | Positional file I/O and a request queue | `sceKernelAio*` | streaming and decompression pipeline (M8) | M3 | `portps5-j4e1` |
 
@@ -236,6 +237,7 @@ Two spikes de-risk 2.0 and can run any time, in parallel with everything: guest 
 | Residency interface | `portps5-hps3` | `portps5-hkwd` |
 | Direct-memory aliasing (M5) | `portps5-r2ns` | `portps5-gkef` |
 | Positional file I/O and Aio | `portps5-j4e1` | `portps5-37j0` |
+| Presenter composition hook | `portps5-71o2` | `portps5-l77s` |
 
 ## Traceability
 
@@ -264,11 +266,12 @@ Two spikes de-risk 2.0 and can run any time, in parallel with everything: guest 
 
 # Part II: 2.0 (draft)
 
-2.0 objective and gates: [PRD §10](PRD.md). Part II starts after M6. Before that only the Part I seams and the two spikes run. Each milestone becomes its own `ooo seed`, and its beans are created then, with `blocked_by` links. A milestone starts only when the previous one's exit criteria pass. The exceptions are M8 and M9, which may run in parallel once M7 exits: they touch different subsystems (memory/I-O vs. GPU features) and have different gate titles.
+2.0 objective and gates: [PRD §10](PRD.md). Part II starts after M6. Before that only the Part I seams and the two spikes run. Each milestone becomes its own `ooo seed`, and its beans are created then, with `blocked_by` links. A milestone starts only when the previous one's exit criteria pass. The exceptions are M8, M9 and M12, which may run in parallel once M7 exits: they touch different subsystems (memory and I/O, GPU features, presentation) and have different gates. M12 has no gate title and does not block M11; it must land before the 2.0 release.
 
 ```
 M6 (1.0) ─▶ M7 platform + tier ─┬─▶ M8 streaming (gate 6) ─┬─▶ M10 scale (gate 8) ─▶ M11 GTA VI (gate 9)
-                                └─▶ M9 RT + geometry (gate 7) ┘
+                                ├─▶ M9 RT + geometry (gate 7) ┘
+                                └─▶ M12 PC enhancement layer (no gate; ships with 2.0)
 ```
 
 ## Milestone 7: Native Linux and the 2.0 tier
@@ -321,6 +324,24 @@ M6 (1.0) ─▶ M7 platform + tier ─┬─▶ M8 streaming (gate 6) ─┬─�
 **Exit criteria**
 - [ ] GTA VI passes the full-run protocol on the 2.0 tier at ≥ 30 fps average and ≥ 20 fps 1% low, with title-specific behaviour only in its documented TOML.
 - [ ] Gates 6–8 still pass, on both platforms.
+## Milestone 12: PC enhancement layer (parallel after M7, ships with 2.0)
+
+All enhancements are opt-in per title, configured through documented `[enhancement]` keys that name the mechanism, and switched off for every pass measurement (PRD V7).
+
+**Scope**
+- [ ] Spatial upscaling (FSR1/CAS, MIT) in the presenter's composition pass (`portps5-71o2`), with internal resolution from `display.resolution_scale`.
+- [ ] HDR output: the guest VideoOut HDR mode mapped to an HDR10 or scRGB swapchain with `VK_EXT_hdr_metadata`, chosen from the capability table.
+- [ ] Temporal upscaling (FSR2+; DLSS and XeSS only if the licence spike `portps5-f4bl` clears them), fed by the general input recogniser from spike `portps5-8ov1`.
+- [ ] Frame generation, presentation only: it never changes guest simulation, input or timing, and it is off while telemetry measures a pass.
+- [ ] Experimental flip-rate override (`[enhancement] flip_rate_override`), off by default, never part of a pass, with the timing risk documented (PRD §11).
+
+**Exit criteria**
+- [ ] Each enhancement runs on at least two 2.0 gate titles with no change to their pass results when switched off.
+- [ ] `docs/workarounds.md` (or a new `docs/enhancements.md`) lists every `[enhancement]` key with its mechanism.
+# Part III: beyond 2.0 (unscheduled)
+
+v3 candidates and permanent exclusions, with the reason each is out, are in [PRD §11](PRD.md). The AI-assisted optimization research there starts with deterministic shader-variant autotuning and profile-guided relinker layout, and keeps every model output as a verified, locally derived cache.
+
 ## Traceability (2.0)
 
 | 2.0 goal (PRD §10) | Delivered in | Seam from Part I |
@@ -331,4 +352,5 @@ M6 (1.0) ─▶ M7 platform + tier ─┬─▶ M8 streaming (gate 6) ─┬─�
 | V4 ray tracing | M9 | `portps5-l77s`, `portps5-jehk`, `portps5-mdu8` |
 | V5 modern geometry | M9 | `portps5-jehk` |
 | V6 async compute, frame overlap | M9, M10 | `portps5-hkwd`, performance track |
+| V7 PC enhancement layer | M12 | `portps5-71o2`, `portps5-l77s`, `portps5-hkwd` |
 | Gate 9 GTA VI at 30 fps | M11 | all of the above |
