@@ -64,6 +64,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: false
+          # Depth 2 so HEAD~1 (PR base or previous main) exists for the
+          # comment-policy diff below.
+          fetch-depth: 2
 
       - name: Setup MinGW + submodules + ccache env
         uses: ./.github/actions/mingw-setup
@@ -249,8 +252,12 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "Running code comment and docstring policy checks..."
-          git fetch origin main --depth=1 2>$null
-          python tools/check_comments.py --base origin/main
+          # Diff against HEAD~1, not origin/main: a shallow checkout has no
+          # merge-base with origin/main, so the triple-dot diff failed and the
+          # fallback two-dot diff flagged every file main gained after the PR
+          # branched (unrelated audio files). HEAD~1 is the PR base on the merge
+          # ref and the previous commit on a main push.
+          python tools/check_comments.py --base HEAD~1
 
       # ── Build hashes (provenance, no uploads) ────────────────────────
       # SHA256 over shipping binaries for release provenance and
