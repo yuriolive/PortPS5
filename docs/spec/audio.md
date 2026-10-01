@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Audio
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -96,7 +96,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Audi
 
 | Milestone | Audio work |
 |---|---|
-| M1 | - [x] Port AudioOut2 and ATRAC9 from AnyPS5 main (merged PR #5). Build the codec, NGS2 and Audio3d inventory per gate title. Add underrun and latency telemetry. Remove `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM`. |
+| M1 | - [ ] Port AudioOut2 and ATRAC9 from AnyPS5 main (merged PR #5): <br>- [x] AudioOut2 contexts, ports and ATRAC9 ported (PR #14);<br>- [x] per-context and process underrun, overrun-drop and latency counters; mixer-callback accounting landed with the single mixer (PR #45);<br>- [x] `APS5_TRACE_AUDIOOUT2` and `APS5_TRACE_AJM` removed (no `APS5_` literal remains in `core/`);<br>- [ ] codec, NGS2 and Audio3d inventory per gate title: `libSceAudioOut/IMPORT_INVENTORY.md` records capability from export tables and labels per-title needs as inference; Dreaming Sarah's link-level inventory exists in [relinker.md](relinker.md), the other four titles need local dumps (bean `portps5-3eh1`). |
 | M2 | - [x] Single host mixer with the resampler and the soft limiter. - [ ] TMNT proves the mixing path. Underrun bar enforced in the full run (needs a local title run with published results; unit tests alone do not close this). |
 | M3 | - [ ] Tomb Raider FMV audio within the A/V bar, jointly with [video-fmv.md](video-fmv.md). |
 | M4 | - [ ] Any codec or NGS2 surface that the inventory flags for Bugsnax. |

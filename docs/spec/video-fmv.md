@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Video / FMV
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -112,8 +112,8 @@ Reaching the post-FMV state without the end reference fails the check, so a skip
 
 | Milestone | Work |
 |---|---|
-| M1 | - [ ] Port the saveexec fix. Port the interim adjacent block-generation advance (no switch, no title reference). AvPlayer coverage audit and codec inventory per gate title. Offset telemetry skeleton (`video_latency_ms`). |
-| M2 | - [ ] FMV references and the "FMV played" rule wired into `tools/regress` for the 2D titles, if they contain video. |
+| M1 | - [ ] Items:<br>- [x] saveexec fix ported (PRs #29 and #60, `RecompilerFixesTests`, `recompiler_ported_instruction_tests`);<br>- [ ] interim adjacent block-generation advance (no switch, no title reference): not implemented, no such code exists under `libSceAgcDriver/Graphics` on `main` (bean `portps5-ux18`);<br>- [x] AvPlayer offline state machine and `AvPlayerStateMachineTests` (PR #33), which covers the audit's "never crash or deadlock at boot" goal; real media decoding is still open;<br>- [ ] codec inventory per gate title (bean `portps5-3eh1`);<br>- [ ] offset telemetry skeleton (`video_latency_ms`): no such counter exists (bean `portps5-f9a3`). |
+| M2 | - [ ] FMV references and the "FMV played" rule wired into `tools/regress` for the 2D titles, if they contain video (bean `portps5-3m3u`). |
 | M3 | - [ ] General block-generation tracking replaces the interim adjacent block-generation advance, which is deleted. Tomb Raider FMV passes. Stress-run exit. |
 | M4 | - [ ] Bugsnax FMV on the general path. |
 | M5 | - [ ] Demon's Souls Bink FMVs from first level to credits within the A/V bar. |
