@@ -1251,6 +1251,50 @@ HostEnv ScanHostEnv() {
     return found;
 }
 
+}  // namespace
+
+/**
+ * Reads one host environment variable from the process environment block.
+ *
+ * Config owns all host environment access (CI policy forbids getenv elsewhere), so
+ * path discovery such as the save-data root goes through here instead of std::getenv.
+ * Windows variable names are case-insensitive, so they match without regard to case
+ * there; POSIX names are exact. Empty values count as unset.
+ */
+std::optional<std::string> HostEnvironmentValue(const char* name) {
+    if (name == nullptr || *name == '\0') {
+        return std::nullopt;
+    }
+#ifdef _WIN32
+    char** block = _environ;
+#else
+    char** block = environ;
+#endif
+    if (block == nullptr) {
+        return std::nullopt;
+    }
+    const std::string_view wanted(name);
+    for (; *block != nullptr; ++block) {
+        const char* entry = *block;
+        const char* separator = std::strchr(entry, '=');
+        if (separator == nullptr || separator == entry) {
+            continue;
+        }
+        const std::string_view key(entry, static_cast<std::size_t>(separator - entry));
+#ifdef _WIN32
+        const bool match = IsAsciiEqualNoCase(key, wanted);
+#else
+        const bool match = key == wanted;
+#endif
+        if (match && separator[1] != '\0') {
+            return std::string(separator + 1);
+        }
+    }
+    return std::nullopt;
+}
+
+namespace {
+
 void FinishResolve(ResolvedConfig& out, std::set<std::string>& debugKeys,
                    const HostEnv& hostEnv, std::vector<std::string>& warnings) {
     if (!hostEnv.staleAps5.empty()) {
