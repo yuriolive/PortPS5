@@ -12,7 +12,7 @@ parent: portps5-s1kj
 
 ## Context
 
-build-toolchain.md says the policy step checks that glslang and SPIRV-Tools stay out of shipped artifacts; the 2026-10-01 audit renamed job to step but did not verify the check exists. Blocked by: none.
+The policy step checks only glslang: it runs `nm -D` on `build/ci/core/libs/libs/libSceAgcDriver.prx` and fails on glslang symbols (ci.yml:171-180). It has no SPIRV-Tools check, and when the prx is absent it skips the check without failing or warning. build-toolchain.md was corrected to describe this. Blocked by: none.
 
 ## Higher Goal
 
@@ -22,6 +22,7 @@ Licence risk R1 controls are real, not just documented.
 
 - [x] Confirmed: the policy step runs `nm -D` on libSceAgcDriver.prx and fails on glslang symbols (ci.yml:171-179)
 - [ ] Add a SPIRV-Tools presence report (informational, not failing) so the R1 status can be recorded
+- [ ] A missing libSceAgcDriver.prx fails the policy step instead of skipping the glslang check silently
 - [ ] build-toolchain.md matches
 
 ## Out of Scope
