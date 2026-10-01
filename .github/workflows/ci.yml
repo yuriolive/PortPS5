@@ -363,14 +363,25 @@ jobs:
           New-Item -ItemType Directory -Path $dl -Force | Out-Null
           # 1. Vulkan loader (vulkan-1.dll): the driver and the test fixtures
           #    SDL_LoadObject it, so it must be on the system search path.
+          # The LunarG runtime installer hangs in /S mode on hosted runners
+          # (observed: never exits within 300 s), so do not run it. It is an
+          # NSIS package that 7-Zip can unpack; take the 64-bit loader from it.
           if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) {
             $rt = "$dl\VulkanRT.exe"
             if (-not (Test-Path $rt)) { Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/VulkanRT-$env:VULKAN_RT_VERSION-Installer.exe" -OutFile $rt }
             Write-Host "VulkanRT SHA256: $((Get-FileHash $rt -Algorithm SHA256).Hash.ToLowerInvariant())"
-            Write-Host "Running VulkanRT installer (/S, 300 s cap)"
-            $proc = Start-Process -FilePath $rt -ArgumentList '/S' -PassThru
-            if (-not $proc.WaitForExit(300000)) { $proc.Kill(); throw "VulkanRT installer did not finish within 300 s" }
-            if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) { throw "VulkanRT installer exited ($($proc.ExitCode)) but vulkan-1.dll is still missing" }
+            $rtDir = "$env:RUNNER_TEMP\vulkanrt"
+            7z x $rt "-o$rtDir" -y | Out-Null
+            $cands = @(Get-ChildItem -Recurse -Path $rtDir -Filter 'vulkan-1.dll' -ErrorAction SilentlyContinue)
+            Write-Host "vulkan-1.dll candidates: $($cands.FullName -join '; ')"
+            # Pick the x64 build by PE machine type (0x8664), not by path name.
+            $loader = $cands | Where-Object {
+              $b = [System.IO.File]::ReadAllBytes($_.FullName)
+              $pe = [BitConverter]::ToInt32($b, 0x3C)
+              [BitConverter]::ToUInt16($b, $pe + 4) -eq 0x8664
+            } | Select-Object -First 1
+            if ($null -eq $loader) { throw "no x64 vulkan-1.dll found inside the VulkanRT installer" }
+            Copy-Item $loader.FullName "$env:WINDIR\System32\vulkan-1.dll" -Force
           }
           # 2. Mesa lavapipe (CPU Vulkan ICD) from mesa-dist-win.
           $archive = "$dl\mesa.7z"
