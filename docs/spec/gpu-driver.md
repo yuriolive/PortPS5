@@ -213,7 +213,7 @@ Slices, each its own PR with a regression test that needs no game data. A textur
 
 | # | Mechanism | Status |
 |---|---|---|
-| 1 | `BytesEqual` (SSE2, `memcmp == 0` semantics) for the TextureCache whole-texture revalidation and the `GuestBufferMemory` snapshot consistency checks. Cuts the compare cost, keeps exact semantics. | - [x] done in PR #75 |
+| 1 | `BytesEqual` (SSE2, `memcmp == 0` semantics) for the TextureCache whole-texture revalidation and the `GuestBufferMemory` snapshot consistency checks. Intended to cut the compare cost (not yet measured; see the bean), keeps exact semantics. | - [x] done in PR #75 |
 | 2 | Skip the per-draw compare when `IWriteTracker::Collect` proves the range unchanged (`SnapshotValidity.hpp`, `Context::writeTracker`). Generation 0 or no tracker keeps the byte compare, so behaviour is unchanged until the runtime wires a `WriteWatchTracker` over a `MEM_WRITE_WATCH` arena (bean `portps5-421p`). GPU write-back must report `MarkWritten` before that wiring. | - [ ] code in PR #77, runtime wiring open |
 | 3 | Reuse prepared `ShaderResources` state (layout, descriptor writes, vertex layout) when shaders, bindings and descriptors are unchanged between draws (the idea behind AnyPS5 `29b4601` draw recipes, behaviour only). | - [ ] open |
 | 4 | Batch guest reads and uploads (`GuestMemory.Read` calls, vertex and memory upload). | - [ ] open |
