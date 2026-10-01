@@ -78,7 +78,7 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 | Module | Behaviour |
 |---|---|
-| `libScePlayGo` | Everything is local. `scePlayGoOpen` reads the title's own `/app0/playgo-chunkdefs.xml` (chunk ids plus the range `0..default_chunk`; a missing file leaves `{0}` because a dump may omit it, an inference). Loci are LOCAL_FAST, ETA is 0, progress is complete, the to-do list is empty, install speed defaults to FULL. Error codes and check order follow KytyPS5 `libPlayGo.cpp` and shadPS4 `playgo_types.h`: `UNKNOWN` 0x80B20001 (xml present but unreadable), `INVALID_ARGUMENT` 0x80B20004, `BAD_HANDLE` 0x80B20009, `BAD_POINTER` 0x80B2000A, `BAD_SIZE` 0x80B2000B, `BAD_CHUNK_ID` 0x80B2000C, `BAD_SPEED` 0x80B2000D, `BAD_LOCUS` 0x80B20010, `BAD_OPTIONAL_TYPE` 0x80B20024. |
+| `libScePlayGo` | Everything is local. `scePlayGoOpen` reads the title's own `/app0/playgo-chunkdefs.xml` (chunk ids plus the range `0..default_chunk`; a confirmed missing file leaves `{0}` because a dump may omit it, an inference). Loci are LOCAL_FAST, ETA is 0, progress is complete, the to-do list is empty, install speed defaults to FULL. Error codes and check order follow KytyPS5 `libPlayGo.cpp` and shadPS4 `playgo_types.h`: `UNKNOWN` 0x80B20001 (status query, file open or read failed; logged without changing the handle or chunk set), `INVALID_ARGUMENT` 0x80B20004, `BAD_HANDLE` 0x80B20009, `BAD_POINTER` 0x80B2000A, `BAD_SIZE` 0x80B2000B, `BAD_CHUNK_ID` 0x80B2000C, `BAD_SPEED` 0x80B2000D, `BAD_LOCUS` 0x80B20010, `BAD_OPTIONAL_TYPE` 0x80B20024. |
 | `libSceConvertKeycode` | `sceConvertKeycodeGetImeKeyboardType` reports type 0. `sceConvertKeycodeGetVirtualKeycode` has no audited signature and aborts through `Unsupported()`. |
 | `libSceSysmodule` | Unloading an id missing from the module table is a logged no-op, like loading it. |
 
@@ -109,6 +109,8 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 | Old AnyPS5 `_sd` layout present | Migrated once by copying. The source is kept. |
 
 ## Tests
+
+- `tests/modules/PlayGoTests.cpp`: confirmed missing XML falls back to `{0}`; status-query and open/read failures return `UNKNOWN` without terminating or changing published state; empty XML and reads across buffer boundaries succeed.
 
 - `OfflineNetStackTests` covers bind-family mismatches, port sharing across families/types, malformed and valid IPv6 groups, and concurrent plus post-abort accept calls using synthetic socket state.
 

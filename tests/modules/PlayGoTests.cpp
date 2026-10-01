@@ -40,6 +40,7 @@ namespace {
 
 using namespace PortPS5::Testing;
 
+constexpr int kUnknown = static_cast<int>(0x80B20001u);
 constexpr int kInvalidArgument = static_cast<int>(0x80B20004u);
 constexpr int kBadHandle = static_cast<int>(0x80B20009u);
 constexpr int kBadPointer = static_cast<int>(0x80B2000Au);
@@ -148,13 +149,61 @@ TEST_F(PlayGoTest, ChunkSetComesFromXmlAtOpen) {
     EXPECT_EQ(scePlayGoGetChunkId(2, ids, 8, &count), kBadHandle);
 }
 
-// An xml that exists but cannot be read (here: a directory with that name) fails the open with
-// UNKNOWN instead of silently falling back to chunk 0; only a missing file falls back.
+// An overlong path component causes a status-query error rather than confirming absence.
+// Failed opens must leave both the caller's handle and the previously loaded chunk set intact.
+TEST_F(PlayGoTest, ChunkDefsStatusErrorFailsOpen) {
+    WriteChunkDefs({7});
+    const int previousHandle = Open();
+    const auto app0 = MakeSubPath(std::string(512, 'x'));
+    std::error_code ec;
+    ASSERT_FALSE(std::filesystem::exists(app0 / "playgo-chunkdefs.xml", ec));
+    ASSERT_TRUE(ec) << "The fixture must fail the status query";
+    AddPathAlias_nid_no_patch("/app0", app0.string().c_str());
+
+    int handle = 99;
+    EXPECT_EQ(scePlayGoOpen(&handle, nullptr), kUnknown);
+    EXPECT_EQ(handle, 99);
+    std::uint16_t ids[2] = {};
+    std::uint32_t count = 0;
+    ASSERT_EQ(scePlayGoGetChunkId(previousHandle, ids, 2, &count), 0);
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(ids[1], 7);
+}
+
+// A directory with the XML's name fails either the open (Windows) or the read (Linux).
+// Reading it must return UNKNOWN without terminating at the noexcept guest boundary.
 TEST_F(PlayGoTest, UnreadableChunkDefsFailsOpen) {
+    WriteChunkDefs({7});
+    const int previousHandle = Open();
+    ASSERT_TRUE(std::filesystem::remove(MakeSubPath("playgo-chunkdefs.xml")));
     std::filesystem::create_directories(MakeSubPath("playgo-chunkdefs.xml"));
-    int handle = 0;
-    EXPECT_EQ(scePlayGoOpen(&handle, nullptr), static_cast<int>(0x80B20001u));
-    EXPECT_EQ(handle, 0);
+    int handle = 99;
+    EXPECT_EQ(scePlayGoOpen(&handle, nullptr), kUnknown);
+    EXPECT_EQ(handle, 99);
+    std::uint16_t ids[2] = {};
+    std::uint32_t count = 0;
+    ASSERT_EQ(scePlayGoGetChunkId(previousHandle, ids, 2, &count), 0);
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(ids[1], 7);
+}
+
+// Empty files and a final short read are normal EOF; definitions beyond the read buffer survive.
+TEST_F(PlayGoTest, EmptyAndLargeChunkDefsReadToEof) {
+    std::ofstream(MakeSubPath("playgo-chunkdefs.xml")).close();
+    int handle = Open();
+    std::uint16_t ids[2] = {};
+    std::uint32_t count = 0;
+    ASSERT_EQ(scePlayGoGetChunkId(handle, ids, 2, &count), 0);
+    ASSERT_EQ(count, 1u);
+    EXPECT_EQ(ids[0], 0);
+
+    std::ofstream out(MakeSubPath("playgo-chunkdefs.xml"));
+    out << std::string(8192, ' ') << "<chunk id=\"7\"/>";
+    out.close();
+    handle = Open();
+    ASSERT_EQ(scePlayGoGetChunkId(handle, ids, 2, &count), 0);
+    ASSERT_EQ(count, 2u);
+    EXPECT_EQ(ids[1], 7);
 }
 
 // Chunk-array calls (Locus, Eta, Progress, Prefetch) share their validation order: handle, pointers,

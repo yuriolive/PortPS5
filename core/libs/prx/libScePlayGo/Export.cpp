@@ -13,7 +13,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <mutex>
 #include <set>
 #include <string>
@@ -138,8 +137,9 @@ int APS5_VABI scePlayGoTerminate(void) noexcept { return 0; }
 /**
  * Opens PlayGo and loads the chunk set from /app0/playgo-chunkdefs.xml.
  * Returns 0 and the process-wide handle; BAD_POINTER for a null out pointer; INVALID_ARGUMENT when
- * `param` is non-null; UNKNOWN (0x80B20001) when the file exists but cannot be read. A missing file leaves the set {0}: a dump may omit it, and failing the open
- * would block a title that only needs chunk 0 (inference, noted in docs/spec/save-data.md).
+ * `param` is non-null; UNKNOWN (0x80B20001) when querying or reading the file fails. A confirmed
+ * missing file leaves the set {0}: a dump may omit it, and failing the open would block a title
+ * that only needs chunk 0 (inference, noted in docs/spec/save-data.md).
  */
 int APS5_VABI scePlayGoOpen(int* out_handle, const void* param) noexcept {
     if (out_handle == nullptr) {
@@ -151,14 +151,22 @@ int APS5_VABI scePlayGoOpen(int* out_handle, const void* param) noexcept {
     std::set<std::uint16_t> chunks = {0};
     const std::filesystem::path defs = ResolvePath_nid_no_patch("/app0/playgo-chunkdefs.xml");
     std::error_code ec;
-    if (std::filesystem::exists(defs, ec)) {
+    const bool exists = std::filesystem::exists(defs, ec);
+    if (ec) {
+        APS5_LOG_OUT("cannot query %s: %s", defs.string().c_str(), ec.message().c_str());
+        return kErrUnknown;
+    }
+    if (exists) {
         // The file is present, so an unreadable one is an error rather than "no chunk definitions".
         std::ifstream file(defs, std::ios::binary);
         std::string text;
-        if (file) {
-            text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        char buffer[4096];
+        // Stream reads translate filebuf exceptions into badbit with the default exception mask.
+        while (file.read(buffer, sizeof(buffer))) {
+            text.append(buffer, sizeof(buffer));
         }
-        if (!file && !file.eof()) {
+        text.append(buffer, static_cast<std::size_t>(file.gcount()));
+        if (file.bad() || !file.eof()) {
             APS5_LOG_OUT("cannot read %s", defs.string().c_str());
             return kErrUnknown;
         }
