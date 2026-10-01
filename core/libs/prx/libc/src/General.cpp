@@ -250,7 +250,7 @@ extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
     return Resolve(state, path);
 }
 
-GuestPathResult ResolveGuestPathChecked(const char* path) {
+extern "C" GuestPathResult ResolveGuestPathChecked_nid_no_patch(const char* path) {
     GuestPathResult result;
     if (!path) { result.error = 14; return result; }
     auto& state = Directories();
@@ -259,7 +259,7 @@ GuestPathResult ResolveGuestPathChecked(const char* path) {
     return result;
 }
 
-bool MountGuestDirectory(const char* name, const std::filesystem::path& hostDirectory) {
+extern "C" bool MountGuestDirectory_nid_no_patch(const char* name, const std::filesystem::path& hostDirectory) {
     if (!name || !*name || std::string(name).find_first_of("/\\:") != std::string::npos) return false;
     std::error_code error;
     std::filesystem::create_directories(hostDirectory, error);
@@ -272,14 +272,14 @@ bool MountGuestDirectory(const char* name, const std::filesystem::path& hostDire
     return true;
 }
 
-void UnmountGuestDirectory(const char* name) {
+extern "C" void UnmountGuestDirectory_nid_no_patch(const char* name) {
     if (!name) return;
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
     state.mounts.erase(name);
 }
 
-std::filesystem::path DefaultSaveDataRoot() {
+extern "C" std::filesystem::path DefaultSaveDataRoot_nid_no_patch() {
     // docs/spec/save-data.md: %LOCALAPPDATA%/PortPS5/saves/<titleId>/.
     // Env access goes through Config (CI policy bans getenv outside it).
     if (const auto base = PortPS5::Config::HostEnvironmentValue("LOCALAPPDATA"))
@@ -291,7 +291,7 @@ std::filesystem::path DefaultSaveDataRoot() {
     return std::filesystem::path("savedata");
 }
 
-bool MountSaveData(const std::string& titleId, const std::filesystem::path& saveRoot) {
+extern "C" bool MountSaveData_nid_no_patch(const std::string& titleId, const std::filesystem::path& saveRoot) {
     // titleId becomes a path component: allow only [A-Za-z0-9_-] so a hostile
     // param.json cannot redirect the container ("..", separators, drive letters).
     if (titleId.empty() || titleId.size() > 32) return false;
