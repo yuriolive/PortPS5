@@ -118,6 +118,12 @@ int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle ctx, const AudioOut2
     // is stored for the M2 resampler; the M1 mix runs at 48 kHz throughout.
     entry.sampleType = AudioOut2DecodeSampleType(params->data_format);
     entry.channels = entry.sampleType == AudioOut2SampleType::Unknown ? 0 : AudioOut2DecodeChannels(params->data_format);
+    if (entry.channels == 0) {
+        // Not an error code: a port with a format this mixer does not render is accepted and skipped
+        // (docs/spec/audio.md), but never silently.
+        APS5_LOG_OUT("sceAudioOut2PortCreate: data_format 0x%x is not rendered (channels or sample type unsupported)",
+                     params->data_format);
+    }
     *port = static_cast<AudioOut2PortHandle>(index) + 1;
     AUDIOOUT2_TRACE("t=%.3f PortCreate ctx=%llx -> port %llu: type=0x%x data_format=0x%x (%u ch, sample type %d) sampling_freq=%u flags=0x%x user=%llx\n",
         AudioOut2TraceSeconds(), static_cast<unsigned long long>(ctx), static_cast<unsigned long long>(*port), params->port_type, params->data_format,

@@ -607,9 +607,10 @@ struct Ngs2WaveformFormat {
     std::uint32_t frame_margin;
 };
 
+/// @brief PS5 NGS2 waveform block, a 40-byte guest ABI record.
+/// @details PS5 widened the offset/size pair to 64 bits (KytyPS5 ngs2.cpp asserts the same size);
+///          the PS4 layout was 32 bytes.
 struct Ngs2WaveformBlock {
-    // PS5 widened the offset/size pair to 64 bits: the record is 40 bytes (KytyPS5 ngs2.cpp asserts
-    // the same), not the 32-byte PS4 layout.
     std::uint64_t data_offset;
     std::uint64_t data_size;
     std::uint32_t num_repeats;

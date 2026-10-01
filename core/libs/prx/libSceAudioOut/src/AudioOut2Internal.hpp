@@ -87,8 +87,12 @@ inline std::uint32_t AudioOut2DecodeChannels(std::uint32_t dataFormat) {
 // Sample encodings a port can carry in its PCM buffer.
 enum class AudioOut2SampleType : std::uint8_t { Float, Int16, Unknown };
 
-// Decodes the sample type from data_format bits 0..6: 0 is 32-bit float, 1 is signed 16-bit.
-// Anything else is Unknown, and the caller leaves the port unrendered instead of guessing.
+/**
+ * @brief Decodes the sample type from data_format bits 0..6.
+ * @param dataFormat The guest SceAudioOut2PortParam data_format word.
+ * @return Float for 0, Int16 for 1, Unknown for anything else; the caller then leaves the port
+ *         unrendered (and logs it) instead of guessing.
+ */
 inline AudioOut2SampleType AudioOut2DecodeSampleType(std::uint32_t dataFormat) {
     switch (dataFormat & AUDIO_OUT2_FORMAT_TYPE_MASK) {
         case 0: return AudioOut2SampleType::Float;
@@ -97,9 +101,16 @@ inline AudioOut2SampleType AudioOut2DecodeSampleType(std::uint32_t dataFormat) {
     }
 }
 
-// Loads frame `frame` of an interleaved guest PCM buffer into `channels` floats (full scale
-// +-1.0). Int16 divides by 32768 so -32768 maps to exactly -1.0. The caller guarantees `data` is
-// readable for (frame + 1) * channels samples; the port contract is one grain per push.
+/**
+ * @brief Loads one frame of an interleaved guest PCM buffer as floats.
+ * @param data Guest buffer; the caller guarantees it is readable for (frame + 1) * channels samples
+ *        (the port contract is one grain per push).
+ * @param type Float (copied unchanged) or Int16 (divided by 32768, so -32768 maps to exactly -1.0).
+ *        Unknown must not be passed; such ports are never rendered.
+ * @param frame Zero-based frame index.
+ * @param channels Samples per frame, 1..AUDIO_OUT2_PORT_CHANNELS_MAX.
+ * @param out Receives `channels` floats; must have room for that many.
+ */
 inline void AudioOut2LoadFrame(const void* data, AudioOut2SampleType type, std::size_t frame,
                                std::uint32_t channels, float* out) {
     const std::size_t first = frame * channels;

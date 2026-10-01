@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 #include <future>
 #include <thread>
@@ -412,7 +413,11 @@ TEST(AudioOut2Tests, Int16PortsMixLikeFloatPorts) {
 TEST(AudioOut2Tests, UnknownSampleTypePortIsNotRendered) {
     AudioOut2ContextHandle ctx = MakeWallClockContext(4, 64);
     auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
+    ::testing::internal::CaptureStdout();
     AudioOut2PortHandle port = MakePort(ctx, 0x202);
+    const std::string log = ::testing::internal::GetCapturedStdout();
+    // The unrendered port is announced in the log rather than skipped silently.
+    EXPECT_NE(log.find("0x202 is not rendered"), std::string::npos) << log;
     SetPortData(port, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)));
     std::vector<float> out(64 * 2, 0.0f);
     EXPECT_EQ(AudioOut2MixPorts(*context, out.data(), 64), 0u);
