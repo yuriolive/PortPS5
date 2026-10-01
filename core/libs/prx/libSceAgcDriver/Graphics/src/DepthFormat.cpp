@@ -32,10 +32,12 @@ std::optional<VkFormat> SelectDepthFormat(DepthSurfaceFormat depth, bool stencil
 
 std::optional<std::uint64_t> SelectDepthEviction(const std::vector<DepthCacheUse>& entries, std::size_t capacity, std::uint64_t keep) {
     if (entries.size() < capacity) return std::nullopt;
+    // Undefined surfaces hold nothing worth keeping, so they always go before a defined one.
     std::optional<DepthCacheUse> oldest;
     for (const auto& entry : entries) {
         if (entry.key == keep) continue;
-        if (!oldest || entry.lastUse < oldest->lastUse) oldest = entry;
+        const bool better = !oldest || (oldest->defined && !entry.defined) || (oldest->defined == entry.defined && entry.lastUse < oldest->lastUse);
+        if (better) oldest = entry;
     }
     if (!oldest) return std::nullopt;
     return oldest->key;

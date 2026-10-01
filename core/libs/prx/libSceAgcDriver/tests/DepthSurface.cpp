@@ -288,12 +288,23 @@ TEST_F(DepthSurfaceDevice, BarriersBetweenDraws) {
 // the whole cache. Under capacity nothing is evicted; at capacity the least recently used other
 // entry goes; a cache holding only the requested surface evicts nothing.
 TEST(DepthEviction, LeastRecentlyUsedNeverTheRequested) {
-    const std::vector<DepthCacheUse> uses{{10, 5}, {20, 1}, {30, 9}};
+    const std::vector<DepthCacheUse> uses{{10, 5, true}, {20, 1, true}, {30, 9, true}};
     EXPECT_FALSE(SelectDepthEviction(uses, 4, 10).has_value()) << "under capacity";
     EXPECT_EQ(SelectDepthEviction(uses, 3, 10), std::optional<std::uint64_t>(20));
     EXPECT_EQ(SelectDepthEviction(uses, 3, 20), std::optional<std::uint64_t>(10)) << "the requested entry is skipped even when oldest";
-    EXPECT_FALSE(SelectDepthEviction({{10, 1}}, 1, 10).has_value()) << "only the requested surface is cached";
+    EXPECT_FALSE(SelectDepthEviction({{10, 1, true}}, 1, 10).has_value()) << "only the requested surface is cached";
     EXPECT_FALSE(SelectDepthEviction({}, 0, 10).has_value());
+}
+
+// Invariant (review follow-up on PR #55): surfaces with no defined data are evicted before any
+// surface holding cleared contents, however recently the undefined one was used, so capacity
+// pressure only destroys real data when every other cached surface holds some.
+TEST(DepthEviction, UndefinedSurfacesGoBeforeDefinedOnes) {
+    const std::vector<DepthCacheUse> uses{{10, 1, true}, {20, 9, false}, {30, 5, false}, {40, 2, true}};
+    EXPECT_EQ(SelectDepthEviction(uses, 4, 99), std::optional<std::uint64_t>(30)) << "oldest undefined, not oldest overall";
+    EXPECT_EQ(SelectDepthEviction(uses, 4, 30), std::optional<std::uint64_t>(20)) << "requested undefined entry is skipped";
+    const std::vector<DepthCacheUse> allDefined{{10, 4, true}, {20, 2, true}};
+    EXPECT_EQ(SelectDepthEviction(allDefined, 2, 99), std::optional<std::uint64_t>(20)) << "falls back to the oldest defined";
 }
 
 // Invariant: a surface is identified by base addresses, extent and formats; any change means a

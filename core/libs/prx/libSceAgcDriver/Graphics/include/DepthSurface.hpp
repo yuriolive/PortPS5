@@ -50,6 +50,8 @@ std::optional<VkFormat> SelectDepthFormat(DepthSurfaceFormat depth, bool stencil
 struct DepthCacheUse {
     std::uint64_t key;
     std::uint64_t lastUse;
+    /// The surface holds cleared data (either aspect); evicting it destroys the only copy.
+    bool defined = false;
 };
 
 /**
@@ -58,9 +60,11 @@ struct DepthCacheUse {
  * @param capacity Maximum number of entries; eviction is only requested at or above it.
  * @param keep Key of the surface being requested right now; it is never evicted, because
  *        dropping it would discard the contents (and defined-ness) the draw is about to use.
- * @return Key of the least recently used other entry, or nullopt when the cache is under
- *         capacity or holds nothing but @p keep. Evicted surfaces lose their contents; a later
- *         read of one is rejected as never-cleared rather than drawn with garbage.
+ * @return Key of the least recently used other entry that holds no defined data; only when
+ *         every other entry is defined, the least recently used defined one. Nullopt when the
+ *         cache is under capacity or holds nothing but @p keep. A defined surface that has to
+ *         go loses its contents; a later read of it is rejected as never-cleared rather than
+ *         drawn with garbage.
  */
 std::optional<std::uint64_t> SelectDepthEviction(const std::vector<DepthCacheUse>& entries, std::size_t capacity, std::uint64_t keep);
 

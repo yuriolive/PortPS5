@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/MemoryAccessScope.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
 #include <limits>
 
 namespace AgcDriver::Graphics {
@@ -119,9 +120,17 @@ std::shared_ptr<ResidentDepth> RenderCache::GetDepth(const DepthTarget& target) 
     constexpr std::size_t capacity = 32;
     for (;;) {
         std::vector<DepthCacheUse> uses;
-        for (const auto& [entryKey, stamp] : depthLastUse) uses.push_back({entryKey, stamp});
+        for (const auto& [entryKey, stamp] : depthLastUse) {
+            const auto& surface = *depthEntries.at(entryKey);
+            uses.push_back({entryKey, stamp, surface.DepthDefined() || surface.StencilDefined()});
+        }
         const auto victim = SelectDepthEviction(uses, capacity, key);
         if (!victim) break;
+        const auto& evicted = *depthEntries.at(*victim);
+        // Visible in the log so a later never-cleared rejection can be traced to this eviction.
+        if (evicted.DepthDefined() || evicted.StencilDefined()) {
+            APS5_LOG_OUT("AGC graphics: depth surface cache full (%zu); evicting a surface with cleared contents at guest base 0x%llx", capacity, static_cast<unsigned long long>(*victim));
+        }
         depthEntries.erase(*victim);
         depthLastUse.erase(*victim);
     }
