@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "Decoder/Png.hpp"
+#include "GuestTestPages.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -286,4 +287,81 @@ TEST(PngDecUnsupported, SixteenBitOutputAborts) {
     p.image_mem_size = 16;
     PngDecImageInfo info{};
     EXPECT_DEATH(scePngDecDecode(handle, &p, &info), "");
+}
+
+// ---- Guest pointer range validation (GuestMemoryValidation) -----------------
+// Each case hands the export a pointer whose range is unreadable/unwritable.
+// Without the validation the host dereferences it and the process faults;
+// with it the export returns an SCE code and touches nothing.
+
+using GuestTest::GuestPages;
+using GuestTest::PageAccess;
+
+// Invariant: struct pointers that are unreadable behave like null ones
+// (INVALID_PARAM for param structs, INVALID_HANDLE for handles).
+TEST(PngDecGuestRanges, UnreadableStructPointers) {
+    GuestPages none(1, PageAccess::None);
+    ASSERT_NE(none.data(), nullptr);
+    PngDecImageInfo info{};
+    EXPECT_EQ(scePngDecQueryMemorySize(reinterpret_cast<const PngDecCreateParam*>(none.data())), kInvalidParam);
+    EXPECT_EQ(scePngDecParseHeader(reinterpret_cast<const PngDecParseParam*>(none.data()), &info), kInvalidParam);
+    EXPECT_EQ(scePngDecDelete(none.data()), kInvalidHandle);
+    PngDecDecodeParam decode{};
+    EXPECT_EQ(scePngDecDecode(none.data(), &decode, &info), kInvalidHandle);
+}
+
+// Invariant: Create refuses work memory the host cannot write and a handle
+// slot it cannot write, before placing any header.
+TEST(PngDecGuestRanges, CreateRejectsUnwritableMemory) {
+    GuestPages none(1, PageAccess::None);
+    GuestPages readOnly(1, PageAccess::ReadOnly);
+    ASSERT_NE(none.data(), nullptr);
+    ASSERT_NE(readOnly.data(), nullptr);
+    const PngDecCreateParam ok{sizeof(PngDecCreateParam), 0, 1920};
+    alignas(8) static unsigned char work[0x20 + 8];
+    void* handle = nullptr;
+    EXPECT_EQ(scePngDecCreate(&ok, readOnly.data(), 0x20, &handle), kInvalidWorkMemory);
+    EXPECT_EQ(scePngDecCreate(&ok, none.data(), 0x20, &handle), kInvalidWorkMemory);
+    EXPECT_EQ(scePngDecCreate(&ok, work, 0x20, reinterpret_cast<void**>(readOnly.data())), kInvalidAddr);
+    EXPECT_EQ(handle, nullptr);
+}
+
+// Invariant: ParseHeader and Decode check the PNG bytes, image_info and the
+// output raster extent (not the title's claimed image_mem_size).
+TEST_F(PngDecTest, DecodeAndParseRejectUnusableBuffers) {
+    const auto png = EncodePng(std::vector<std::uint8_t>(4 * 4 * 4, 7), 4, 4, 4);
+    GuestPages none(1, PageAccess::None);
+    GuestPages readOnly(1, PageAccess::ReadOnly);
+    GuestPages rw(1, PageAccess::ReadWrite);
+    ASSERT_NE(none.data(), nullptr);
+    ASSERT_NE(readOnly.data(), nullptr);
+    ASSERT_NE(rw.data(), nullptr);
+    std::vector<std::uint8_t> out(4 * 4 * 4);
+
+    // PNG data unreadable (ParseHeader and Decode).
+    PngDecParseParam parse{none.data(), static_cast<std::uint32_t>(png.size()), 0};
+    PngDecImageInfo info{};
+    EXPECT_EQ(scePngDecParseHeader(&parse, &info), kInvalidAddr);
+    PngDecDecodeParam p{};
+    p.png_mem_addr = none.data();
+    p.png_mem_size = static_cast<std::uint32_t>(png.size());
+    p.image_mem_addr = out.data();
+    p.image_mem_size = static_cast<std::uint32_t>(out.size());
+    EXPECT_EQ(scePngDecDecode(handle_, &p, &info), kInvalidAddr);
+
+    // image_info not writable.
+    parse = {png.data(), static_cast<std::uint32_t>(png.size()), 0};
+    EXPECT_EQ(scePngDecParseHeader(&parse, reinterpret_cast<PngDecImageInfo*>(readOnly.data())), kInvalidAddr);
+
+    // Output raster read-only, and output raster running off the mapping end.
+    p.png_mem_addr = png.data();
+    p.image_mem_addr = readOnly.data();
+    p.image_mem_size = static_cast<std::uint32_t>(out.size());
+    EXPECT_EQ(scePngDecDecode(handle_, &p, &info), kInvalidAddr);
+    p.image_mem_addr = rw.end() - 20;  // 4x4 RGBA needs 64 bytes, only 20 are mapped
+    EXPECT_EQ(scePngDecDecode(handle_, &p, &info), kInvalidAddr);
+
+    // A valid decode still works afterwards.
+    p.image_mem_addr = out.data();
+    EXPECT_GT(scePngDecDecode(handle_, &p, &info), 0);
 }

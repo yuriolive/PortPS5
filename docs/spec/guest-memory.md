@@ -146,10 +146,21 @@ struct IWriteTracker {
 |---|---|
 | [gpu-driver.md](gpu-driver.md) | `IWriteTracker`: `Pin`/`Unpin` per submission, released at fence retire; `Collect`; `PageState(addr)`; `MarkWritten`; the flush hook. The pin waiter finishes leased GPU work and must not take guest-memory locks. Host-import ranges must be committed and unaliased. The driver owns writer intervals; this subsystem owns block generations. |
 | [threading.md](threading.md) | Registry and tracker locks are host locks. They are never held across a guest callback or a futex wait. Pin waits use the shared futex primitive. |
+| PRX libraries (image codecs first, [image-codecs.md](image-codecs.md)) | `GuestMemoryValidation::CheckReadable`/`CheckWritable` (`libc/include/GuestMemoryValidation.hpp`): noexcept, overflow-safe range checks returning `Ok`, `InvalidRange` (null, no access bits, `address + bytes` wraps), `Unmapped` or `AccessDenied`. The caller maps the status to its own SCE code. See "Validation API" below. |
 | [relinker.md](relinker.md) | The main image is registered once, as non-releasable (`RegisterMainImage`). Its PE extent defines the image page span. |
 | [video-fmv.md](video-fmv.md) | GPU-written planes are visible via `MarkWritten` generations. |
 | [configuration.md](configuration.md) | `debug.memory.heap_cache_mib` (diagnostic override of the auto-sized heap cache). `[debug]` memory tracing (replaces `APS5_TRACE_QUERY`). No `APS5_*` switches. |
 | [verification.md](verification.md) | Unit and microbenchmark targets below run in the `unit` job. `write_faults` goes into the results JSON; other counters go to the run log. |
+
+### Validation API
+
+`GuestMemoryValidateRange_nid_postfix(pointer, bytes, access)` (`libc/src/GuestMemoryValidation.cpp`) answers whether the host may read and/or write a guest range. It never throws and is safe from any thread.
+
+- **Arithmetic.** `bytes` is compared against `UINT64_MAX - address` instead of computing `address + bytes` first, so a wrapping range is `InvalidRange` before any lookup. `bytes == 0` on a non-null pointer is `Ok`; a null pointer is always `InvalidRange`.
+- **Registered ranges are authoritative.** `GuestAllocationsCover` walks the registry with a moving cursor, so a request may span several entries (an `mprotect` splits a mapping). A registered entry without the needed permission is `AccessDenied`; the host protection is not consulted, because the write tracker makes tracked pages read-only on the host while the guest still sees them as writable.
+- **Unregistered gaps use the host mapping.** Thread stacks, TLS and data of modules loaded after the main image are not in the registry, and a title legitimately passes stack buffers. Those runs are checked against the host (Win32 `VirtualQuery`: `MEM_COMMIT`, no `PAGE_GUARD`/`PAGE_NOACCESS`, protection class; Linux `/proc/self/maps`, used by the unit tests). A hole is `Unmapped`.
+- **Snapshot only.** A concurrent `munmap`/`mprotect` can invalidate the answer right after it returns. The check rejects bad pointers; it does not pin the range. Callers that must keep a range stable during a long operation need a pin (see the registry pins above).
+- **Consumers.** `libSceJpegEnc` and `libScePngDec` check every param struct, handle header, work memory, pixel buffer, output buffer and `info` struct, and return their `INVALID_ADDR`/`INVALID_PARAM`/`INVALID_HANDLE` codes. Output buffers are validated for the bytes actually written, not for the title's claimed capacity.
 
 ## Failure modes
 
@@ -158,6 +169,7 @@ struct IWriteTracker {
 | Arena reservation fails (address space taken below 1 TiB) | Log and abort at start-up. The AnyPS5 main (merged PR #5) `malloc` fallback (`GuestHeap.cpp:184-190`) is removed because it breaks the address contract. |
 | Arena or flexible budget exhausted | `SCE_KERNEL_ERROR_ENOMEM` to the guest, plus a log line with usage. |
 | Invalid length, alignment or protection | `SCE_KERNEL_ERROR_EINVAL` return, never a throw. |
+| Guest pointer from a PRX export is null, wraps, unmapped or lacks the access | `GuestMemoryValidation` status mapped to the library's own error code; the host never dereferences it. |
 | Pin never released | Waiter rounds, then a 60 s deadline, then `Unsupported()` with the holders named. |
 | 32-bit block generation wraps. AnyPS5 main@75a8668 `WriteTracker::generation` is a `std::atomic<uint32_t>` (`GuestMemory.cpp:636`), bumped on every collect (757). The rate is an inference: at about 10^5 collects/s it wraps in about 12 h. | 64-bit generations. |
 | `GetWriteWatch` fails on uncommitted pages | Return "unknown", the caller compares bytes, and a counter is incremented. |
@@ -205,4 +217,4 @@ struct IWriteTracker {
 3. Does any title rely on `sceKernelDirectMemoryQuery` returning real extents? The export now answers from the recorded blocks (see "Mapping, unmap and direct-memory query semantics"); which titles depend on it, and whether the console returns `EACCES` for free memory, remain unverified on hardware.
 4. Is a 64 KiB block granularity too coarse for per-job label slots? AnyPS5 main@75a8668 notes slots 0x20 apart (`GuestMemory.cpp:628-630`). Decide from profiles.
 5. Sync assessment (PR #28): upstream `GuestArena` (`libc/src/GuestArena.cpp`, `include/GuestArena.hpp`) was trial-ported and reverted. Verdict: a raw port cannot land — the O(n) first-fit scan (`GuestArena.cpp:43-55` on AnyPS5 main@75a8668) contradicts the extent-tree decision below, `throw std::runtime_error` sites break the no-throw rule (a guest `catch(...)` swallows host exceptions), the file is unwired, and there are no file headers. It returns with the M1 extent-tree port (adapted, return codes, headers); the extent-tree core landed in PR #32 and the wiring is open (bean `portps5-421p`). `HostThreadLocal.hpp` stays: it compiles and its GTest balance suite is green.
-6. Guest-memory range-validation API for PRX libraries: none is exported yet, so codec exports cannot check a guest range against the arena (bean `portps5-8l0d`). The page-state table from PR #40 is the data source.
+6. Guest-memory range-validation API for PRX libraries: resolved by `GuestMemoryValidation` (see "Validation API"; bean `portps5-8l0d`). It uses the allocation registry plus a host-mapping fallback rather than the page-state table, because the table covers only tracked arena pages. Remaining: more PRX consumers (audio, net, file libraries) still read guest buffers raw; each needs its own pass and tests.

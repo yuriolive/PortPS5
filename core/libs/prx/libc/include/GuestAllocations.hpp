@@ -56,6 +56,27 @@ void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, st
  */
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply);
 Lease GuestAllocationsAcquire_nid_postfix();
+/**
+ * @brief Classification returned by GuestAllocationsCover_nid_postfix.
+ */
+enum class Coverage : std::int32_t {
+    Covered = 0,  ///< Every byte lies in registered ranges that grant the access.
+    Denied = 1,   ///< A registered range overlapping the request lacks the access.
+    Gap = 2,      ///< The first byte at or after the start is not registered.
+};
+
+/**
+ * @brief Checks how the registry covers [address, address + bytes) without throwing.
+ * @param address First byte of the request; the caller guarantees bytes != 0 and no wrap.
+ * @param bytes Length of the request in bytes.
+ * @param writable True to require write permission, false to require read permission.
+ * @param gapStart Receives, for Coverage::Gap, the first uncovered byte.
+ * @param gapEnd Receives, for Coverage::Gap, the exclusive end of the unregistered run that
+ *        starts at gapStart (clamped to the request end).
+ * @return Coverage::Covered, Coverage::Denied or Coverage::Gap.
+ * @note Takes the registry mutex itself. Never throws; safe from any thread.
+ */
+Coverage GuestAllocationsCover_nid_postfix(std::uint64_t address, std::uint64_t bytes, bool writable, std::uint64_t* gapStart, std::uint64_t* gapEnd) noexcept;
 }
 
 class Mutation {

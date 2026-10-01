@@ -276,4 +276,44 @@ Lease GuestAllocationsAcquire_nid_postfix() {
     return result;
 }
 
+/**
+ * Walks the registered ranges in address order. Adjacent ranges with the same
+ * permission may jointly cover a request (a mapping split by mprotect leaves
+ * several Range entries), so coverage is tracked with a moving cursor rather
+ * than requiring one range to contain the whole request. A registered range
+ * without the requested permission is reported as Denied instead of falling
+ * back to the host: the registry holds the guest's idea of the protection and
+ * the host protection can differ (the write tracker makes tracked pages
+ * read-only on the host while the guest still sees them as writable).
+ */
+Coverage GuestAllocationsCover_nid_postfix(std::uint64_t address, std::uint64_t bytes, bool writable, std::uint64_t* gapStart, std::uint64_t* gapEnd) noexcept {
+    std::lock_guard lock(registry().mutex);
+    const auto end = address + bytes;  // caller rejected wrap
+    auto cursor = address;
+    const auto& ranges = registry().ranges;
+    // The only range that can start before `address` yet overlap it is the one just before upper_bound.
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end() && cursor < end; ++it) {
+        const auto& range = *it->second;
+        const auto finish = range.address + range.bytes;
+        if (finish <= cursor) continue;
+        if (range.address >= end) break;
+        if (range.address > cursor) {
+            // Unregistered hole before the next range.
+            *gapStart = cursor;
+            *gapEnd = std::min<std::uint64_t>(range.address, end);
+            return Coverage::Gap;
+        }
+        if (writable ? !range.writable : !range.readable) return Coverage::Denied;
+        cursor = finish;
+    }
+    if (cursor < end) {
+        *gapStart = cursor;
+        *gapEnd = end;
+        return Coverage::Gap;
+    }
+    return Coverage::Covered;
+}
+
 }

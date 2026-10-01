@@ -52,17 +52,6 @@ portps5_add_gtest(kernel_pthread_tests
         unit
 )
 
-# Literal SCE error values exposed by DirectMemory.hpp (header-only, runs on any host)
-portps5_add_gtest(kernel_error_value_tests
-    SOURCES
-        kernel/KernelErrorValuesTests.cpp
-    INCLUDES
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/core/libs
-    LABELS
-        unit
-)
-
 # Virtual and direct memory allocation verification (ported from KytyPS5)
 portps5_add_gtest(memory_virtual_allocation_tests
     SOURCES
@@ -83,6 +72,30 @@ portps5_add_gtest(memory_tracker_tests
         memory/MemoryTrackerTests.cpp
     LIBRARIES
         libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Guest-pointer range validation API (GuestMemoryValidation.hpp)
+portps5_add_gtest(guest_memory_validation_tests
+    SOURCES
+        memory/GuestMemoryValidationTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Literal SCE error values exposed by DirectMemory.hpp (header-only, runs on any host)
+portps5_add_gtest(kernel_error_value_tests
+    SOURCES
+        kernel/KernelErrorValuesTests.cpp
     INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/core/libs
@@ -224,6 +237,20 @@ portps5_add_gtest(avplayer_exports_tests
         unit
 )
 
+# Headless message dialog state machine (transitions, error codes, 44-byte result, auto-answer policy)
+portps5_add_gtest(msgdialog_tests
+    SOURCES
+        dialogs/MsgDialogTests.cpp
+    LIBRARIES
+        libSceMsgDialog
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Save data subsystem fidelity tests (mount modes, snapshots, atomic swaps, quotas, patterns, dialogs)
 portps5_add_gtest(savedata_fidelity_tests
     SOURCES
@@ -315,6 +342,30 @@ portps5_add_gtest(pad_controller_input_tests
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/core/libs
         ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)
+
+# Telemetry core: record schema, stall/softlock definitions, watchdog latch and
+# audio/A-V sampler on a synthetic clock (header-only, no game data).
+portps5_add_gtest(telemetry_core_tests
+    SOURCES
+        telemetry/TelemetryTests.cpp
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Telemetry runtime exports in libc: Start/Shutdown lifecycle and the run.end
+# end-marker guarantee, writing only to a temp directory.
+portps5_add_gtest(telemetry_runtime_tests
+    SOURCES
+        telemetry/TelemetryRuntimeTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
     LABELS
         unit
 )
