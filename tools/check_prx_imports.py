@@ -18,21 +18,25 @@ Needs `objdump` (MinGW binutils) on PATH. Exit 0 = consistent, 1 = missing
 exports (each printed as `importer -> provider symbol`), 2 = usage/tool error.
 No game data is read.
 """
+
 import os
 import re
 import subprocess
 import sys
 
-# A NID is 11 characters of base64url-ish text with no underscore prefix; the
-# hint field in objdump output is hex, so only the member name is tested.
-NID_RE = re.compile(r"^[A-Za-z0-9+\-]{11}$")
+# A NID is 11 characters of base64url-ish text. Requiring a digit, "+" or "-" keeps real NIDs
+# (almost all mix cases and digits) out of the check while still checking verbatim 11-letter
+# names such as "Unsupported" (the `_nid_no_patch_cut` export form). The hint field in objdump
+# output is hex, so only the member name is tested.
+NID_RE = re.compile(r"^(?=.*[0-9+\-])[A-Za-z0-9+\-]{11}$")
 
 
 def objdump(path):
     """Return `objdump -p` text for one module, or exit 2 if the tool fails."""
     try:
-        return subprocess.run(["objdump", "-p", path], capture_output=True,
-                              text=True, check=True).stdout
+        return subprocess.run(
+            ["objdump", "-p", path], capture_output=True, text=True, check=True
+        ).stdout
     except (OSError, subprocess.CalledProcessError) as error:
         print(f"objdump failed on {path}: {error}", file=sys.stderr)
         sys.exit(2)

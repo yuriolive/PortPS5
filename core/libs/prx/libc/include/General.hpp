@@ -30,7 +30,16 @@ extern "C" void CxaFinalize_nid_no_patch(void* dsoHandle);
 // GetLastError 127 (docs/spec/build-toolchain.md). The real entry point is
 // therefore the verbatim `Unsupported_nid_no_patch`, and `Unsupported` is an
 // inline forwarder so every existing call site keeps its spelling.
+/**
+ * @brief Logs `what` and aborts the process: the logging abort path for genuinely unsupported states.
+ * @param what Name of the unsupported function or state; a null pointer logs "?".
+ * @note Verbatim cross-prx export; never returns. Safe from any thread.
+ */
 extern "C" [[noreturn]] void Unsupported_nid_no_patch(const char* what);
+/**
+ * @brief Source-compatible spelling of Unsupported_nid_no_patch for existing call sites.
+ * @param what See Unsupported_nid_no_patch.
+ */
 [[noreturn]] inline void Unsupported(const char* what) { Unsupported_nid_no_patch(what); }
 
 extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path);
