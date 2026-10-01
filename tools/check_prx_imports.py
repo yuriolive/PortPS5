@@ -23,12 +23,30 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
-# A NID is 11 characters of base64url-ish text. Requiring a digit, "+" or "-" keeps real NIDs
-# (almost all mix cases and digits) out of the check while still checking verbatim 11-letter
-# names such as "Unsupported" (the `_nid_no_patch_cut` export form). The hint field in objdump
-# output is hex, so only the member name is tested.
-NID_RE = re.compile(r"^(?=.*[0-9+\-])[A-Za-z0-9+\-]{11}$")
+# A NID is 11 characters of base64url-ish text; a cross-prx import of that shape is
+# assumed to be a NID and skipped. Roughly one NID in ten is letters only, so shape alone
+# cannot tell it from a verbatim 11-letter name. Verbatim names come only from the
+# `_nid_no_patch_cut` export form, which the source declares, so those declared names
+# (see cut_names) are always checked. The hint field in objdump output is hex, so only the
+# member name is tested.
+NID_RE = re.compile(r"^[A-Za-z0-9+\-]{11}$")
+CUT_RE = re.compile(r"\b([A-Za-z0-9_]+)_nid_no_patch_cut\b")
+
+
+def cut_names(source_root):
+    """Names declared with the `_nid_no_patch_cut` suffix under *source_root* (cut form removed)."""
+    names = set()
+    for path in Path(source_root).rglob("*"):
+        if path.suffix in (".cpp", ".hpp", ".h"):
+            names.update(CUT_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
+    return names
+
+
+def is_nid(name, verbatim):
+    """True when *name* is skipped as a NID: NID-shaped and not a declared verbatim cut name."""
+    return bool(NID_RE.match(name)) and name not in verbatim
 
 
 def objdump(path):
@@ -84,10 +102,11 @@ def main(argv):
         return 2
     texts = {m: objdump(os.path.join(libs, m)) for m in modules}
     exports = {m: parse_exports(t) for m, t in texts.items()}
+    verbatim = cut_names(Path(__file__).resolve().parents[1] / "core")
     missing = []
     for importer, text in texts.items():
         for provider, name in parse_imports(text):
-            if provider in exports and not NID_RE.match(name) and name not in exports[provider]:
+            if provider in exports and not is_nid(name, verbatim) and name not in exports[provider]:
                 missing.append(f"{importer} -> {provider} {name}")
     for line in missing:
         print(line)

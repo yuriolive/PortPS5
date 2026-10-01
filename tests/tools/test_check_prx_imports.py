@@ -43,13 +43,26 @@ class NidHeuristicTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def test_eleven_letter_verbatim_name_is_checked(self):
-        # "Unsupported" is exactly 11 letters; it must not be mistaken for a NID,
-        # or a provider missing it would pass the check.
-        self.assertIsNone(self._load().NID_RE.match("Unsupported"))
+    def test_alphabet_only_nid_is_still_skipped(self):
+        # About one NID in ten has no digit or punctuation; it must stay exempt or an
+        # unresolved guest NID would fail the build (review finding on #68).
+        checker = self._load()
+        self.assertTrue(checker.is_nid("AbCdEfGhIjK", set()))
+        self.assertTrue(checker.is_nid("hj8XRd3EmJ8", set()))
 
-    def test_real_nids_are_still_skipped(self):
-        # NIDs that contain digits or "+"/"-" are skipped, as before.
-        nid_re = self._load().NID_RE
-        for nid in ("hj8XRd3EmJ8", "34GvCmMQikQ", "N+rqdWaSl5A", "-vp7IjzBpNY"):
-            self.assertIsNotNone(nid_re.match(nid), nid)
+    def test_declared_cut_name_is_checked_even_if_nid_shaped(self):
+        # "Unsupported" is exactly 11 letters. When the source declares it with the
+        # _nid_no_patch_cut form, a provider missing it must be reported.
+        checker = self._load()
+        self.assertFalse(checker.is_nid("Unsupported", {"Unsupported"}))
+
+    def test_cut_names_scans_the_source_tree(self):
+        checker = self._load()
+        with tempfile.TemporaryDirectory() as root:
+            # The bare suffix inside a string literal has no name before it and must not match.
+            (Path(root) / "a.cpp").write_text(
+                'GLOBAL_ALIAS(Unsupported_nid_no_patch_cut, f);\nconst char* k = "_nid_no_patch_cut";\n',
+                encoding="utf-8",
+            )
+            (Path(root) / "notes.txt").write_text("Ignored_nid_no_patch_cut", encoding="utf-8")
+            self.assertEqual(checker.cut_names(root), {"Unsupported"})
