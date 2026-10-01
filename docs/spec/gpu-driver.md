@@ -65,6 +65,11 @@ The driver module alone has 360 lines calling `getenv("APS5_…")` (summed `git 
 
 In cases (c) and (d) a pointer word is read before it has been written. The SRT walk then dereferences an unwritten pointer plus an offset, which is the observed "guest memory is not readable at 0x60" (`Execution/src/GuestMemory.cpp:560`). *Inference:* 0x60 is a zero base plus a field offset. The dispatch is then skipped (`tolerate`), and the plan-failure memo keeps it skipped. Widening batches widens the window.
 
+**Known performance-invariant violations (PRD §4.5).** Each one has a bean, and the M5 performance pass removes or justifies it:
+
+- P1: each read of a resident render target runs `DrawQueue::Flush()` plus an extra submit (`Graphics/src/RenderTexture.cpp`; bean `portps5-r7qk`, step 1 pooled images in PR #74).
+- P5: `TextureCache::Get` compares the whole guest texture on every lookup, hits included (bean `portps5-pdc1`, which lands with PR #75; PR #75 speeds up the compare and PR #77 skips it when the write tracker proves no change).
+
 ### Upstream Recorder delta since `8a69fefe`
 
 PortPS5 PR #49 ports the Recorder from AnyPS5 commit `8a69fefe` (`perf(agc): batch GPU work in a recorder with host-imported guest memory`). AnyPS5 `main@75a8668` has since changed it in four commits. Sizes below are `wc -l` on each tree; line numbers are `main@75a8668`.
@@ -110,7 +115,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §GPU 
 - Use a GPU-side descriptor heap for bindless.
 - Recognise fill and copy kernels by general IR patterns.
 - Raise the API floor to Vulkan 1.3. It is the documented reference tier (PRD §4.4). Emitted SPIR-V stays at 1.3 (1.4 for mesh shaders) until subgroup size is pinned per pipeline, because SPIR-V 1.6 lets the driver vary the subgroup size per dispatch (see Open questions). Vulkan 1.4 is not required: it shares the 1.6 SPIR-V ceiling, and its additions (push descriptors, `maintenance5/6`, host image copy, dynamic-rendering local read) are optional optimizations to adopt behind a capability check once a before/after measurement justifies them.
-- Hold the steady-state performance invariants P1, P2, P5 and P6 of PRD §4.5. Telemetry counts violations ([verification.md](verification.md) §4.4); they are never hidden by skipping work. Known violations today: one `DrawQueue::Flush()` plus an extra submit per read of a resident render target (P1, bean `portps5-r7qk`), and a full byte compare of every cached texture on each lookup (P5, PRs #75 and #77).
+- Hold the steady-state performance invariants P1, P2, P5 and P6 of PRD §4.5. Telemetry counts violations ([verification.md](verification.md) §4.4); they are never hidden by skipping work. Known violations are listed in Current state.
 - The M3 module split records into a GPU IR, a recorded command list with explicit per-resource states and a queue tag, before it emits Vulkan. M3 implements one queue and single-threaded recording. The IR exists so barrier optimization, multithreaded recording, async compute and frame overlap (P6) can be added without rewriting the CommandProcessor.
 - Do not adopt: `matchesFillKernel`, `matchesCopyKernel`, the bindless caps, `planFailure`, `tolerate`-skips, or any `APS5_*` behaviour switch.
 
