@@ -1,6 +1,6 @@
 ---
 # portps5-3fi7
-title: 'Recompiler: decode and translate S_CBRANCH_CDBG* and S_MEMREALTIME'
+title: 'Recompiler: decode and translate S_MEMREALTIME'
 status: todo
 type: feature
 priority: normal
@@ -11,7 +11,7 @@ parent: portps5-oo21
 
 ## Context
 
-tools/compare_isa.py (2026-10-01; AnyPS5 709d7fe, KytyPS5 4428640, SharpEmu e007d43) lists 5 RDNA2 instructions in this group that a reference decodes and PortPS5 does not; 2 are decoded by two or more references. Names and holders: S_CBRANCH_CDBGSYS (KytyPS5/SharpEmu), S_CBRANCH_CDBGSYS_AND_USER (SharpEmu), S_CBRANCH_CDBGSYS_OR_USER (KytyPS5/SharpEmu), S_CBRANCH_CDBGUSER (SharpEmu), S_MEMREALTIME (KytyPS5). Use the RDNA2 ISA for semantics; reference code may be read for ideas (SharpEmu GPL-2.0-or-later, KytyPS5 and AnyPS5 GPL-2.0 compatible; check before copying). Blocked by: none.
+tools/compare_isa.py (2026-10-01; AnyPS5 709d7fe, KytyPS5 4428640, SharpEmu e007d43) first listed five instructions in this group. The four S_CBRANCH_CDBG* branches were a counting error: the decoder maps all four to RdnaOpcode::SCbranchCdbg (RdnaScalarOpDecoder.cpp, SOPP 0x17-0x1a) and the translator and tests cover them, but tools/progress.py had no one-to-many alias. The alias is fixed, which leaves S_MEMREALTIME (KytyPS5). Use the RDNA2 ISA for semantics. KytyPS5 is GPL-2.0, so its code may be read, and copied if its header is kept. Blocked by: none.
 
 ## Higher Goal
 
@@ -19,7 +19,7 @@ Close decode and translation gaps that independent decoders agree exist, startin
 
 ## Acceptance Criteria
 
-- [ ] Decode and translate the agreed names first, then the rest, each with a synthetic golden shader (no game bytecode)
+- [ ] Decode and translate S_MEMREALTIME with a synthetic golden shader (no game bytecode)
 - [ ] spirv-val clean; recompiler fuzz corpus green
 - [ ] tools/progress.py decoded and translated counts rise accordingly
 - [ ] shader-recompiler.md coverage table refreshed

@@ -39,6 +39,14 @@ OPCODE_ALIASES = {
     "VAddcU32": "V_ADD_CO_CI_U32",
     "VMadMixloF16": "V_FMA_MIXLO_F16",
     "VMadMixhiF16": "V_FMA_MIXHI_F16",
+    # One "never taken" opcode covers all four conditional-debug branches
+    # (RdnaScalarOpDecoder.cpp: SOPP 0x17-0x1a), so the alias is one-to-many.
+    "SCbranchCdbg": (
+        "S_CBRANCH_CDBGSYS",
+        "S_CBRANCH_CDBGUSER",
+        "S_CBRANCH_CDBGSYS_OR_USER",
+        "S_CBRANCH_CDBGSYS_AND_USER",
+    ),
 }
 REPORT_ROWS = 100
 PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30
@@ -122,13 +130,19 @@ def camel(name):
 
 
 def _isa_names(opcode, isa, by_camel):
-    """Map one decoder enum name to the ISA entries it covers (aliases, FLAT_ twins)."""
-    name = OPCODE_ALIASES.get(opcode) or by_camel.get(opcode)
-    if name not in isa:
-        return set()
-    names = {name}
-    if name.startswith("FLAT_"):
-        names.update(n for n in (s + name.removeprefix("FLAT_") for s in FLAT_SEGMENTS) if n in isa)
+    """Map one decoder enum name to the ISA entries it covers (aliases, FLAT_ twins).
+
+    An alias may name one ISA entry or a tuple of them, for decoder opcodes
+    that cover several encodings.
+    """
+    alias = OPCODE_ALIASES.get(opcode) or by_camel.get(opcode)
+    candidates = alias if isinstance(alias, tuple) else (alias,)
+    names = {name for name in candidates if name in isa}
+    for name in list(names):
+        if name.startswith("FLAT_"):
+            names.update(
+                n for n in (s + name.removeprefix("FLAT_") for s in FLAT_SEGMENTS) if n in isa
+            )
     return names
 
 
