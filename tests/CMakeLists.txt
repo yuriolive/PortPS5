@@ -79,6 +79,19 @@ portps5_add_gtest(memory_tracker_tests
         unit
 )
 
+# Guest-pointer range validation API (GuestMemoryValidation.hpp)
+portps5_add_gtest(guest_memory_validation_tests
+    SOURCES
+        memory/GuestMemoryValidationTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Direct memory physical pool and SceKernelMemoryPool API verification
 portps5_add_gtest(direct_memory_pool_tests
     SOURCES
@@ -164,6 +177,20 @@ portps5_add_gtest(avplayer_exports_tests
         avplayer/AvPlayerStateMachineTests.cpp
     LIBRARIES
         libSceAvPlayer
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Headless message dialog state machine (transitions, error codes, 44-byte result, auto-answer policy)
+portps5_add_gtest(msgdialog_tests
+    SOURCES
+        dialogs/MsgDialogTests.cpp
+    LIBRARIES
+        libSceMsgDialog
         libc
     INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -263,6 +290,30 @@ portps5_add_gtest(pad_controller_input_tests
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/core/libs
         ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include
+    LABELS
+        unit
+)
+
+# Telemetry core: record schema, stall/softlock definitions, watchdog latch and
+# audio/A-V sampler on a synthetic clock (header-only, no game data).
+portps5_add_gtest(telemetry_core_tests
+    SOURCES
+        telemetry/TelemetryTests.cpp
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Telemetry runtime exports in libc: Start/Shutdown lifecycle and the run.end
+# end-marker guarantee, writing only to a temp directory.
+portps5_add_gtest(telemetry_runtime_tests
+    SOURCES
+        telemetry/TelemetryRuntimeTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_SOURCE_DIR}/core/libs
     LABELS
         unit
 )

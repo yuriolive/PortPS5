@@ -1,6 +1,11 @@
+// Data model and builder for `sce_module` guest modules (prx files shipped
+// beside the executable). Subsystem: relinker. GuestImage is a plain value
+// owned by the builder and consumed by GuestModuleWriter; nothing here is
+// shared across threads.
 #ifndef RELINKER_GUESTIMAGE_HPP
 #define RELINKER_GUESTIMAGE_HPP
 
+#include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <relinker/domain/ISyscallScanner.hpp>
 #include <filesystem>
@@ -22,6 +27,8 @@ struct GuestImage {
     std::filesystem::path SourcePath;
     std::string OutputName;
     std::vector<std::uint8_t> Bytes;
+    // `--to-intel` stub sites in Bytes; the writers append the stub bodies.
+    std::vector<Codegen::TrampolineSite> Trampolines;
     std::vector<Domain::ProgramHeader> Headers;
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;

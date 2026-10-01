@@ -11,6 +11,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StandardStreams.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestAllocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestMemoryTracking.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestMemoryValidation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestMemoryBacking.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeapStorage.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestHeap.cpp
@@ -36,6 +37,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Environment.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Config.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Telemetry.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Errors.cpp
