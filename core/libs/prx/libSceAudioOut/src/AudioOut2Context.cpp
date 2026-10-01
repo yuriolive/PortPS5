@@ -1,6 +1,15 @@
-// libSceAudioOut AudioOut2 context lifecycle, queue pacing, and output device routing.
-// Implements context creation, grain push, queue level query, and port mixing.
-// Subsystem: audio. Exports use System V ABI (APS5_VABI) for guest runtime compatibility.
+// AudioOut2Context.cpp
+// PortPS5 - AudioOut2 Context Implementation (Audio Subsystem M2)
+//
+// Subsystem Ownership:
+//   Owned by core/libs/prx/libSceAudioOut. Manages guest AudioOut2 context
+//   queues, port mixing, soft limiting, and pacing onto the single host AudioMixer.
+//
+// Threading & Invariants:
+//   - Context state protected by per-context std::mutex.
+//   - Context handles tracked safely via g_contextsLock and AcquireContext.
+//   - Mix buffers feed into AudioMixer source ring using SPSC lock-free ring.
+//   - Soft limiter replaces fixed gain to preserve dynamic range without clipping.
 
 #include <algorithm>
 #include <chrono>
@@ -12,50 +21,24 @@
 #include <set>
 #include <thread>
 #include <vector>
+
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/config/Config.hpp"
 #include "AudioOut2Internal.hpp"
 
-// An AudioOut2 context is the hardware output queue: every push mixes the ports' current grain
-// (num_grains samples) and appends it to a queue of queue_depth grains that plays in real time. The
-// guest title paces its mixer on that queue (it polls GetQueueLevel and pushes non-blocking
-// whenever a slot is free), so the level must follow the output clock: with an SDL device open the
-// device's own queue is the hardware queue, otherwise a wall-clock model of it stands in.
-
 using Clock = std::chrono::steady_clock;
 
 static constexpr std::size_t CONTEXT_MEMORY = 0x10000;
 static constexpr std::uint32_t DEFAULT_MAX_PORTS = 16;
-// Pushes, polls and advances traced individually before the trace falls back to the per-second summary.
 static constexpr std::uint64_t CALL_TRACE_FULL = 16;
-// Silence queued ahead of the first grain (and again whenever the SDL queue ran dry) so scheduling
-// jitter of the pushing thread does not starve the device; the queue level reported to the title
-// counts only what lies beyond it.
-static constexpr std::uint32_t CUSHION_MS = 40;
-// The SDL queue is not allowed to run further ahead than this; grains beyond it are dropped.
-static constexpr std::uint32_t MAX_QUEUED_MS = 250;
-// A blocking push on a full queue gives up after this long.
 static constexpr std::chrono::milliseconds FULL_WAIT_TIMEOUT{200};
 static constexpr std::chrono::milliseconds FULL_WAIT_STEP{1};
-static constexpr std::uint16_t DEVICE_SAMPLES = 512;
-// The summed ports (a multichannel bed folded to stereo plus the object ports) can peak above full
-// scale; the device takes float and clips hard, so the mix is attenuated and clamped. The fixed
-// gain is interim: the single host mixer replaces it with a soft limiter (docs/spec/audio.md
-// Target design); until then this keeps loud passages from hard-clipping.
-static constexpr float MASTER_GAIN = 0.5f;
-
-static std::atomic<std::uint64_t> g_telemetryUnderruns{0};
-static std::atomic<std::uint64_t> g_telemetryOverrunDrops{0};
 
 bool AudioOut2TraceEnabled() {
-    // The config initializes once at startup before guest threads run; before
-    // that there is nothing to trace with, so tracing stays off. The value is
-    // read on every call (never cached in a static) so tests that initialize
-    // the config late still take effect.
-    // Why the verbatim wrappers: Loader:: methods hash under nid_patcher
-    // (libc has no --preserve-exports), so cross-prx callers use the
-    // _nid_no_patch free functions (Config.hpp) to survive prx load.
+    // Read on every call, never cached: startup initializes once before guest threads.
+    // Why the verbatim wrappers: Loader:: methods hash under nid_patcher (libc has no
+    // --preserve-exports), so cross-prx callers use the _nid_no_patch free functions.
     if (!PortPS5_Config_Loader_IsInitialized_nid_no_patch()) return false;
     const auto& trace = PortPS5_Config_Loader_Get_nid_no_patch().debug.trace;
     return trace.count(PortPS5::Config::TraceCategory::Audio) != 0;
@@ -68,14 +51,13 @@ double AudioOut2TraceSeconds() {
 
 AudioOut2Telemetry AudioOut2TelemetrySnapshot() {
     AudioOut2Telemetry snapshot;
-    snapshot.underruns = g_telemetryUnderruns.load(std::memory_order_relaxed);
-    snapshot.overrunDrops = g_telemetryOverrunDrops.load(std::memory_order_relaxed);
+    snapshot.underruns = AudioMixer::Get().GetUnderruns();
+    snapshot.overrunDrops = AudioMixer::Get().GetOverrunDrops();
     return snapshot;
 }
 
 void AudioOut2ResetTelemetryForTesting() {
-    g_telemetryUnderruns.store(0, std::memory_order_relaxed);
-    g_telemetryOverrunDrops.store(0, std::memory_order_relaxed);
+    AudioMixer::Get().ResetTelemetryForTesting();
 }
 
 static std::mutex g_contextsLock;
@@ -122,15 +104,12 @@ bool AudioOut2IsValidContext(AudioOut2ContextHandle ctx) {
 }
 
 static Clock::duration GrainDuration(const AudioOut2Context& context) {
-    return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(static_cast<double>(context.grain) / AUDIO_OUT2_SAMPLE_RATE));
+    return std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<double>(static_cast<double>(context.grain) / AUDIO_OUT2_SAMPLE_RATE));
 }
 
 static std::uint32_t GrainBytes(const AudioOut2Context& context) {
     return static_cast<std::uint32_t>(context.grain * AUDIO_OUT2_OUTPUT_FRAME_BYTES);
-}
-
-static std::uint32_t SdlQueuedMs(const AudioOut2Context& context) {
-    return context.device ? SDL_GetQueuedAudioSize(context.device) / AUDIO_OUT2_OUTPUT_BYTES_PER_MS : 0;
 }
 
 // Retires the modelled grains whose playback finished by now. The caller holds the context lock.
@@ -147,25 +126,31 @@ static void Drain(AudioOut2Context& context, Clock::time_point now) {
 // Grains queued and not yet played, as the title sees them. The caller holds the context lock.
 static std::uint32_t QueueLevel(AudioOut2Context& context, Clock::time_point now) {
     Drain(context, now);
-    if (context.device == 0) return context.queued;
-    const auto queuedBytes = SDL_GetQueuedAudioSize(context.device);
-    const auto cushionBytes = CUSHION_MS * AUDIO_OUT2_OUTPUT_BYTES_PER_MS;
-    const auto pending = queuedBytes > cushionBytes ? queuedBytes - cushionBytes : 0;
-    return AudioOut2QueueLevelForPending(pending, GrainBytes(context), context.queueDepth);
+    if (!context.source) return context.queued;
+    // With no device the ring is retired by the wall-clock fallback, which must
+    // be pumped here or a no-device ring would never drain and stay "full".
+    AudioMixer::Get().PumpWallClock();
+    const auto queuedFrames = context.source->GetQueuedFrames();
+    // Report the queue full unless another whole grain fits under the 100 ms
+    // ring ceiling, so a free slot is never reported when the push would drop.
+    // Applies with or without a device: the ring bounds both paths.
+    const auto headroom = AUDIO_MIXER_CEILING_FRAMES > queuedFrames
+        ? AUDIO_MIXER_CEILING_FRAMES - queuedFrames : 0u;
+    if (headroom < context.grain) return context.queueDepth;
+    // No device: the modelled grain count is the title-visible level.
+    if (!AudioMixer::Get().HasDevice()) return context.queued;
+    const auto cushionFrames = AUDIO_MIXER_TARGET_CUSHION_FRAMES;
+    const auto pending = queuedFrames > cushionFrames ? queuedFrames - cushionFrames : 0;
+    return AudioOut2QueueLevelForPending(pending * AUDIO_OUT2_OUTPUT_FRAME_BYTES,
+                                         GrainBytes(context), context.queueDepth);
 }
 
 void AudioOut2ForceWallClockForTesting(AudioOut2ContextHandle ctx) {
-    // Tests close the device so the wall-clock model (not the host audio
-    // driver) decides queue levels, keeping assertions deterministic with or
-    // without audio hardware.
     auto ref = AcquireContext(ctx);
     if (!ref) return;
     auto* context = ref.get();
     std::lock_guard lock(context->lock);
-    if (context->device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) {
-        SDL_ClearQueuedAudio(context->device);
-        SDL_CloseAudioDevice(context->device);
-    }
+    AudioMixer::Get().ForceWallClockForTesting();
     context->device = 0;
 }
 
@@ -174,79 +159,29 @@ double AudioOut2LatencyMs(AudioOut2ContextHandle ctx) {
     if (!ref) return 0.0;
     auto* context = ref.get();
     std::lock_guard lock(context->lock);
-    // With a device the queued device bytes are the latency; without one the
-    // modelled grains still pending are, so the FMV A/V offset stays defined
-    // on machines with no audio device.
-    if (context->device != 0) {
-        return AudioOut2QueuedMs(SDL_GetQueuedAudioSize(context->device));
+    if (context->device != 0 || AudioMixer::Get().HasDevice()) {
+        return AudioMixer::Get().GetLatencyMs();
     }
     Drain(*context, Clock::now());
     return 1000.0 * static_cast<double>(context->queued) *
            static_cast<double>(context->grain) / AUDIO_OUT2_SAMPLE_RATE;
 }
 
-static void OpenDevice(AudioOut2Context& context) {
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
-        AUDIOOUT2_TRACE("SDL audio init failed: %s\n", SDL_GetError());
-        return;
-    }
-    SDL_AudioSpec desired{};
-    desired.freq = static_cast<int>(AUDIO_OUT2_SAMPLE_RATE);
-    desired.format = AUDIO_F32SYS;
-    desired.channels = AUDIO_OUT2_OUTPUT_CHANNELS;
-    desired.samples = DEVICE_SAMPLES;
-    desired.callback = nullptr;
-    SDL_AudioSpec obtained{};
-    // No format change is allowed: SDL converts to the device's native format itself, so the queue
-    // always takes stereo float at 48 kHz.
-    context.device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
-    if (context.device == 0) {
-        AUDIOOUT2_TRACE("SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
-        return;
-    }
-    SDL_PauseAudioDevice(context.device, 0);
-    AUDIOOUT2_TRACE("SDL device %u opened: %d Hz, format 0x%x, %u channels, %u samples\n", context.device, obtained.freq, obtained.format, obtained.channels, obtained.samples);
-}
-
-static void CloseDevice(AudioOut2Context& context) {
-    if (context.device != 0 && SDL_WasInit(SDL_INIT_AUDIO) != 0) {
-        SDL_ClearQueuedAudio(context.device);
-        SDL_CloseAudioDevice(context.device);
-    }
-    context.device = 0;
-}
-
-// Mixes the ports' current grain and queues it on the SDL device. The caller holds the lock.
+// Mixes the ports' current grain and queues it on the host mixer. The caller holds the lock.
 static std::uint32_t Render(AudioOut2Context& context) {
     std::fill(context.mix.begin(), context.mix.end(), 0.0f);
     const auto mixed = AudioOut2MixPorts(context, context.mix.data(), context.grain);
     for (float& sample : context.mix) {
-        sample = std::clamp(sample * MASTER_GAIN, -1.0f, 1.0f);
+        // No SoftLimit here: AudioMixer::ProcessCallback limits the summed output
+        // exactly once; limiting per source as well would compress peaks twice.
         if (AudioOut2TraceEnabled()) context.summaryPeak = std::max(context.summaryPeak, std::abs(sample));
     }
-    if (context.device == 0) return mixed;
-    const auto queuedBytes = SDL_GetQueuedAudioSize(context.device);
-    if (queuedBytes > MAX_QUEUED_MS * AUDIO_OUT2_OUTPUT_BYTES_PER_MS) {
-        // The guest pushes faster than real time; dropping (never blocking
-        // the guest) is what keeps the title at real-time pace, and the drop
-        // is counted for telemetry.
+    if (!context.source) return mixed;
+    const bool pushed = context.source->PushStereo48k(
+        reinterpret_cast<const AudioFrame*>(context.mix.data()), context.grain);
+    if (!pushed) {
         context.overrunDrops++;
-        g_telemetryOverrunDrops.fetch_add(1, std::memory_order_relaxed);
         return mixed;
-    }
-    if (queuedBytes == 0) {
-        // The queue ran dry since the last push: the device starved, so this
-        // push counts one underrun for telemetry as well as repriming the
-        // cushion. Pre-allocated static buffer never throws bad_alloc.
-        static constexpr std::size_t kSilenceSamples =
-            static_cast<std::size_t>(CUSHION_MS) * AUDIO_OUT2_SAMPLE_RATE / 1000 * AUDIO_OUT2_OUTPUT_CHANNELS;
-        static const std::array<float, kSilenceSamples> silence = {};
-        context.underruns++;
-        g_telemetryUnderruns.fetch_add(1, std::memory_order_relaxed);
-        SDL_QueueAudio(context.device, silence.data(), static_cast<Uint32>(silence.size() * sizeof(float)));
-    }
-    if (SDL_QueueAudio(context.device, context.mix.data(), GrainBytes(context)) < 0) {
-        return 0;
     }
     return mixed ? mixed : 1;
 }
@@ -259,9 +194,9 @@ static void TraceSummary(AudioOut2Context& context, Clock::time_point now) {
     }
     const auto elapsed = std::chrono::duration<double>(now - context.summaryStart).count();
     if (elapsed < 1.0) return;
-    std::fprintf(stderr, "[audioout2] t=%.3f ctx %p: %.1f pushes/s, %.1f advances/s, %.1f queue polls/s, hw queue %u/%u, sdl queue %u ms, mix peak %.3f; totals: pushes %llu (%llu blocking, %llu queue-full rejects), underruns %llu, overrun drops %llu\n",
+    std::fprintf(stderr, "[audioout2] t=%.3f ctx %p: %.1f pushes/s, %.1f advances/s, %.1f queue polls/s, hw queue %u/%u, mix peak %.3f; totals: pushes %llu (%llu blocking, %llu queue-full rejects), underruns %llu, overrun drops %llu\n",
         AudioOut2TraceSeconds(), static_cast<void*>(&context), static_cast<double>(context.summaryPushes) / elapsed, static_cast<double>(context.summaryAdvances) / elapsed,
-        static_cast<double>(context.summaryPolls) / elapsed, QueueLevel(context, now), context.queueDepth, SdlQueuedMs(context), static_cast<double>(context.summaryPeak),
+        static_cast<double>(context.summaryPolls) / elapsed, QueueLevel(context, now), context.queueDepth, static_cast<double>(context.summaryPeak),
         static_cast<unsigned long long>(context.pushes), static_cast<unsigned long long>(context.blockingPushes), static_cast<unsigned long long>(context.fullRejects),
         static_cast<unsigned long long>(context.underruns), static_cast<unsigned long long>(context.overrunDrops));
     context.summaryStart = now;
@@ -273,8 +208,11 @@ static void TraceSummary(AudioOut2Context& context, Clock::time_point now) {
 
 extern "C" {
 
-// The title's per-tick step between setting the ports' data and pushing. The ports are mixed at push
-// time from the buffers they currently point at, and the push paces the clock, so nothing is due here.
+/**
+ * @brief Advances the context timeline for one grain tick.
+ * @param ctx Valid handle to an initialized AudioOut2 context.
+ * @return 0 on success, or SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE.
+ */
 int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) noexcept {
     auto ref = AcquireContext(ctx);
     if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
@@ -286,7 +224,14 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) noexcept {
     return 0;
 }
 
-/// Creates an AudioOut2 context and associates it with the audio output device.
+/**
+ * @brief Creates and initializes an AudioOut2 output context registered with the host mixer.
+ * @param params Context configuration parameters (grain size, queue depth).
+ * @param buffer User memory buffer (unused, reserved by SDK).
+ * @param buffer_size Size of user buffer in bytes.
+ * @param ctx Pointer receiving the created context handle.
+ * @return 0 on success, or SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT / OUT_OF_MEMORY.
+ */
 int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, void* buffer, size_t buffer_size, AudioOut2ContextHandle* ctx) noexcept {
     if (!params || !ctx) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     if (params->num_grains > 192000) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
@@ -304,12 +249,12 @@ int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, voi
     AUDIOOUT2_TRACE("t=%.3f ContextCreate: max_ports=%u max_object_ports=%u guarantee_object_ports=%u queue_depth=%u num_grains=%u flags=0x%x buffer=%p size=%zu -> ctx %p: %u-sample grains (%.2f ms), %u queued, %u Hz stereo float output\n",
         AudioOut2TraceSeconds(), params->max_ports, params->max_object_ports, params->guarantee_object_ports, params->queue_depth, params->num_grains, params->flags, buffer, buffer_size,
         static_cast<void*>(context), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
-    OpenDevice(*context);
+    context->source = AudioMixer::Get().RegisterSource(AUDIO_OUT2_SAMPLE_RATE, AUDIO_OUT2_OUTPUT_CHANNELS);
     try {
         std::lock_guard lock(g_contextsLock);
         g_liveContexts.insert(context);
     } catch (const std::bad_alloc&) {
-        CloseDevice(*context);
+        AudioMixer::Get().UnregisterSource(context->source);
         delete context;
         return SCE_AUDIO_OUT2_ERROR_OUT_OF_MEMORY;
     }
@@ -317,7 +262,11 @@ int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, voi
     return 0;
 }
 
-/// Destroys an AudioOut2 context and releases all associated output ports.
+/**
+ * @brief Destroys an AudioOut2 context and releases attached sources from the host mixer.
+ * @param ctx Context handle to destroy.
+ * @return 0 on success, or SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE.
+ */
 int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) noexcept {
     AudioOut2Context* context = nullptr;
     {
@@ -325,21 +274,27 @@ int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) noexcept {
         context = reinterpret_cast<AudioOut2Context*>(ctx);
         if (g_liveContexts.erase(context) == 0) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     }
-    // Context is unregistered; no new operations can begin. Wait for in-flight ops:
     while (context->inFlight.load(std::memory_order_acquire) > 0) {
         std::this_thread::yield();
     }
     AUDIOOUT2_TRACE("t=%.3f ContextDestroy ctx %p after %llu pushes\n", AudioOut2TraceSeconds(), static_cast<void*>(context), static_cast<unsigned long long>(context->pushes));
     {
         std::lock_guard lock(context->lock);
-        CloseDevice(*context);
+        AudioMixer::Get().UnregisterSource(context->source);
+        context->source = nullptr;
     }
     AudioOut2ReleasePorts(*context);
     delete context;
     return 0;
 }
 
-/// Queries current queue depth and available queue slots for an AudioOut2 context.
+/**
+ * @brief Queries the current queue fill level and remaining free grain slots.
+ * @param ctx Valid handle to an initialized AudioOut2 context.
+ * @param queue_level Pointer receiving current occupied grain count.
+ * @param available_queue Pointer receiving remaining free grain slots.
+ * @return 0 on success, or SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE.
+ */
 int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint32_t* queue_level, uint32_t* available_queue) noexcept {
     auto ref = AcquireContext(ctx);
     if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
@@ -354,7 +309,12 @@ int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint3
     return 0;
 }
 
-/// Pushes mixed audio grains to hardware output queue, optionally blocking when full.
+/**
+ * @brief Pushes and renders one mixed audio grain onto the host mixer queue.
+ * @param ctx Valid handle to an initialized AudioOut2 context.
+ * @param blocking 1 to block until a slot frees up, 0 for non-blocking push.
+ * @return 0 on success, SCE_AUDIO_OUT2_ERROR_QUEUE_FULL if full, or error code.
+ */
 int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t blocking) noexcept {
     auto ref = AcquireContext(ctx);
     if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
@@ -378,7 +338,7 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
         return SCE_AUDIO_OUT2_ERROR_QUEUE_FULL;
     }
     const auto mixed = Render(*context);
-    if (context->device != 0 && mixed == 0) {
+    if (context->source != nullptr && mixed == 0) {
         return static_cast<int>(0x80260501);
     }
     context->queued++;
@@ -387,21 +347,30 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
     context->summaryPushes++;
     if (blocking) context->blockingPushes++;
     if (context->pushes <= CALL_TRACE_FULL) {
-        AUDIOOUT2_TRACE("t=%.3f Push ctx %p blocking=%u: grain from %u ports, hw queue %u/%u, sdl queue %u ms\n", AudioOut2TraceSeconds(), static_cast<void*>(context), blocking,
-            mixed, QueueLevel(*context, now), context->queueDepth, SdlQueuedMs(*context));
+        AUDIOOUT2_TRACE("t=%.3f Push ctx %p blocking=%u: grain from %u ports, hw queue %u/%u\n", AudioOut2TraceSeconds(), static_cast<void*>(context), blocking,
+            mixed, QueueLevel(*context, now), context->queueDepth);
     }
     TraceSummary(*context, now);
     return 0;
 }
 
-/// Queries memory requirement for AudioOut2 context allocation.
+/**
+ * @brief Queries the required memory size for context creation.
+ * @param params Context configuration parameters.
+ * @param memory_size Pointer receiving required size in bytes.
+ * @return 0 on success, or SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT.
+ */
 int APS5_VABI sceAudioOut2ContextQueryMemory(const AudioOut2ContextParam* params, size_t* memory_size) noexcept {
     if (!params || !memory_size) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     *memory_size = CONTEXT_MEMORY;
     return 0;
 }
 
-/// Resets AudioOut2 context creation parameters to default configuration.
+/**
+ * @brief Resets context parameters to default baseline configuration.
+ * @param params Pointer to parameter struct to reset.
+ * @return 0 on success, or SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT.
+ */
 int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) noexcept {
     if (!params) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     std::memset(params, 0, sizeof(*params));
@@ -411,14 +380,18 @@ int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam* params) noexc
     return 0;
 }
 
-/// Sets attribute options on an active AudioOut2 context.
+/**
+ * @brief Sets hardware and rendering attributes for an AudioOut2 context.
+ * @param ctx Context handle to configure.
+ * @param attributes Array of attribute descriptors.
+ * @param num Number of attributes in array.
+ * @return 0 on success, or error code.
+ */
 int APS5_VABI sceAudioOut2ContextSetAttributes(AudioOut2ContextHandle ctx, const AudioOut2Attribute* attributes, uint32_t num) noexcept {
     auto ref = AcquireContext(ctx);
     if (!ref) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     auto* context = ref.get();
     if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
-    // Context attributes have no modelled effect yet; they are logged when
-    // tracing and otherwise ignored, never silently changing the mix.
     for (uint32_t index = 0; index < num; index++) {
         AUDIOOUT2_TRACE("t=%.3f ContextSetAttributes ctx %p: id=0x%x size=%zu value=%p (ignored)\n", AudioOut2TraceSeconds(), static_cast<void*>(context), attributes[index].attribute_id, attributes[index].value_size, attributes[index].value);
     }

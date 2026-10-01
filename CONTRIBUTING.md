@@ -43,7 +43,10 @@ Do not rely on hosted CI as a syntax or build checker.
 2. **Conventional Commits:**
    * Format commit messages with conventional types: `feat(relinker): ...`, `fix(libkernel): ...`, `docs(spec): ...`.
    * Subject line max 72 characters; commit body explains the *why*.
-3. **CI & Maintainer Approval:**
+3. **Tasks (beans):**
+   * Tasks live as markdown files in `.beans/` (CLI `beans`, config `.beans.yml`; see "Task tracking (beans)" in [AGENTS.md](AGENTS.md)). Run `beans list` to find the bean for your work, or `beans create` one.
+   * A PR that solves a bean ticks its acceptance checkboxes, adds `## Summary of Changes`, marks it `completed` and archives it (`beans archive`) in the same PR.
+4. **CI & Maintainer Approval:**
    * Pull requests from outside forks require one-time approval from code owners before GitHub Actions workflows run.
    * All required checks (`Build & Test`, `CodeQL`, `Gitleaks`) must pass.
    * `main` is protected: PRs require approval from code owners (`@yuriolive`), linear history, and all review threads resolved before merge.

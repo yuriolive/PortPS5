@@ -22,6 +22,8 @@ This document defines the testing architecture, standards, and modernization roa
 ### Test Suites Structure
 Instead of compiling dozens of individual executables for single functions, tests are organized into cohesive test suites:
 
+Status as of 2026-09-30: the list below is the target layout. What exists on `main` is `tests/` at the repository root (`avplayer`, `common`, `config`, `filesystem`, `input`, `kernel`, `libc`, `memory`, `net`, `savedata`, `tools`), `core/libs/tests/` (flat, most libc, libkernel, audio and pad suites), per-module `tests/` folders under `core/relinker/*`, `core/Decoder/*` and `core/libs/prx/*`, and `core/shader/recompiler/tests/` with the golden corpus. Targets use `portps5_add_gtest` (`cmake/PortPS5GTest.cmake`); `tests/expected-count` is the lower-bound count gate (302).
+
 - `core/relinker/tests/`: Relinker binary parsing, SysV-to-Win64 ABI lowering, TLS, and relocations.
 - `core/libs/tests/kernel/`: `libkernel` synchronization, threads, event queues, and timing.
 - `core/libs/tests/memory/`: Virtual memory allocation, 16 KB page alignment, page protections, and write tracking.
@@ -31,9 +33,11 @@ Instead of compiling dozens of individual executables for single functions, test
 - `core/libs/tests/input/`: `libScePad` DualSense/XInput state machines with mocked SDL streams.
 
 ### CMake Registration
-Tests are registered using `portps5_add_test` and `gtest_discover_tests()`:
-- Automatically links `GTest::gtest`, `GTest::gmock`, and `GTest::gtest_main`.
-- Prepends `$<TARGET_FILE_DIR:libc>` to `PATH` on Windows so runtime DLLs are resolved.
+GoogleTest suites are registered with `portps5_add_gtest` (`cmake/PortPS5GTest.cmake`):
+- Creates the executable, links `GTest::gtest_main` and registers individual cases with `gtest_discover_tests()`.
+
+Non-GoogleTest commands (for example Python scripts) use `portps5_add_test` (`cmake/PortPS5Testing.cmake`):
+- Adds the command to CTest and, on Windows when the `libc` target exists, prepends `$<TARGET_FILE_DIR:libc>` to `PATH` so runtime DLLs are resolved.
 - Attaches CTest labels:
   - `unit`: Fast CPU/memory/relinker tests running in hosted CI on every PR.
   - `golden`: Recompiler golden SPIR-V diffs validated via `spirv-val`.
@@ -46,6 +50,8 @@ Tests are registered using `portps5_add_test` and `gtest_discover_tests()`:
 ## 3. Reference Test Porting from Reference Projects
 
 Reference open-source implementations provide battle-tested low-level test cases that are systematically adapted into PortPS5 GoogleTest suites. All Title IDs are scrubbed to generic synthetic mocks (`PPSA00000`) per legal and policy rules.
+
+Status as of 2026-09-30: the "Target PortPS5 Suite" columns below are plans, and several targets do not exist. Exist (path in parentheses if it differs): `SyncOnAddressTests`, `EventQueueLifetimeTests`, `VirtualMemoryAllocationTests` (partial, 241 of 3,173 lines), `MemoryTrackerTests` (partial), `PadHapticsTests` (`core/libs/tests/PadHapticsTests.cpp`), `SandboxPathTests` (SharpEMU sandbox), `PthreadMutexTests`, `PthreadCondTests`, `AudioOut2PortTests` (as `core/libs/tests/AudioOut2KytyPorts.cpp`, PR #45). Do not exist: `KernelFileSystemTests`, `SaveDataMemoryTests` (save data is covered by `tests/savedata/SaveDataFidelityTests.cpp`), `ShaderRecompilerComputeTests`, `shaderCfgTests`, `PthreadRwlockTests`, `FiberTests`, the Mesa ACO and DXVK ports, and every Wine and FreeBSD target in 3.3 to 3.6 except where a spec names the file. Pending items are tracked as beans (`beans list`), not here.
 
 ### 3.1 KytyPS5 Subsystem Test Library
 KytyPS5 provides extensive C++ subsystem test suites covering core kernel primitives, 16 KB virtual memory management, and compute shader reconstruction:

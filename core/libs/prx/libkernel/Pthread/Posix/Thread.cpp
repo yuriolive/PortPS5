@@ -177,6 +177,29 @@ Pthread APS5_VABI pthread_self_nid_postfix(void) noexcept {
 }
 
 /**
+ * @brief pthread_equal_nid_postfix implementation (AnyPS5 5e708c16).
+ * Invoked by guest code using System V ABI calling convention.
+ * @return Non-zero when both handles name the same thread, 0 otherwise. A
+ *         handle is its identity, so pointer equality is the whole test; two
+ *         null handles compare equal like POSIX pthread_equal on equal values.
+ */
+int APS5_VABI pthread_equal_nid_postfix(Pthread first, Pthread second) noexcept {
+    return first == second ? 1 : 0;
+}
+
+/**
+ * @brief sched_yield_nid_postfix implementation (AnyPS5 5e708c16).
+ * Invoked by guest code using System V ABI calling convention.
+ * Shares scePthreadYield so both yield paths use SwitchToThread (spec:
+ * threading.md "sceKernelUsleep(0) and scePthreadYield").
+ * @return Always 0.
+ */
+int APS5_VABI sched_yield_nid_postfix(void) noexcept {
+    scePthreadYield();
+    return 0;
+}
+
+/**
  * @brief pthread_setcancelstate_nid_postfix implementation.
  * Invoked by guest code using System V ABI calling convention.
  * @return Status or error code.

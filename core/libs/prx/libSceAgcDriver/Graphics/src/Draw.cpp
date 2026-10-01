@@ -1,3 +1,6 @@
+// Records one guest draw into the device draw queue (AGC graphics subsystem).
+// Validates the draw, uploads index/vertex data, resolves colour and depth surfaces and the pipeline,
+// and enqueues the command buffer; storage objects stay alive until the draw completes.
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
@@ -19,6 +22,7 @@ struct DrawStorage {
     std::unique_ptr<Buffer> indices;
     std::vector<std::unique_ptr<Buffer>> vertices;
     std::shared_ptr<ResidentColor> color;
+    std::shared_ptr<ResidentDepth> depth;
     std::shared_ptr<Pipeline> pipeline;
 };
 
@@ -103,8 +107,20 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         Require(state.color.bytes == colorLayout.Bytes(), "color target transfer size mismatch");
         storage->color = context.renderCache->Get(state.color, state.blend.blendEnable != 0);
     }
+    if (state.depthTarget.Bound()) {
+        storage->depth = context.renderCache->GetDepth(state.depthTarget);
+        // The surface is host-only: data exists only after a clear (DB_RENDER_CONTROL) wrote it.
+        // A test that reads an aspect never defined would sample uninitialised memory, which the
+        // guest could have filled through a path the host cannot see (compute, DMA), so reject
+        // with a logged error instead of drawing with garbage.
+        bool readsDepth = false;
+        bool readsStencil = false;
+        DepthStencilReads(state.depthStencil, state.depthTarget, readsDepth, readsStencil);
+        Require(!readsDepth || storage->depth->DepthDefined(), "depth test or bounds read a depth surface that was never cleared (guest-memory depth upload is unsupported)");
+        Require(!readsStencil || storage->depth->StencilDefined(), "stencil test reads a stencil surface that was never cleared (guest-memory stencil upload is unsupported)");
+    }
     timing.Mark("render_target_cache");
-    storage->pipeline = context.graphicsPipelines->Get(state, storage->color, *resources, shaders);
+    storage->pipeline = context.graphicsPipelines->Get(state, storage->color, storage->depth, *resources, shaders);
     auto& pipeline = *storage->pipeline;
     timing.Mark("pipeline_cache");
     const auto commands = context.drawQueue->Begin(context);
@@ -113,7 +129,8 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     upload.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | shaderStages, 0, 1, &upload, 0, nullptr, 0, nullptr);
     if (storage->color) storage->color->Begin(commands);
-    pipeline.Begin(commands, state.renderExtent);
+    if (storage->depth) storage->depth->Begin(commands, state.depthTarget);
+    pipeline.Begin(commands, state.renderExtent, state.depthTarget);
     resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.Layout());
     pipeline.PushConstants(commands, shaders);
     if (state.stages.mesh) {

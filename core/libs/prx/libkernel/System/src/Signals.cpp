@@ -1,3 +1,10 @@
+// PortPS5 libkernel guest signal registration and mask emulation.
+//
+// Subsystem: libkernel System. Guest handlers are dispatched from host CRT
+// signals (only the six signals in NativeSignal are mapped); the blocked mask
+// is process-global state guarded by `registration` for read-modify-write
+// sequences. Every export is APS5_VABI (System V ABI); errors are reported as
+// -1 / SIG_ERR with errno 22 (EINVAL) in the guest errno slot, never thrown.
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
@@ -5,6 +12,7 @@
 #include <cstdint>
 #include <mutex>
 
+/** Return the address of the calling thread guest errno slot. */
 extern "C" int* APS5_VABI __error_nid_postfix();
 namespace {
 using GuestHandler = void (APS5_VABI *)(int);
@@ -44,6 +52,7 @@ struct GuestSignalSet {
 };
 
 extern "C" {
+/** Register a guest handler. @return the previous handler, or SIG_ERR (-1) with errno EINVAL for an unmapped signal or a SIG_ERR handler. */
 GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
     const auto invalid = reinterpret_cast<GuestHandler>(static_cast<std::uintptr_t>(-1));
     const int native = NativeSignal(guest);
@@ -59,6 +68,7 @@ GuestHandler APS5_VABI signal_nid_postfix(int guest, GuestHandler handler) {
     }
     return previous;
 }
+/** Raise a mapped signal on the host. @return 0, or -1 with errno EINVAL. */
 int APS5_VABI raise_nid_postfix(int guest) {
     const int native = NativeSignal(guest);
     if (!native) { *__error_nid_postfix() = 22; return -1; }
@@ -66,7 +76,15 @@ int APS5_VABI raise_nid_postfix(int guest) {
     if (result) *__error_nid_postfix() = 22;
     return result ? -1 : 0;
 }
+// SIG_BLOCK=1, SIG_UNBLOCK=2, SIG_SETMASK=3 (FreeBSD). An unknown `how` is a
+// guest error a real kernel reports as EINVAL with -1, not a host exception:
+// a throw here would cross the APS5_VABI boundary. Validation happens before
+// any write so a rejected call leaves both the mask and *previousSet untouched.
 int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, GuestSignalSet* previousSet) {
+    if (set != nullptr && (how < 1 || how > 3)) {
+        *__error_nid_postfix() = 22;
+        return -1;
+    }
     std::lock_guard lock(registration);
     if (previousSet != nullptr) {
         previousSet->bits[0] = blockedMask.load();
@@ -78,16 +96,24 @@ int APS5_VABI _sigprocmask_nid_postfix(int how, const GuestSignalSet* set, Guest
         switch (how) {
             case 1: blockedMask.fetch_or(set->bits[0]); break;
             case 2: blockedMask.fetch_and(~set->bits[0]); break;
-            case 3: blockedMask.store(set->bits[0]); break;
-            default: throw std::invalid_argument("_sigprocmask: invalid how");
+            default: blockedMask.store(set->bits[0]); break;
         }
     }
     return 0;
+}
+
+// libc-level sigprocmask shares the syscall-level implementation (the two NIDs
+// are the same operation; AnyPS5 c6d098d4 moved it here from the Socket stub
+// that aborted on every call).
+int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* previousSet) {
+    return _sigprocmask_nid_postfix(how, static_cast<const GuestSignalSet*>(set),
+                                    static_cast<GuestSignalSet*>(previousSet));
 }
 }
 
 extern "C" {
 
+/** Not implemented; aborts via NotImplemented_nid_no_patch, so it never returns. */
 int APS5_VABI _is_signal_return_nid_postfix(std::uint64_t programCounter) {
     (void)programCounter;
     NotImplemented_nid_no_patch(__func__);

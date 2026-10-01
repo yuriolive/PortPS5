@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Build and Toolchain
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -116,8 +116,10 @@ Tests are progressively consolidated from standalone single-function executables
 **Dependency pins.** Every dependency the specs add is pinned here, by submodule commit or by a vendored release with its version and SHA-256 recorded next to it. Exact versions are chosen when each lands:
 
 | Dependency | Licence | Used by | Form | Lands |
+|---|---|---|---|---|
 | GoogleTest (GTest + GMock) | BSD-3-Clause | [verification.md](verification.md) (unit/integration test suites, death testing, mocking) | CMake FetchContent / pinned submodule | M0 / M1 |
 | toml++ | MIT, header-only | [configuration.md](configuration.md) | vendored single header `3rdparty/tomlplusplus/toml.hpp` at v3.4.0 (commit `30172438cee64926dc41fdd9c11fb3ba5b2ba9de`, SHA-256 `6b5172ad4dd6519aec67b919181fa7a38a2234131e5b2afa232dfe444819783e` of the committed LF bytes, see `3rdparty/tomlplusplus/VERSION.txt`) | M1 |
+| stb (`stb_image`, `stb_image_write`) | MIT or public domain | [image-codecs.md](image-codecs.md) | pinned submodule `3rdparty/stb` at `2c980bb5` (PR #58) | M1 (landed) |
 | xxHash (XXH3-64/128) | BSD-2 | [shader-recompiler.md](shader-recompiler.md) (hashed keys), [pipeline-cache.md](pipeline-cache.md) (keys and record checksums) | vendored single header at a pinned release | M1 |
 | `llvm-mc` (AMDGPU target, `gfx10.3`) | Apache-2.0 with LLVM exception | superseded: the synthetic corpus is hand-assembled dwords with field layouts cited to the decoder sources ([shader-recompiler.md](shader-recompiler.md)), so no `.s` sources and no build-time assembler exist | — | dropped |
 | SDL2 | zlib | [input.md](input.md), [audio.md](audio.md) | existing submodule. **Pin check:** confirm that commit `4b69833` has the HIDAPI PS5 driver (*inference:* SDL 2.0.14 or later), or bump the pin | M2 |
@@ -157,15 +159,20 @@ Tests are progressively consolidated from standalone single-function executables
 - **`unit` job:** `ctest --preset ci -L unit`. Its gate is that the total test count must not shrink from one commit to the next; the count is stored in a checked-in `tests/expected-count`.
 - **`recompiler-golden` job:** builds `recompiler_golden_tests` and `agc_shader_replay` (ci preset), then runs `ctest --preset golden` plus `agc_shader_replay --golden core/shader/recompiler/tests/golden/corpus`. The golden suite carries its own coverage gate, so no count file is needed.
 - **`policy` job:** the artifact dependency check above, plus the patterns in [verification.md](verification.md) §1.
-- **`doxygen-doc-gate` job:** runs `doxygen docs/Doxyfile` on `core/libs/prx` and `core/relinker` via `.github/workflows/doxygen.yml` on every PR and push to `main` as a required status check. Does not require the MinGW toolchain. Installs Doxygen 1.13.2 via Chocolatey. Fails on any malformed Doxygen markup with `WARN_AS_ERROR = FAIL_ON_WARNINGS` so all warnings are logged before failing (`WARN_IF_UNDOCUMENTED` and `WARN_NO_PARAMDOC` are disabled initially to avoid blocking on inherited pre-existing debt). Uploads `build/doxygen_warnings.log` as the `doxygen-warnings` artifact on failure. Complements the Python `check_comments.py` linter, which enforces PortPS5-specific per-file rules (file-level headers, `APS5_VABI` doc coverage, `TEST()` invariant comments) in the main `ci.yml` policy step.
+- **`doxygen-doc-gate` job:** runs `doxygen docs/Doxyfile` on `core/libs/prx` and `core/relinker` via `.github/workflows/doxygen.yml` on every PR and push to `main` as a required status check. Does not require the MinGW toolchain. Installs the official Doxygen 1.18.0 Windows x64 zip from doxygen.nl, verified against a SHA-256 pinned in the workflow env (cached by version+checksum, retried on download failure). Fails on any malformed Doxygen markup with `WARN_AS_ERROR = FAIL_ON_WARNINGS` so all warnings are logged before failing (`WARN_IF_UNDOCUMENTED` and `WARN_NO_PARAMDOC` are disabled initially to avoid blocking on inherited pre-existing debt). Uploads `build/doxygen_warnings.log` as the `doxygen-warnings` artifact on failure. Complements the Python `check_comments.py` linter, which enforces PortPS5-specific per-file rules (file-level headers, `APS5_VABI` doc coverage, `TEST()` invariant comments) in the main `ci.yml` policy step.
 - **Local:** `ctest -L local` before each regression run ([verification.md](verification.md) §2).
 
 ## Milestones
 
 - [x] **M0:** C++23; CMakePresets; the pinned toolchain file and CI download with checksum; every existing test in `ctest` with labels; runtime DLL copy; CONVENTIONS rewrite; TechnicalDebt clean-up; `build`, `unit` and `policy` jobs. `DummyShaders` extraction also lands in M0 because it touches licence posture.
-- [ ] **M1:** `lavapipe` label and job (`driver-lavapipe`), the AnyPS5 main (merged PR #5) relinker tests, and the `APS5_EXPORT_FN` migration. The toml++ and xxHash pins.
+- [ ] **M1:** items:
+  - [x] the AnyPS5 main (merged PR #5) relinker tests (PR #12, PR #56);
+  - [x] the `APS5_EXPORT_FN` migration (PR #11);
+  - [x] the toml++ pin (`3rdparty/tomlplusplus`);
+  - [ ] `lavapipe` label and job (`driver-lavapipe`): the label exists on the driver suites (`libSceAgcDriver/CMakeLists.txt:351-389`), the job does not (bean `portps5-ekx3`);
+  - [ ] the xxHash pin: no xxHash is vendored under `3rdparty/` yet.
 - [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from AnyPS5 main (merged PR #5) (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
-- [ ] **M2:** `tools/regress` build target and its `local` label. SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled.
+- [ ] **M2:** `tools/regress` build target and its `local` label (bean `portps5-3m3u`). SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:46-48` since PR #20; the pin check against the HIDAPI PS5 driver is still open, bean `portps5-de24`).
 - [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
 - [ ] **M6:** release preset used for the release commit, with the R1 status recorded.
 

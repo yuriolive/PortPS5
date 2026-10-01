@@ -10,8 +10,12 @@ set_target_properties(decoder_jpeg PROPERTIES
         POSITION_INDEPENDENT_CODE ON
 )
 
+# portps5_add_gtest only exists when BUILD_TESTING is ON (the release preset turns it OFF,
+# and an unguarded call fails the whole configure with 'Unknown CMake command').
+if(BUILD_TESTING)
 portps5_add_gtest(decoder_jpeg_tests
     SOURCES   ${CMAKE_CURRENT_SOURCE_DIR}/tests/Jpeg.cpp
     LIBRARIES decoder_jpeg
     LABELS    unit
 )
+endif()

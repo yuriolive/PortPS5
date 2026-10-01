@@ -3,19 +3,32 @@
 title: 'M2: Enable libSceMouse exports (undisable GTest)'
 status: todo
 type: task
-priority: normal
+priority: low
 tags:
     - beads:portps5-10
 created_at: 2026-09-30T22:53:48Z
-updated_at: 2026-09-30T22:53:48Z
+updated_at: 2026-09-30T23:57:05Z
 ---
 
-## Description
+## Context
 
-Backend + VideoOut routing + DISABLED GTest compile on PR #28; exports are Unsupported() stubs. Implement sceMouse init/open/read/close over the backend, drop DISABLED_, remove the process-global mouseMutex. See docs/spec/input.md.
+The mouse backend (`libSceMouse/src/mouse_impl.cpp`) and VideoOut routing exist, and `libSceMouse/tests/Mouse.cpp` builds but is DISABLED. The guest-visible `sceMouse*` exports in `libSceMouse/Export.cpp` are `Unsupported()` stubs; the file's own comment records that the M1 inventory shows no gate title importing libSceMouse at boot, so priority is low until an inventory says otherwise. Migrated from beads `portps5-10`. Spec: docs/spec/input.md.
+
+## Higher Goal
+
+A direct libSceMouse import is either implemented or a deliberate loud gap, as the M2 input matrix decides.
 
 ## Acceptance Criteria
 
-Mouse tests run green in CI, M2 input matrix records mouse
+- [ ] `sceMouseInit`, `Open`, `Read` and `Close` implemented over the backend (or the gap confirmed after the remaining inventories, portps5-3eh1)
+- [ ] `DISABLED_` dropped from the mouse GoogleTest and green in CI
+- [ ] Process-global `mouseMutex` (`mouse_impl.cpp`) removed
+- [ ] input.md M2 matrix records mouse
 
-Migrated from beads `portps5-10`.
+## Out of Scope
+
+Keyboard exports (`libSceKeyboard`), mouse-look changes.
+
+## Summary of Changes
+
+TBD
