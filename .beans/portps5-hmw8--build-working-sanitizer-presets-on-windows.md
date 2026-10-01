@@ -24,7 +24,7 @@ Memory and UB bugs in host code are caught by a preset that actually runs.
 - [ ] Replace `asan` with `ubsan-trap` (GCC, `-fsanitize=undefined -fsanitize-trap=all`) and run its unit label locally; decide with data whether it joins the nightly job
 - [ ] Spike: an llvm-mingw clang ASan build of the host-only unit tests (relinker, pure libc and telemetry code) as a dev-only tool that never ships, reporting what breaks (sysv_abi exports, the guest arena's VirtualAlloc2 reservations, vectored fault handlers, the DWARF .eh_frame handling) and whether clang is worth adding as a second, test-only CI compiler; any change to the shipped compiler goes to an issue, not this bean
 - [ ] build-toolchain.md preset table and CMakePresets.json description agree with what runs
-- [ ] Native Linux (M7) noted as where full ASan and TSan run
+- [ ] build-toolchain.md points to the Linux ASan/UBSan/TSan CI job (portps5-pbj2) for host-portable targets
 
 ## Out of Scope
 

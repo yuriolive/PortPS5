@@ -1,6 +1,6 @@
 ---
 # portps5-c5if
-title: Vulkan validation layers as a debug key, and in lavapipe CI
+title: Vulkan validation layers as a debug key for local runs
 status: todo
 type: feature
 priority: high
@@ -17,14 +17,13 @@ Blocked by: none.
 
 ## Higher Goal
 
-Validation errors are caught in CI on synthetic tests and on demand in local runs.
+Validation errors are caught on demand in local runs on real GPUs; CI coverage on lavapipe is portps5-977n.
 
 ## Acceptance Criteria
 
 - [ ] `debug.gpu.validation = [core, sync, gpu_assisted, best_practices]` enables the layer and routes messenger output to the log; each error increments a counter reported at run end
-- [ ] The driver-lavapipe job installs a pinned, SHA-256-verified layer and runs with `core` and `sync`; any validation error fails the job
 - [ ] Known false positives are listed by message ID in a checked-in suppression file, each with a reason
-- [ ] verification.md section 1 updated
+- [ ] Shares the message-ID suppression file with the CI job (portps5-977n)
 
 ## Out of Scope
 

@@ -233,25 +233,55 @@ A lane can start when its blockers are done. Lanes in the same row can run in pa
 | PGO | `portps5-f2r1` | `portps5-52bs`, `portps5-8x1k` |
 | P5 texture revalidation | `portps5-2k6d` | `portps5-421p` |
 
+## CI reliability (cross-cutting, M2–M5)
+
+Checks that run on synthetic inputs and so need no GPU and no game data ([spec/verification.md](spec/verification.md) §1.1). Epic bean `portps5-7n6b`.
+
+| Lane | Bean | Blocked by |
+|---|---|---|
+| Vulkan validation layers | `portps5-977n` | none |
+| PE structure validation | `portps5-s9zz` | none |
+| Codegen metrics per PR | `portps5-g0n7` | none |
+| C++ coverage report | `portps5-02a4` | none |
+| Synthetic guest ELF end to end | `portps5-ktrt` | none (`portps5-sjuv` fixed in PR #94) |
+| Unsupported() counts and compat tiers | `portps5-ba7d` | `portps5-w1re`, `portps5-4bkt` |
+| Linux sanitizers | `portps5-pbj2` | `portps5-37j0` |
+| Fuzzing | `portps5-axx6` | `portps5-pbj2` |
+| clang-tidy and stricter warnings | `portps5-hpx7` | `portps5-qf1m` |
+| Local nightly regression | `portps5-e6xg` | `portps5-3m3u`, `portps5-52bs` |
+
+Deliverables:
+
+- [ ] Vulkan validation layers on the lavapipe job (bean `portps5-977n`).
+- [ ] PE structure validation of relinker output (bean `portps5-s9zz`).
+- [ ] Deterministic codegen metrics per PR (bean `portps5-g0n7`).
+- [ ] C++ coverage report (bean `portps5-02a4`).
+- [ ] Synthetic guest ELF end to end (bean `portps5-ktrt`).
+- [ ] Unsupported() counts and compat status tiers (bean `portps5-ba7d`).
+- [ ] Linux sanitizer job (ASan, UBSan, TSan) (bean `portps5-pbj2`).
+- [ ] Fuzzing of ELF, PM4 and shader decoders (bean `portps5-axx6`).
+- [ ] clang-tidy and `-Wcast-function-type` (bean `portps5-hpx7`).
+- [ ] Local nightly regression on the maintainer machine (bean `portps5-e6xg`).
+
 ## Diagnostics track (cross-cutting, M2–M5)
 
 Local triage for failures, next to the performance track's measurement. Everything sits behind `[debug]` keys, so a run that uses it never passes (verification.md §4.2), and captures, dumps and crash reports stay in `<install>`. Design: [spec/gpu-driver.md](spec/gpu-driver.md) "Diagnostics", [spec/configuration.md](spec/configuration.md), [spec/verification.md](spec/verification.md) §1 and §4.4. Epic bean `portps5-etxc`.
 
 **Deliverables:**
 - [ ] Device-loss triage: `VK_EXT_device_fault` and per-draw breadcrumbs (bean `portps5-636k`).
-- [ ] Vulkan validation layer as a debug key, and in the `driver-lavapipe` job (bean `portps5-c5if`).
+- [ ] Vulkan validation layer as a debug key for local runs (bean `portps5-c5if`); the CI side is `portps5-977n` in the CI reliability track.
 - [ ] Debug names and labels mapped to guest packets (bean `portps5-ey3w`), then a RenderDoc capture trigger (bean `portps5-bbxe`).
 - [ ] Shader printf at a guest PC (bean `portps5-7e2a`).
 - [ ] Symbolised crash reports with a flight recorder (bean `portps5-cmyp`).
 - [ ] Per-pipeline shader statistics (bean `portps5-dktm`).
 - [ ] On-screen debug overlay (bean `portps5-h2rv`).
-- [ ] Sanitizer presets that link on Windows: GCC UBSan in trap mode, plus an llvm-mingw ASan spike for host-only tests (bean `portps5-hmw8`).
+- [ ] Sanitizer presets that link on Windows: GCC UBSan in trap mode, plus an llvm-mingw ASan spike for host-only tests (bean `portps5-hmw8`); the Linux ASan/UBSan/TSan job is `portps5-pbj2`.
 
 ### Parallel lanes (diagnostics)
 
 | Lane | Bean | Blocked by |
 |---|---|---|
-| Validation layer and CI | `portps5-c5if` | none |
+| Validation layer debug key | `portps5-c5if` | none |
 | Debug names and labels | `portps5-ey3w` | none |
 | Shader statistics | `portps5-dktm` | none |
 | Sanitizer presets | `portps5-hmw8` | none |
