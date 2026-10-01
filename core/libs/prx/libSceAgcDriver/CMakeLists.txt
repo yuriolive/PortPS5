@@ -393,6 +393,7 @@ if(BUILD_TESTING)
     portps5_add_gtest(agc_bytes_equal_tests
         SOURCES  tests/BytesEqualTests.cpp
         INCLUDES ${LIBS_INCLUDE_DIR}
+        LIBRARIES libc
         LABELS   unit
     )
 
