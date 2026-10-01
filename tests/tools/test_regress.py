@@ -423,3 +423,18 @@ def test_frames_without_t_ms_skip_the_tail_check(tmp_path):
     )
     killed = {"killed": True, "exit_code": None, "wall_ms": 1.0}
     assert regress.report(args_for(inst), killed)["softlocks"] == 0
+
+
+def test_malformed_runner_outcome_is_a_clean_error(tmp_path):
+    # Regression (review): a non-object or incomplete logs/runner.json used to raise
+    # AttributeError/KeyError that main did not catch.
+    inst = make_install(tmp_path, [HEADER, {"ev": "run.end"}])
+    for bad in ("[]", "{}", '{"killed": true}', "not json"):
+        (inst / regress.RUNNER_REL).write_text(bad)
+        with pytest.raises((regress.RegressError, ValueError)):
+            regress.report(args_for(inst))
+    (inst / regress.RUNNER_REL).write_text("[]")
+    cli = ["report", "--install", str(inst), "--title-id", "PPSA00000", "--region", "US",
+        "--patch", "1", "--name", "S", "--commit", "c", "--gpu-vendor", "amd",
+        "--driver-version", "1", "--bench-cpu", "1", "--bench-gpu", "1"]  # fmt: skip
+    assert regress.main(cli) == 1

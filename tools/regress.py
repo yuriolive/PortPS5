@@ -331,7 +331,11 @@ def load_runner(install):
     path = Path(install) / RUNNER_REL
     if not path.is_file():
         return {"killed": False, "exit_code": None, "wall_ms": None}
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    # report reads this file independently of run, so it may be stale or hand-edited.
+    if not isinstance(data, dict) or "killed" not in data or "exit_code" not in data:
+        raise RegressError(f"{RUNNER_REL} is not a valid runner outcome")
+    return data
 
 
 def report(args, runner=None):
