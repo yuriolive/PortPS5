@@ -1,7 +1,8 @@
 """PortPS5 implementation-progress reporter (see tools/progress.py header).
 
-Scans core/libs/prx for APS5_VABI definitions and the RDNA decoder opcode
-enum against tools/rdna_isa.txt, rendering progress.json/svg, badges and HTML.
+Scans core/libs/prx for APS5_VABI definitions, and the RDNA decoder opcode
+enum plus the translator's opcode references against tools/rdna_isa.txt,
+rendering progress.json/svg, badges and HTML.
 """
 
 import argparse
@@ -120,13 +121,50 @@ def camel(name):
     return "".join(part.capitalize() for part in name.split("_"))
 
 
-def collect_shaders(opcodes_path=OPCODES, isa_path=ISA):
-    """Collect decoder coverage of the ISA list, grouped by encoding.
+def _isa_names(opcode, isa, by_camel):
+    """Map one decoder enum name to the ISA entries it covers (aliases, FLAT_ twins)."""
+    name = OPCODE_ALIASES.get(opcode) or by_camel.get(opcode)
+    if name not in isa:
+        return set()
+    names = {name}
+    if name.startswith("FLAT_"):
+        names.update(n for n in (s + name.removeprefix("FLAT_") for s in FLAT_SEGMENTS) if n in isa)
+    return names
 
-    An ISA entry counts as supported when the decoder enum (modulo aliases)
-    names it; FLAT_ entries additionally cover their GLOBAL_/SCRATCH_ twins.
-    Opcodes the decoder knows but the ISA lacks are reported as extra.
+
+def collect_translated(translation_dir, isa, by_camel):
+    """Return the ISA entries whose RdnaOpcode the translator references.
+
+    The translator (``core/shader/recompiler/Translation``) dispatches on
+    ``RdnaOpcode::Name``; an entry counts as translated when any source there
+    names its opcode. This is a reference count, not a proof that every
+    operand form is lowered, so it is an upper bound on real translation.
+    A missing directory (older --root revisions) yields an empty set.
     """
+    if not translation_dir.is_dir():
+        return set()
+    refs = set()
+    for path in sorted(translation_dir.rglob("*")):
+        if path.suffix in (".cpp", ".hpp", ".h") and path.is_file():
+            refs.update(re.findall(r"RdnaOpcode::([A-Z]\w*)", path.read_text(errors="ignore")))
+    translated = set()
+    for opcode in refs - OPCODE_SENTINELS:
+        translated |= _isa_names(opcode, isa, by_camel)
+    return translated
+
+
+def collect_shaders(opcodes_path=OPCODES, isa_path=ISA, translation_dir=None):
+    """Collect decoder and translator coverage of the ISA list, grouped by encoding.
+
+    An ISA entry counts as supported (``done``) when the decoder enum (modulo
+    aliases) names it; FLAT_ entries additionally cover their GLOBAL_/SCRATCH_
+    twins. It counts as ``translated`` when it is supported and the translator
+    references its opcode (see collect_translated). Opcodes the decoder knows
+    but the ISA lacks are reported as extra. ``translation_dir`` defaults to
+    the ``Translation`` directory next to the decoder in the same tree.
+    """
+    if translation_dir is None:
+        translation_dir = opcodes_path.parents[3] / "Translation"
     isa = {}
     for line in isa_path.read_text().splitlines():
         if line and not line.startswith("#"):
@@ -143,15 +181,12 @@ def collect_shaders(opcodes_path=OPCODES, isa_path=ISA):
     ]
     supported, extra = set(), []
     for opcode in opcodes:
-        name = OPCODE_ALIASES.get(opcode) or by_camel.get(opcode)
-        if name in isa:
-            supported.add(name)
-            if name.startswith("FLAT_"):
-                supported.update(
-                    n for n in (s + name.removeprefix("FLAT_") for s in FLAT_SEGMENTS) if n in isa
-                )
+        names = _isa_names(opcode, isa, by_camel)
+        if names:
+            supported |= names
         else:
             extra.append(opcode)
+    translated = collect_translated(translation_dir, isa, by_camel) & supported
     groups = {}
     for name, encoding in isa.items():
         group = groups.setdefault(
@@ -168,8 +203,14 @@ def collect_shaders(opcodes_path=OPCODES, isa_path=ISA):
         state = "done" if name in supported else "todo"
         group[state] += 1
         group[f"{state}_names"].append(name)
+        group["translated"] = group.get("translated", 0) + (name in translated)
     result = summarize(sorted(groups.values(), key=lambda g: g["name"]))
     result["extra"] = extra
+    result["translated"] = len(translated)
+    result["translated_percent"] = (
+        round(100 * len(translated) / result["total"], 2) if result["total"] else 0
+    )
+    result["translated_names"] = sorted(translated)
     return result
 
 
@@ -354,7 +395,10 @@ def summary(libraries, shaders):
                 (
                     f'<p>The total is the AMD RDNA 1 + RDNA 2 instruction list (<a href="{SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
                     f'An instruction is implemented when the <a href="{SOURCE}/core/shader/recompiler/RdnaDecoder">decoder</a> recognizes it. '
-                    f"Decoded opcodes not present in AMD's public list are not counted: {extra}.</p>"
+                    f"Decoded opcodes not present in AMD's public list are not counted: {extra}. "
+                    f"Translated: {shaders.get('translated', 0)}/{shaders['total']} ({shaders.get('translated_percent', 0)}%), "
+                    f'counting a decoded instruction whose opcode the <a href="{SOURCE}/core/shader/recompiler/Translation">translator</a> references '
+                    "(an upper bound: a referenced opcode may still reject some operand forms).</p>"
                 ),
                 "</body></html>",
             ]
@@ -470,6 +514,9 @@ def main(argv=None):
     (output / "index.html").write_text(summary(libraries, shaders))
     print(f"libraries {libraries['done']}/{libraries['total']} ({libraries['percent']}%)")
     print(f"shaders {shaders['done']}/{shaders['total']} ({shaders['percent']}%)")
+    print(
+        f"shaders translated {shaders['translated']}/{shaders['total']} ({shaders['translated_percent']}%)"
+    )
     return 0
 
 

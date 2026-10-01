@@ -120,6 +120,67 @@ class ProgressRootTests(unittest.TestCase):
             self.assertEqual(data["libraries"]["done"], 1)
 
 
+class TranslatedCountTests(unittest.TestCase):
+    """The translated count: decoded entries the translator references."""
+
+    _ENUM = """\
+enum class RdnaOpcode {
+    Invalid = 0,
+    TestAdd,
+    VAddF64,
+    FlatLoadDword,
+    Count,
+};
+"""
+    _ISA = "TEST_ADD VOP2\nV_ADD_F64 VOP3\nFLAT_LOAD_DWORD FLAT\nGLOBAL_LOAD_DWORD FLAT\nV_MUL_F32 VOP2\n"
+
+    def _tree(self, tmp, translator_source):
+        root = Path(tmp)
+        opc = root / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder"
+        opc.mkdir(parents=True)
+        (opc / "RdnaOpcode.hpp").write_text(self._ENUM)
+        (root / "isa.txt").write_text(self._ISA)
+        if translator_source is not None:
+            src = root / "recompiler" / "Translation" / "src"
+            src.mkdir(parents=True)
+            (src / "Vector.cpp").write_text(translator_source)
+        return opc / "RdnaOpcode.hpp", root / "isa.txt"
+
+    def test_counts_only_decoded_entries_the_translator_references(self):
+        # Invariant: translated <= decoded. VAddF64 is decoded and referenced,
+        # FlatLoadDword is referenced and also covers its GLOBAL_ twin, TestAdd
+        # is decoded but never referenced, and VMulF32 is referenced but not
+        # decoded, so it must not count. Removing the "& supported" guard or
+        # the FLAT twin expansion fails this test.
+        source = (
+            "switch (op) { case RdnaOpcode::VAddF64: f(); break;\n"
+            "case RdnaOpcode::FlatLoadDword: g(); break;\n"
+            "case RdnaOpcode::VMulF32: h(); break;\n"
+            "case RdnaOpcode::Invalid: break; }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            opcodes, isa = self._tree(tmp, source)
+            data = progress.collect_shaders(opcodes, isa)
+        self.assertEqual(data["done"], 4)
+        self.assertEqual(
+            data["translated_names"], ["FLAT_LOAD_DWORD", "GLOBAL_LOAD_DWORD", "V_ADD_F64"]
+        )
+        self.assertEqual(data["translated"], 3)
+        self.assertEqual(data["translated_percent"], 60.0)
+        vop3 = next(g for g in data["groups"] if g["name"] == "VOP3")
+        self.assertEqual(vop3["translated"], 1)
+
+    def test_missing_translation_directory_counts_zero(self):
+        # An older --root revision without Translation/ must still report,
+        # with translated 0 instead of failing.
+        with tempfile.TemporaryDirectory() as tmp:
+            opcodes, isa = self._tree(tmp, None)
+            data = progress.collect_shaders(opcodes, isa)
+        self.assertEqual(data["translated"], 0)
+        self.assertEqual(data["translated_names"], [])
+        self.assertEqual(data["done"], 4)
+
+
 def _sample():
     groups = [
         {
