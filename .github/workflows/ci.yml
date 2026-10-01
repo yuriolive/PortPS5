@@ -342,20 +342,31 @@ jobs:
             ccache-${{ runner.os }}-refs/heads/main-
             ccache-${{ runner.os }}-
 
+      - name: Cache Vulkan runtime and Mesa downloads
+        # Keyed on the pinned versions only, so the ~100 MB downloads happen
+        # once per version bump instead of on every run.
+        id: cache-lvp
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\lvp-dl
+          key: lvp-dl-${{ env.MESA_VERSION }}-${{ env.VULKAN_RT_VERSION }}
+
       - name: Install Vulkan loader and Mesa lavapipe
         shell: pwsh
         run: |
+          $dl = "$env:RUNNER_TEMP\lvp-dl"
+          New-Item -ItemType Directory -Path $dl -Force | Out-Null
           # 1. Vulkan loader (vulkan-1.dll): the driver and the test fixtures
           #    SDL_LoadObject it, so it must be on the system search path.
           if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) {
-            $rt = "$env:TEMP\VulkanRT.exe"
-            Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/VulkanRT-$env:VULKAN_RT_VERSION-Installer.exe" -OutFile $rt
+            $rt = "$dl\VulkanRT.exe"
+            if (-not (Test-Path $rt)) { Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/VulkanRT-$env:VULKAN_RT_VERSION-Installer.exe" -OutFile $rt }
             Write-Host "VulkanRT SHA256: $((Get-FileHash $rt -Algorithm SHA256).Hash.ToLowerInvariant())"
             Start-Process -FilePath $rt -ArgumentList '/S' -Wait
           }
           # 2. Mesa lavapipe (CPU Vulkan ICD) from mesa-dist-win.
-          $archive = "$env:TEMP\mesa.7z"
-          Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive
+          $archive = "$dl\mesa.7z"
+          if (-not (Test-Path $archive)) { Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive }
           Write-Host "Mesa SHA256: $((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant())"
           7z x $archive "-o$env:RUNNER_TEMP\mesa" -y | Out-Null
           $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd.x86_64.json' | Select-Object -First 1
@@ -372,8 +383,18 @@ jobs:
       - name: Configure CMake (ci preset)
         run: cmake --preset ci
 
-      - name: Build (ci preset)
-        run: cmake --build --preset ci
+      - name: Build lavapipe test targets only (ci preset)
+        # Only the executables behind the `lavapipe` label (and their
+        # link dependencies), not the full tree: build_and_test already
+        # builds everything, so this job skips relinker, tools and every
+        # unrelated prx. Keep in sync with AGC_DRIVER_TESTS and the
+        # `LABELS lavapipe` gtest in libSceAgcDriver/CMakeLists.txt; a
+        # missing target fails the build loudly.
+        run: >-
+          cmake --build --preset ci --target
+          agc_driver_tests agc_driver_flip_tests agc_driver_graphics_tests
+          agc_driver_bda_device_tests agc_driver_pm4_tests agc_shader_memory_tests
+          agc_driver_recompiler_tests agc_recorder_tests
 
       - name: Verify lavapipe is the visible device
         shell: pwsh
