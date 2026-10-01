@@ -24,6 +24,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import regress_metrics as rm
@@ -32,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS_SCHEMA = "portps5.results/1"
 TELEMETRY_SCHEMA = "portps5.telemetry/1"
 TELEMETRY_REL = Path("logs") / "telemetry.jsonl"
+RUNNER_REL = Path("logs") / "runner.json"
 
 
 class RegressError(Exception):
@@ -54,6 +56,25 @@ def ensure_outside_repo(path):
         raise RegressError(f"refusing to use a path inside the repository: {p}")
 
 
+def event_value(ev, rec):
+    """Extract and convert the numeric fields of a known event; None for other events.
+
+    Raises KeyError, TypeError or ValueError on a malformed field, which the
+    caller turns into a RegressError carrying the line number.
+    """
+    if ev == "frame":
+        return float(rec["dt_ms"]), rec.get("t_ms")
+    if ev == "av.offset":
+        return abs(float(rec["ms"]))
+    if ev == "audio.underrun":
+        return int(rec.get("n", 1))
+    if ev == "warmup.end":
+        return int(rec.get("warmup_ms", 0))
+    if ev == "run.end":
+        return int(rec.get("capture_split", 0)), int(rec.get("write_faults", 0))
+    return None
+
+
 def parse_telemetry(path):
     """Parse a portps5.telemetry/1 JSONL file into the metrics the results need.
 
@@ -74,6 +95,7 @@ def parse_telemetry(path):
         "pipeline_cache": None,
         "audio_device": "none",
         "ended": False,
+        "last_t_ms": None,
         "capture_split": 0,
         "write_faults": 0,
     }
@@ -86,7 +108,12 @@ def parse_telemetry(path):
             try:
                 rec = json.loads(line)
                 ev = rec["ev"]
-            except (ValueError, KeyError, TypeError) as exc:
+                # Convert every numeric field here so a malformed known event is
+                # a clean "line N" error instead of a traceback later.
+                val = event_value(ev, rec)
+                if ev == "frame" and val[1] is not None:
+                    val = (val[0], float(val[1]))
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
                 raise RegressError(f"telemetry line {n} is not a valid record") from exc
             if not header:
                 if ev != "run.start" or rec.get("schema") != TELEMETRY_SCHEMA:
@@ -96,42 +123,51 @@ def parse_telemetry(path):
                 t["pipeline_cache"] = rec.get("pipeline_cache")
                 t["audio_device"] = rec.get("audio_device", "none")
             elif ev == "frame":
-                t["dts"].append(float(rec["dt_ms"]))
+                t["dts"].append(val[0])
+                if val[1] is not None:
+                    t["last_t_ms"] = val[1]
             elif ev == "softlock":
                 t["softlocks"] += 1
             elif ev == "crash":
                 t["crashes"] += 1
             elif ev == "audio.underrun":
-                t["underruns"] += int(rec.get("n", 1))
+                t["underruns"] += val
             elif ev == "av.offset":
-                t["av_offsets"].append(abs(float(rec["ms"])))
+                t["av_offsets"].append(val)
             elif ev == "warmup.end":
                 warmed = True
-                t["warmup_ms"] = int(rec.get("warmup_ms", 0))
+                t["warmup_ms"] = val
             elif ev == "spirv.compile":
                 t["spirv"] += 1
             elif ev == "pipeline.create" and warmed:
                 t["pipe_after_warmup"] += 1
             elif ev == "run.end":
                 t["ended"] = True
-                t["capture_split"] = int(rec.get("capture_split", 0))
-                t["write_faults"] = int(rec.get("write_faults", 0))
+                t["capture_split"], t["write_faults"] = val
     if not header:
         raise RegressError("telemetry log is empty")
     return t
 
 
-def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha):
+def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha, wall_ms=None):
     """Assemble the portps5.results/1 dict and apply the pass rule.
 
     ``killed_by_runner`` marks a run the runner ended at its time limit (not a
     crash). Any other end without ``run.end`` or with a non-zero exit code is
-    counted as one crash on top of the in-process crash events.
+    counted as one crash on top of the in-process crash events. ``wall_ms`` is
+    the launch-to-kill time; for a killed run, a silence from the last present
+    to the kill above 30 s is one more softlock, since no later ``frame``
+    record exists to carry that gap.
     """
     stats = rm.frame_stats(tel["dts"])
     crashes = tel["crashes"]
     if not killed_by_runner and (not tel["ended"] or exit_code not in (0, None)):
         crashes += 1
+    # Without t_ms (older runtimes) fall back to the sum of intervals as the last present time.
+    last_t = tel["last_t_ms"] if tel["last_t_ms"] is not None else sum(tel["dts"])
+    tail_softlock = int(
+        killed_by_runner and wall_ms is not None and wall_ms - last_t > rm.SOFTLOCK_MS
+    )
     av_max = round(max(tel["av_offsets"], default=0.0), 1)
     duration = stats["presented_s"]
     # Per-10-minute rate over the presented span; short runs do not extrapolate below 1 minute.
@@ -169,7 +205,7 @@ def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha):
         "workarounds_set": rm.workarounds_set(cfg),
         "debug_keys_set": rm.debug_keys_set(cfg),
         "crashes": crashes,
-        "softlocks": rm.count_softlocks(tel["dts"], tel["softlocks"]),
+        "softlocks": rm.count_softlocks(tel["dts"], tel["softlocks"]) + tail_softlock,
         "checkpoints": checks.get("checkpoints", []),
         "fmv": fmv,
         "save_roundtrip": checks.get("save_roundtrip", "not_run"),
@@ -237,7 +273,11 @@ def prepare(args):
 
 
 def launch(install, duration_s):
-    """Run game.exe with install as cwd; return (killed_by_runner, exit_code).
+    """Run game.exe with install as cwd; return and persist the runner outcome.
+
+    The outcome ``{"killed", "exit_code", "wall_ms"}`` is also written to
+    logs/runner.json so a later ``report`` on the same install judges the run
+    the same way (a timed-out run is not a crash, and a tail hang is visible).
 
     stdout and stderr go to files in the install dir and are never read, so no
     game text can reach the results. The run is ended at duration_s if the
@@ -248,11 +288,12 @@ def launch(install, duration_s):
     (install / TELEMETRY_REL).unlink(missing_ok=True)
     env = {k: v for k, v in os.environ.items() if k != "PORTPS5_DEBUG"}
     exe = install / "game.exe"
+    start = time.monotonic()
     with open(install / "stdout.txt", "wb") as out, open(install / "stderr.txt", "wb") as err:
         proc = subprocess.Popen([str(exe)], cwd=install, stdout=out, stderr=err, env=env)
         try:
             proc.wait(timeout=duration_s)
-            return False, proc.returncode
+            killed, code = False, proc.returncode
         except subprocess.TimeoutExpired:
             proc.terminate()
             try:
@@ -260,19 +301,41 @@ def launch(install, duration_s):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-            return True, None
+            killed, code = True, None
+    outcome = {"killed": killed, "exit_code": code, "wall_ms": (time.monotonic() - start) * 1000.0}
+    (install / RUNNER_REL).write_text(json.dumps(outcome), encoding="utf-8")
+    return outcome
 
 
-def report(args, killed=False, exit_code=None):
-    """Build and write the results JSON from <install>/logs/telemetry.jsonl."""
+def load_runner(install):
+    """Read the persisted runner outcome, or a clean-exit default when there is none."""
+    path = Path(install) / RUNNER_REL
+    if not path.is_file():
+        return {"killed": False, "exit_code": None, "wall_ms": None}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def report(args, runner=None):
+    """Build and write the results JSON from <install>/logs/telemetry.jsonl.
+
+    ``runner`` overrides the outcome persisted by ``run`` (logs/runner.json).
+    """
     install = Path(args.install)
     log = install / TELEMETRY_REL
     if not log.is_file():
         raise RegressError(f"no telemetry log at {TELEMETRY_REL} (runtime telemetry is required)")
     tel = parse_telemetry(log)
     cfg = rm.load_resolved_config(install / "config", args.title_id)
+    runner = runner or load_runner(install)
     res = build_results(
-        args, tel, cfg, load_checks(args.checks_file), killed, exit_code, sha256_file(log)
+        args,
+        tel,
+        cfg,
+        load_checks(args.checks_file),
+        runner["killed"],
+        runner["exit_code"],
+        sha256_file(log),
+        runner.get("wall_ms"),
     )
     out = (
         args.out
@@ -320,13 +383,13 @@ def main(argv=None):
             prepare(args)
             return 0
         ensure_outside_repo(args.install)
-        killed, code = False, None
+        runner = None
         if args.cmd == "run":
             if os.environ.get("PORTPS5_DEBUG"):
                 raise RegressError("unset PORTPS5_DEBUG: debug keys must come from config files")
-            killed, code = launch(args.install, args.duration_s)
-        res = report(args, killed, code)
-    except (RegressError, OSError, ValueError, subprocess.CalledProcessError) as exc:
+            runner = launch(args.install, args.duration_s)
+        res = report(args, runner)
+    except (RegressError, OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
         print(f"regress: {exc}", file=sys.stderr)
         return 1
     print(f"result={res['result']} fail_reasons={res['fail_reasons']}")
