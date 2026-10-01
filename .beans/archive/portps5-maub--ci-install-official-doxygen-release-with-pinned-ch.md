@@ -1,10 +1,11 @@
 ---
 # portps5-maub
 title: 'CI: install official Doxygen release with pinned checksum'
-status: in-progress
+status: completed
 type: task
+priority: normal
 created_at: 2026-10-01T00:26:27Z
-updated_at: 2026-10-01T00:26:27Z
+updated_at: 2026-10-01T00:27:47Z
 ---
 
 ## Context
@@ -17,7 +18,7 @@ Deterministic, reliable docs gate on the latest stable Doxygen.
 - [x] Install official 1.18.0 zip from doxygen.nl, SHA-256 pinned in env, retries, cache
 - [x] doxygen docs/Doxyfile exits 0 with zero warnings on main (WARN_AS_ERROR unchanged)
 - [x] Specs updated
-- [ ] Hosted Doxygen gate passes on the PR
+- [x] Hosted Doxygen gate passes on the PR
 
 ## Out of Scope
 Re-enabling WARN_IF_UNDOCUMENTED / WARN_NO_PARAMDOC.
