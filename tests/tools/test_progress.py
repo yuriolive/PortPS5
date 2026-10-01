@@ -285,6 +285,16 @@ EEEEEEEEEEE _open
         self.assertEqual(by_name["libkernel"]["done"], 1)
         self.assertEqual((result["done"], result["total"]), (2, 4))
 
+    def test_export_name_strips_stacked_suffixes_in_nid_patcher_order(self):
+        # Invariant: same order as StripNidPostfix (NidPatcherUtils.hpp):
+        # _nid_postfix first, then _nid_disambig<N>. A regex anchored at the
+        # end once would leave fstat_nid_disambig1 and miss the fstat export.
+        self.assertEqual(progress.export_name("fstat_nid_disambig1_nid_postfix"), "fstat")
+        self.assertEqual(progress.export_name("pwrite_nid_disambig12"), "pwrite")
+        self.assertEqual(progress.export_name("_open_nid_postfix"), "_open")
+        self.assertEqual(progress.export_name("Foo_nid_no_patch_cut"), "Foo")
+        self.assertEqual(progress.export_name("sceFooInit"), "sceFooInit")
+
     def test_main_writes_exports_only_when_requested(self):
         # Invariant: without --exports progress.json has no "exports" key, so
         # CI output (which never has the third-party file) is unchanged.

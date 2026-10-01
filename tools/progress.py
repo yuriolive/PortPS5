@@ -140,16 +140,21 @@ def load_exports(path):
     return {lib: names for lib, names in exports.items() if not lib.endswith("_nosubmission")}
 
 
-NID_SUFFIX = re.compile(r"(_nid_postfix|_nid_no_patch_cut|_nid_disambig\d+)$")
+NID_POSTFIX = "_nid_postfix"
+NID_NO_PATCH_CUT = "_nid_no_patch_cut"
+NID_DISAMBIG = re.compile(r"_nid_disambig\d+$")
 
 
 def export_name(name):
     """Return the symbol name nid_patcher hashes for a definition name.
 
-    Mirrors core/libs/nid NidPatcherUtils: ``_nid_postfix``,
-    ``_nid_no_patch_cut`` and ``_nid_disambig<N>`` suffixes are removed.
+    Mirrors core/libs/nid NidPatcherUtils: ``_nid_no_patch_cut`` is cut, or
+    else ``_nid_postfix`` is stripped first and then ``_nid_disambig<N>``, so
+    stacked suffixes (``fstat_nid_disambig1_nid_postfix``) reduce to ``fstat``.
     """
-    return NID_SUFFIX.sub("", name)
+    if name.endswith(NID_NO_PATCH_CUT):
+        return name.removesuffix(NID_NO_PATCH_CUT)
+    return NID_DISAMBIG.sub("", name.removesuffix(NID_POSTFIX))
 
 
 def collect_export_coverage(libraries, exports):
