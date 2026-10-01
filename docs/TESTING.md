@@ -64,6 +64,7 @@ KytyPS5 provides extensive C++ subsystem test suites covering core kernel primit
 | `MemoryTrackerTests.cpp` | `tests/memory/MemoryTrackerTests.cpp` | Partial port onto `GuestMemoryTracking::Watch`: range validation, page rounding, protection and fault resolution, invalidate, resolver contract (death tests), concurrency. Kyty's dirty-ownership upload/download model and `RangeSet` are not ported. |
 | `KernelFileSystemTests.cpp` | `tests/kernel/KernelFileSystemTests.cpp` | Descriptor renames while open, mount point isolation (`/savedata0`), path canonicalization. |
 | `SaveDataMemoryTests.cpp` | `tests/kernel/SaveDataMemoryTests.cpp` | User slots, memory setup, crash-safe save mounts, unmount safety. |
+| `SaveDataMountTests.cpp` | `tests/filesystem/SaveDataMountTests.cpp` | `/savedata0` mount: create/write/fsync/read round trip, mkdir, `..` and `:` containment (EACCES), unmounted fails ENOENT, title id sanitising. |
 | `AudioOut2PortTests.cpp` | `tests/audio/AudioOut2PortTests.cpp` | Audio ports, PCM streaming, volume, rerouting, device open/close state machines. |
 | `PadHapticsTests.cpp` | `tests/input/PadHapticsTests.cpp` | DualSense rumble and haptics emulation with mocked SDL streams. |
 | `ShaderRecompilerComputeTests.cpp` | `tests/shader/ComputeInstructionsTest.cpp` | Full RDNA2 compute instruction set verification. |
