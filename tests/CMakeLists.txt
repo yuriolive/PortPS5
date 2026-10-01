@@ -52,6 +52,17 @@ portps5_add_gtest(kernel_pthread_tests
         unit
 )
 
+# Literal SCE error values exposed by DirectMemory.hpp (header-only, runs on any host)
+portps5_add_gtest(kernel_error_value_tests
+    SOURCES
+        kernel/KernelErrorValuesTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Virtual and direct memory allocation verification (ported from KytyPS5)
 portps5_add_gtest(memory_virtual_allocation_tests
     SOURCES

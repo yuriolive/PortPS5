@@ -15,11 +15,10 @@
 static constexpr size_t DIRECT_MEMORY_SIZE = 13824ULL * 1024 * 1024;
 static constexpr size_t PS5_PAGE_SIZE = 0x4000;
 
-static constexpr int SCE_KERNEL_ERROR_EINVAL = -2147418107;
-static constexpr int SCE_KERNEL_ERROR_EAGAIN = -2147418110;
-static constexpr int SCE_KERNEL_ERROR_ENOMEM = -2147418105;
-static constexpr int SCE_KERNEL_ERROR_EACCES = -2147418108;
-static constexpr int SCE_KERNEL_ERROR_EFAULT = -2147418103;
+// SCE kernel error codes come from the shared header (0x80020000 | errno). This
+// file used to declare its own copies in the 0x8001xxxx range, which no real
+// console returns (EINVAL is 0x80020016, not 0x80010005).
+#include "prx/libkernel/KernelErrors.hpp"
 
 #include "MemoryPool.hpp"
 
