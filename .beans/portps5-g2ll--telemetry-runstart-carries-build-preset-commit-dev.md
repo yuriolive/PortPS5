@@ -5,16 +5,16 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-10-01T18:31:56Z
-updated_at: 2026-10-01T18:31:56Z
+updated_at: 2026-10-01T19:20:31Z
 parent: portps5-r8mh
 blocked_by:
     - portps5-w1re
-    - portps5-c06p
 ---
+
 
 ## Context
 
-Results JSON takes gpu_vendor, driver_version and commit from runner flags, and has no build preset, present mode or resolution scale; regress compare (portps5-rrll) must refuse mismatched conditions. Blocked by: portps5-w1re, portps5-c06p.
+Results JSON takes gpu_vendor, driver_version and commit from runner flags, and has no build preset, present mode or resolution scale; regress compare (portps5-rrll) must refuse mismatched conditions. Blocked by: portps5-w1re (config startup landed in PR #71).
 
 ## Higher Goal
 

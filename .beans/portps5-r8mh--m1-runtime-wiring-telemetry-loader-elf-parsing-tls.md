@@ -7,9 +7,10 @@ priority: normal
 tags:
     - beads:portps5-4
 created_at: 2026-09-30T22:53:49Z
-updated_at: 2026-10-01T18:33:23Z
+updated_at: 2026-10-01T19:20:17Z
 parent: portps5-7dk3
 ---
+
 
 ## Context
 
@@ -17,7 +18,7 @@ Epic for M1 runtime wiring: config at startup, display keys and telemetry call s
 
 Landed: Config parsing and validation with a per-game TOML schema and typed `[debug]` (`libc/src/Config.cpp`), verbatim cross-prx `Loader` exports and clean loader failure exit (PRs #44, #47), offline services, the telemetry core, watchdog and audio sampler (PR #78, portps5-f9a3), the `tools/regress.py` runner and results JSON writer (PR #76, part of portps5-3m3u).
 
-Not wired: `Loader::Initialize` has no production caller (portps5-c06p), display keys are ignored and the swapchain is FIFO (portps5-dtwf), and nothing calls the telemetry `Start`, `NotePresent` or `NoteGuestProgress` exports (portps5-w1re).
+Config is loaded at startup since PR #71; still open: `config/` is not copied at conversion (portps5-c06p), display keys are ignored and the swapchain is FIFO (portps5-dtwf), and nothing calls the telemetry `Start`, `NotePresent` or `NoteGuestProgress` exports (portps5-w1re).
 
 ## Higher Goal
 
