@@ -37,7 +37,7 @@ Out of scope: PM4 parsing, descriptor upload and pipeline creation ([gpu-driver.
 
 Other facts:
 
-- **Driver target.** The driver builds its target as Vulkan 1.1 with SPIR-V 1.3, or 1.4 when mesh shaders are used (`libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp:696`).
+- **Driver target.** The driver builds its target as Vulkan 1.3 with SPIR-V 1.3, or 1.4 when mesh shaders are used (`libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp`, `VulkanDevice::Target`). It stays below 1.6 until the subgroup size is pinned per pipeline ([gpu-driver.md](gpu-driver.md) Open questions), because the lane math assumes a fixed `target.subgroupSize`. `ValidateAndOptimizeSpirv` already maps Vulkan 1.3 and 1.4 to a SPIR-V 1.6 ceiling and rejects a 1.6 target under a 1.1 or 1.2 environment.
 - **Serialization.** `RequestSerializer` writes magic `0x41505335`, version 2, as base64 (`ControlFlow/src/RequestSerializer.cpp:659-693`). `Recompile` appends the serialized request to every exception (`Recompiler.cpp:318-327`).
 - **Replay tool.** `agc_shader_replay` (`core/libs/prx/libSceAgcDriver/tools/AgcShaderReplay.cpp`,
   `agc_shader_replay` CMake target, dev/ci presets only, never shipped) replays serialized
