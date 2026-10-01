@@ -19,7 +19,10 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <chrono>
+#include <cmath>
 #include <cstring>
+#include <thread>
 
 extern "C" {
 int APS5_VABI scePadInit_nid_postfix(void) noexcept;
@@ -274,7 +277,16 @@ TEST_F(PadOutputTest, ResetOrientationReturnsToIdentity) {
     s.gyro = {0.0f, 3.0f, 0.0f};
     PadPublishControllerInput_nid_postfix(0, s);
     PadData d{};
-    ASSERT_EQ(scePadReadState(1, &d), PAD_OK);
+    // The first read only sets the fusion time baseline (dt = 0), so poll until
+    // the 3 rad/s yaw has really rotated the estimate; the reset check below is
+    // meaningless if the orientation never left the identity.
+    bool rotated = false;
+    for (int i = 0; i < 1000 && !rotated; ++i) {
+        ASSERT_EQ(scePadReadState(1, &d), PAD_OK);
+        rotated = std::fabs(d.orientation_y) > 1e-2f;
+        if (!rotated) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_TRUE(rotated) << "gyro must rotate the estimate before the reset";
     ASSERT_EQ(scePadResetOrientation(1), PAD_OK);
     EXPECT_EQ(scePadResetOrientation(0), PAD_ERROR_INVALID_HANDLE);
     EXPECT_EQ(scePadResetOrientation(4), PAD_ERROR_INVALID_HANDLE);
