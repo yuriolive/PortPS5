@@ -29,16 +29,15 @@ void* MapFlexible(void* hint, size_t bytes, int flags, int* result = nullptr) {
     return ret == 0 ? addr : nullptr;
 }
 
+// True when some registry entry covers `addr`. Uses the non-throwing lease (a short-lived pin,
+// released before returning): an exception thrown inside libc.prx cannot be observed from a test
+// executable on Windows (bean portps5-w9xc).
 bool IsRegistered(void* addr) {
-    GuestAllocations::Mutation mutation;
-    try {
-        mutation.Find(addr);
-        return true;
-    } catch (...) {
-        // Catch-all on purpose: on Windows an exception thrown inside libc.prx does not match a
-        // typed handler in this executable (separate C++ runtimes), it would terminate the process.
-        return false;
+    const auto address = reinterpret_cast<uintptr_t>(addr);
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+        if (range->address <= address && address < range->address + range->bytes) return true;
     }
+    return false;
 }
 
 int Unmap(void* addr, size_t bytes) { return sceKernelMunmap(reinterpret_cast<uint64_t>(addr), bytes); }
@@ -193,6 +192,26 @@ TEST(MemoryMapping, MunmapOfNothingIsRejected) {
     ASSERT_EQ(Unmap(probe, kPage), 0);
     EXPECT_EQ(Unmap(probe, kPage), ::SCE_KERNEL_ERROR_EINVAL);
     EXPECT_EQ(Unmap(probe, kPage + 1), ::SCE_KERNEL_ERROR_EINVAL);
+}
+
+// Invariant: a mapping pinned by an active GPU command (a registry lease) cannot be unmapped; the
+// request fails with EINVAL, nothing is unmapped, and it succeeds once the lease is gone. This is the
+// export-level counterpart of the registry's pin check, observable on every host.
+TEST(MemoryMapping, MunmapOfAPinnedMappingIsRejected) {
+    void* base = MapFlexible(nullptr, 2 * kPage, 0);
+    ASSERT_NE(base, nullptr);
+    {
+        const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();  // pins every readable range
+        EXPECT_EQ(Unmap(base, 2 * kPage), ::SCE_KERNEL_ERROR_EINVAL);
+        EXPECT_TRUE(IsRegistered(base));
+    }
+    EXPECT_EQ(Unmap(base, 2 * kPage), 0);
+    EXPECT_FALSE(IsRegistered(base));
+}
+
+// Invariant: a range that wraps the address space is rejected before any lookup.
+TEST(MemoryMapping, MunmapOfAWrappingRangeIsRejected) {
+    EXPECT_EQ(sceKernelMunmap(0xFFFFFFFFFFFFC000ull, 4 * kPage), ::SCE_KERNEL_ERROR_EINVAL);
 }
 
 }  // namespace

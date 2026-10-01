@@ -5,6 +5,12 @@
 // partial unmaps are skipped, a request that touches non-releasable image
 // memory unmaps nothing, and a pinned piece blocks the whole request.
 //
+// Windows: an exception thrown inside libc.prx cannot be observed from this test
+// executable (the process terminates with 0xc0000409 even under catch (...)), so
+// tests that need a thrown contract error are skipped there and the same
+// behaviour is covered through sceKernelMunmap in MemoryMappingTests.cpp, which
+// catches inside libkernel and returns a code (bean portps5-w9xc).
+//
 // The registry stores only addresses, so the tests register synthetic
 // ranges at fixed high addresses without any host mapping behind them. Each
 // test cleans up the ranges it created (gtest_discover_tests also runs each
@@ -42,17 +48,21 @@ std::vector<Piece> UnmapRecording(GuestAllocations::Mutation& mutation, std::uin
     return pieces;
 }
 
+// True when some registry entry covers `address`. Uses the non-throwing lease (a short-lived
+// pin, released before returning) so no exception is involved.
 bool Registered(std::uintptr_t address) {
-    GuestAllocations::Mutation mutation;
-    try {
-        mutation.Find(Ptr(address));
-        return true;
-    } catch (...) {
-        // Catch-all on purpose: on Windows an exception thrown inside libc.prx does not match a
-        // typed handler in this executable (separate C++ runtimes), it would terminate the process.
-        return false;
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+        if (range->address <= address && address < range->address + range->bytes) return true;
     }
+    return false;
 }
+
+// Tests that need a thrown contract error cannot run on Windows (see the file header).
+#ifdef _WIN32
+#define SKIP_ON_WINDOWS_THROW() GTEST_SKIP() << "exceptions thrown inside libc.prx cannot be observed from the test executable on Windows (bean portps5-w9xc)"
+#else
+#define SKIP_ON_WINDOWS_THROW() (void)0
+#endif
 
 // Invariant: a range covering two adjacent allocations unmaps both, one piece
 // each, each marked last because nothing of either allocation remains. The old
@@ -110,8 +120,10 @@ TEST(GuestAllocationsUnmap, PartialCoverageOfBothEnds) {
     ASSERT_EQ(pieces.size(), 2u);
     EXPECT_EQ(pieces[0], (Piece{kBase + 2 * kPage, kPage, kBase, false}));
     EXPECT_EQ(pieces[1], (Piece{kBase + 3 * kPage, kPage, kBase + 3 * kPage, false}));
-    EXPECT_TRUE(Registered(kBase));
-    EXPECT_TRUE(Registered(kBase + 3 * kPage));
+    EXPECT_TRUE(Registered(kBase));                 // the first two pages of A remain
+    EXPECT_FALSE(Registered(kBase + 2 * kPage));    // A's last page was unmapped
+    EXPECT_FALSE(Registered(kBase + 3 * kPage));    // B's first page was unmapped
+    EXPECT_TRUE(Registered(kBase + 4 * kPage));     // the rest of B remains
     // Clean up the remainders.
     EXPECT_EQ(UnmapRecording(mutation, kBase, 6 * kPage).size(), 2u);
 }
@@ -119,6 +131,7 @@ TEST(GuestAllocationsUnmap, PartialCoverageOfBothEnds) {
 // Invariant: a request with nothing registered in it still fails (this tree's
 // existing contract; EINVAL at the SCE layer), and so does a wrapping request.
 TEST(GuestAllocationsUnmap, NothingRegisteredOrWrappingThrows) {
+    SKIP_ON_WINDOWS_THROW();
     GuestAllocations::Mutation mutation;
     EXPECT_ANY_THROW(UnmapRecording(mutation, kBase, kPage));
     EXPECT_ANY_THROW(UnmapRecording(mutation, 0xFFFFFFFFFFFFF000ull, 0x2000));
@@ -129,6 +142,7 @@ TEST(GuestAllocationsUnmap, NothingRegisteredOrWrappingThrows) {
 // before any host unmap: the releasable allocation next to it must be
 // untouched and the callback never called.
 TEST(GuestAllocationsUnmap, ImagePieceRejectsWholeRequestBeforeApplying) {
+    SKIP_ON_WINDOWS_THROW();
     GuestAllocations::Mutation mutation;
     mutation.RegisterMainImage();
     static const int imageProbe = 0;  // lives in the main image's data segment
@@ -155,6 +169,7 @@ TEST(GuestAllocationsUnmap, ImagePieceRejectsWholeRequestBeforeApplying) {
 // already gone from the registry (they were unmapped on the host) and the
 // failing piece is still registered, so registry and host never disagree.
 TEST(GuestAllocationsUnmap, FailingCallbackKeepsRegistryConsistent) {
+    SKIP_ON_WINDOWS_THROW();
     GuestAllocations::Mutation mutation;
     mutation.Add(Ptr(kBase), kPage, true, true);
     mutation.Add(Ptr(kBase + kPage), kPage, true, true);
@@ -170,6 +185,7 @@ TEST(GuestAllocationsUnmap, FailingCallbackKeepsRegistryConsistent) {
 // Invariant: a GPU lease on any overlapped allocation blocks the whole request
 // before the callback runs, so a spanning unmap never frees pinned memory.
 TEST(GuestAllocationsUnmap, PinnedPieceBlocksWholeRequest) {
+    SKIP_ON_WINDOWS_THROW();
     GuestAllocations::Mutation mutation;
     mutation.Add(Ptr(kBase), kPage, true, true);
     mutation.Add(Ptr(kBase + kPage), kPage, true, true);
