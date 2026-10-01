@@ -1,3 +1,7 @@
+// core/libs/prx/libSceAgcDriver/Graphics/include/TextureCache.hpp
+//
+// Subsystem: AGC driver Graphics. Cache of host images keyed by (guest address, T# words); see TextureCache.cpp.
+// Threading: not internally synchronised; callers hold the GPU mutex. Spec: docs/spec/gpu-driver.md.
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURECACHE_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_TEXTURECACHE_HPP
 
