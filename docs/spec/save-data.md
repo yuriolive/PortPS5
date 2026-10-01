@@ -61,15 +61,16 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 **Migration.** At first start, if `./_sd` exists next to the executable and the target directory is empty, it is copied to the target directory and a log line is written. The source is never deleted.
 
-**Scripted dialogs.** Every dialog `Open` emits a structured log event: `dialog.open {lib, mode, type, result}`. Dialogs complete on the next `UpdateStatus` call, not inside `Open`, so titles that poll see the `RUNNING → FINISHED` sequence.
+**Scripted dialogs.** Every dialog `Open` emits a structured log event: `dialog.open {lib, mode, type, result}`. Dialogs complete on a later status poll, not inside `Open`, so titles that poll see the `RUNNING → FINISHED` sequence. `MsgDialog` reports the 44-byte `SceMsgDialogResult` (mode, result, button id, zeroed reserved bytes) and validates its guest parameter blocks (layouts and error codes follow shadPS4's public headers, GPL-2.0-or-later, as the oracle; no SDK header was used).
 
 | Dialog | Scripted result |
 |---|---|
 | SaveData: confirm, overwrite or save | OK / Yes. |
 | SaveData: list (load) | The newest existing dir by modification time, or Cancel if there are none. It never invents a dir name. |
 | SaveData: error or no-space notice | OK, logged at warning level. |
-| MsgDialog: user message | The default button (Yes/OK). Progress bars finish immediately. |
-| MsgDialog: system message | OK. |
+| MsgDialog: user message | Auto-answered after two status polls (`GetStatus` or `UpdateStatus`): the first button, except focus-No (`YESNO_FOCUS_NO`) answers No and focus-Cancel (`OK_CANCEL_FOCUS_CANCEL`) reports a user cancel. Dialogs with no pressable button (`NONE`, `WAIT`, `WAIT_CANCEL`) stay `RUNNING` until the title calls `sceMsgDialogClose`. |
+| MsgDialog: progress bar | Stays `RUNNING` until the title calls `sceMsgDialogClose`; the bar calls return `NOT_SUPPORTED` outside this mode and `PARAM_INVALID` for a non-default target. |
+| MsgDialog: system message | OK, after two polls. |
 | CommonDialog | `IsUsed` reflects whether any dialog is open. |
 
 **User and system services.** One user, id 1, named "Player" by default. `GetUserName` returns that name, and `ParamGetString` returns the user name or an empty string. Language comes from `ParamGetInt` (fixed English US in 1.0). Unknown params return 0 and are logged once.
@@ -132,6 +133,7 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 ## Open questions
 
+- `SceMsgDialogResult.mode`: the library writes the dialog's own mode; shadPS4 writes a constant 0. Which one a console returns is unverified, and no title is known to read it.
 - Multi-user saves: add a `<userId>` level before 1.0 or after? Not gated.
 - Should trophy metadata be parsed from the dump for display only, or skipped entirely?
 - Do any gate titles call `TransferringMount` or backup restore? This is answered by the M1 inventory (bean `portps5-3eh1`). It currently aborts through `Unsupported()` (PR #46).
