@@ -114,7 +114,7 @@ Rules:
 - Relink-time (ahead-of-time) shader compilation. The disk cache covers the stutter goal.
 - An array-of-bytes (AOB) patch engine for fps unlocks and delta-time patches.
 - Upscaling and resolution targets: FSR1/CAS, DLSS or FSR2+ via PSSR/TAA intercept, 4K, 60/120 fps. The §4.5 invariants keep these reachable without a rewrite.
-- Other platforms and front ends: Linux and macOS release builds, a GUI launcher.
+- Other platforms and front ends: Linux release builds (planned for 2.0, §10), macOS, a GUI launcher. In 1.0, new code goes through the host platform layer ([spec/host-platform.md](spec/host-platform.md)) so Linux is a new backend, not a rewrite.
 - DualSense haptics and adaptive triggers.
 - Titles beyond the gate set. The compatibility list will track them, but they do not gate 1.0.
 - Tracking upstream AnyPS5. This is revisited after Milestone 3.
@@ -149,3 +149,50 @@ Rules:
 - [spec/README.md](spec/README.md): subsystem index and decisions, with one spec file per subsystem.
 - [spec/verification.md](spec/verification.md): CI, local regression, full-run protocol and results schema.
 - [ROADMAP.md](ROADMAP.md): milestones, exit criteria and traceability.
+
+## 10. 2.0 goals (draft)
+
+Status: draft, 2026-10-01. Nothing here changes the 1.0 scope above. 2.0 work starts after 1.0 ships (ROADMAP Part II), except the v1 seams and spikes that ROADMAP Part I lists.
+
+**Objective.** An open-world AAA tier: GTA VI completes start-to-credits at an average of at least 30 fps and a 1% low of at least 20 fps, at 1920×1080 or higher with a warm pipeline cache, on the 2.0 reference tier, on Windows and native Linux. The definitions in §4.3 apply unchanged.
+
+### 10.1 Gate titles (2.0)
+
+Each title is pinned at dump time, as in §4.1. A title nobody can dump yet stays unpinned and doesn't block the milestones before its own.
+
+| # | Title | What it proves | Title ID | Region | Patch |
+|---|---|---|---|---|---|
+| 6 | Horizon Forbidden West | Open-world streaming and residency without mandatory ray tracing | TBD | TBD | TBD |
+| 7 | Ratchet & Clank: Rift Apart | Fast I/O and decompression, ray tracing in its RT modes | TBD | TBD | TBD |
+| 8 | Marvel's Spider-Man 2 | Open world with ray tracing always on, traversal streaming | TBD | TBD | TBD |
+| 9 | Grand Theft Auto VI | The 2.0 objective | TBD (not released as of 2026-10-01) | TBD | TBD |
+
+**GTA VI pin risk.** New titles often require console firmware newer than any that users can currently dump from. GTA VI may stay undumpable long after release. Gates 6–8 carry the 2.0 mechanisms meanwhile, and gate 9 is pinned when a user-owned dump exists. No 2.0 code may depend on GTA VI-specific knowledge before then, or after ([spec/README.md](spec/README.md) global policy and [.agents/rules/no-title-hacks.md](../.agents/rules/no-title-hacks.md)).
+
+### 10.2 Functional requirements (2.0)
+
+| ID | Requirement |
+|---|---|
+| V1 | - [ ] Native Linux: the CLI converts on Linux, and the runtime runs the 1.0 gate titles and the 2.0 gate titles on Linux, with the same pass rules. |
+| V2 | - [ ] Streaming and residency: guest memory beyond host VRAM is handled by a budgeted residency manager, with no stall over 1 s (§4.3) caused by eviction. |
+| V3 | - [ ] Decompression: the titles' hardware-decompression requests are served off the guest thread. |
+| V4 | - [ ] Ray tracing: guest acceleration structures and ray queries run on Vulkan ray tracing. Skipping RT work is not a pass. |
+| V5 | - [ ] Modern geometry: primitive (NGG) and mesh shader stages translate. |
+| V6 | - [ ] Async compute on a separate host queue, and bounded CPU/GPU frame overlap (invariant P6). |
+
+### 10.3 2.0 reference tier
+
+The 1.0 tier (§4.4) is not expected to carry an open-world AAA title at 30 fps, because translation adds overhead the console doesn't have. The 2.0 tier is anchored by benchmark floors the same way as §4.4, with ray-tracing support required. The floor values are set from the 1.0 M5 performance-pass data, not guessed (ROADMAP M7). No specific personal machine is part of the specification.
+
+### 10.4 2.0 non-goals
+
+60/120 fps targets, upscalers and frame generation, and the AI-driven optimization ideas stay out of 2.0. A future profile-guided optimization would be a locally derived cache like the pipeline cache, never per-title code.
+
+### 10.5 2.0 risks
+
+| ID | Risk | Mitigation |
+|---|---|---|
+| V-R1 | GTA VI can't be dumped for a long time. | Gates 6–8 carry the mechanisms; gate 9 waits for its pin. |
+| V-R2 | Guest `fs`-segment TLS conflicts with glibc on Linux. | Spike before M7 (bean `portps5-u16x`, [spec/host-platform.md](spec/host-platform.md) open question 1). |
+| V-R3 | The guest BVH layout can't be translated to Vulkan acceleration structures efficiently. | Spike against the public RDNA2 BVH layout in Mesa RADV (MIT) before M9 (bean `portps5-mdu8`). |
+| V-R4 | Decompression formats are proprietary. | Use only implementations with a GPL-2.0-compatible licence, or the title's own software path; record the licence before adopting (§6, R1). |
