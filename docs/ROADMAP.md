@@ -77,6 +77,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [ ] Input: XInput, DualSense over USB, and keyboard/mouse mapping in TOML ([spec/input.md](spec/input.md); bean `portps5-de24`).
   - [x] SDL joystick/HIDAPI are enabled (`CMakeLists.txt:46-48`), and SDL game controllers feed `scePadRead` with hot-plug, slot assignment, a radial dead zone and keyboard merge (PRs #54 and #57, tests in `tests/input/ControllerInputTests.cpp`). Not verified with a physical controller;
   - [x] mouse backend (`libSceMouse/src/mouse_impl.cpp`) and VideoOut routing exist, but the `sceMouse*` exports are still `Unsupported()` stubs and `mouse_tests` is `DISABLED` (bean `portps5-afme`, low priority);
+  - [x] DualSense output path in software: rumble, light bar, trigger effects, motion, touchpad fingers and a pure hot-plug `SlotTable`, with device-free GoogleTests (`tests/input/Pad*Tests.cpp`, bean `portps5-j7ds`). Not verified with a physical controller (bean `portps5-ds7h`);
   - [ ] TOML keyboard/mouse bindings (only `[input] deadzone` is consumed), XInput and DualSense USB on the manual matrix, slot reassignment tests with injected SDL events.
 - [ ] Establish filesystem sandbox, input, and audio GoogleTest suites ported from ecosystem references:
   - [x] Filesystem sandbox: port path-traversal containment (`../`), mount sandbox isolation, and default-deny permission tests from SharpEMU (`KernelSandboxEscapeTests`) ([spec/save-data.md](spec/save-data.md));

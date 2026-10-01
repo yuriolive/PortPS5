@@ -122,7 +122,7 @@ Tests are progressively consolidated from standalone single-function executables
 | stb (`stb_image`, `stb_image_write`) | MIT or public domain | [image-codecs.md](image-codecs.md) | pinned submodule `3rdparty/stb` at `2c980bb5` (PR #58) | M1 (landed) |
 | xxHash (XXH3-64/128) | BSD-2 | [shader-recompiler.md](shader-recompiler.md) (hashed keys), [pipeline-cache.md](pipeline-cache.md) (keys and record checksums) | vendored single header at a pinned release | M1 |
 | `llvm-mc` (AMDGPU target, `gfx10.3`) | Apache-2.0 with LLVM exception | superseded: the synthetic corpus is hand-assembled dwords with field layouts cited to the decoder sources ([shader-recompiler.md](shader-recompiler.md)), so no `.s` sources and no build-time assembler exist | — | dropped |
-| SDL2 | zlib | [input.md](input.md), [audio.md](audio.md) | existing submodule. **Pin check:** confirm that commit `4b69833` has the HIDAPI PS5 driver (*inference:* SDL 2.0.14 or later), or bump the pin | M2 |
+| SDL2 | zlib | [input.md](input.md), [audio.md](audio.md) | existing submodule. **Pin check:** commit `4b69833` is the SDL 2.33 development tree and carries `src/joystick/hidapi/SDL_hidapi_ps5.c` (checked in the source; `tests/input/PadSdlBuildTests.cpp` asserts the HIDAPI joystick driver and PS5 hint are compiled in). Bundled `src/hidapi` is triple-licensed (GPL-3.0, BSD-style, original); PortPS5 uses the BSD-style terms, so no GPL-3.0 or Apache-2.0 code is linked | M2 |
 
 **SDL options.** `SDL_AUDIO` with the WASAPI backend stays on. From M2, `SDL_JOYSTICK` and `SDL_HIDAPI` are on, as [input.md](input.md) decides; `SDL_HAPTIC` and `SDL_SENSOR` stay off in 1.0.
 
@@ -172,7 +172,7 @@ Tests are progressively consolidated from standalone single-function executables
   - [ ] `lavapipe` label and job (`driver-lavapipe`): the label exists on the driver suites (`libSceAgcDriver/CMakeLists.txt:351-389`), the job does not (bean `portps5-ekx3`);
   - [ ] the xxHash pin: no xxHash is vendored under `3rdparty/` yet.
 - [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from AnyPS5 main (merged PR #5) (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
-- [ ] **M2:** `tools/regress` build target and its `local` label (bean `portps5-3m3u`). SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:46-48` since PR #20; the pin check against the HIDAPI PS5 driver is still open, bean `portps5-de24`).
+- [ ] **M2:** `tools/regress` build target and its `local` label (bean `portps5-3m3u`). SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:46-48` since PR #20; the pin carries the HIDAPI PS5 driver and a unit test guards the build option, bean `portps5-j7ds`; run on a real DualSense is bean `portps5-ds7h`).
 - [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
 - [ ] **M6:** release preset used for the release commit, with the R1 status recorded.
 
