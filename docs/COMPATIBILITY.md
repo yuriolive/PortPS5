@@ -19,10 +19,12 @@ Hardware is described by tier, not by model ([PRD §4.4](PRD.md)): the **referen
 |---|---|---|---|
 | Dreaming Sarah | Playable | 60 fps | Reference tier |
 
+Statuses here are maintainer reports from a local run. A title counts as passing the 1.0 full-run protocol only once its results JSON is published; for Dreaming Sarah that is still pending (bean `portps5-kmb6`).
+
 ## Not listed
 
 Titles missing from the table have not been reported. The other gate titles (TMNT: Shredder's Revenge, Tomb Raider I-III Remastered, Bugsnax, Demon's Souls) are tracked in the [ROADMAP](ROADMAP.md).
 
 ## Reporting a result
 
-Send metrics only: title, status, fps, hardware tier. Never attach dumps, screenshots, video frames or logs containing game data ([legal boundary](../.agents/rules/legal-boundary.md)).
+Submit a measured run as [results JSON](spec/verification.md) (`portps5.results/1`, §4), written by `tools/regress.py` and opened as a PR adding it under `compat/results/<titleId>/` (the [compat-result](../.agents/skills/compat-result/SKILL.md) skill walks through it). The table above is a human summary of title, status, fps and hardware tier; a submission carries the full schema, including run metadata, hashes and the pass/fail verdict. Never attach dumps, screenshots, video frames or logs containing game data ([legal boundary](../.agents/rules/legal-boundary.md)).
