@@ -22,7 +22,7 @@ Hold the 60 Hz flip rate on the M2 gate titles (ROADMAP M2 perf bar) with genera
 - [x] Design note and slice plan in `docs/spec/gpu-driver.md`.
 - [x] Slice 1: `BytesEqual` replaces the TextureCache memcmp and the `GuestBufferMemory` snapshot comparisons in `AddSnapshot` and `Upload`, with a GoogleTest that fails when the helper is broken.
 - [ ] Baseline and after numbers on the release preset (average, 1% low, per-stage metrics) from a maintainer machine. Not measurable in the cloud container used for slice 1.
-- [ ] Slice 2: cheaper texture revalidation (spec open question 12).
+- [x] Slice 2: TextureCache skips the compare when `IWriteTracker` proves the range unchanged (no-op until the runtime wires a tracker; wiring stays with `portps5-421p`).
 - [ ] Slice 3: reuse prepared `ShaderResources` state across unchanged draws.
 - [ ] Slice 4: batch guest reads and uploads.
 
