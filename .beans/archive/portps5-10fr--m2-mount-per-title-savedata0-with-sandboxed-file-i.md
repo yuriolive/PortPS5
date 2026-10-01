@@ -18,7 +18,7 @@ PRD F2: a gate title can write and read its /savedata0 files across runs, inside
 
 ## Acceptance Criteria
 
-- [x] PR #53 reviewed, rebased on main and merged
+- [x] PR #53 reviewed and rebased on main (the merge itself lands this bean on main as completed)
 - [x] Traversal, colon, unmounted and title-id cases covered by GoogleTest
 - [x] save-data.md Open questions and M2 row updated
 
