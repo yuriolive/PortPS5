@@ -397,7 +397,7 @@ jobs:
           ctest --preset lavapipe --no-tests=error -V 2>&1 | Tee-Object -FilePath lavapipe-ctest.log
           $code = $LASTEXITCODE
           if ($code -ne 0) { exit $code }
-          if (Select-String -Path lavapipe-ctest.log -Pattern 'no Vulkan device|cannot load the Vulkan loader' -Quiet) {
+          if (Select-String -Path lavapipe-ctest.log -Pattern 'no Vulkan device|cannot load the Vulkan loader|VK_EXT_external_memory_host unavailable' -Quiet) {
             throw "lavapipe device not visible: driver suites skipped instead of running"
           }
 
