@@ -100,6 +100,9 @@ function(portps5_setup_ffmpeg)
         # Licence gate: refuse to build if the configure picked up any GPL/v3/non-free component.
         COMMAND ${CMAKE_COMMAND} -DCONFIG_MAK=${bin}/ffbuild/config.mak -DCONFIG_H=${bin}/config.h
                 -P "${CMAKE_SOURCE_DIR}/cmake/PortPS5FFmpegLicenseCheck.cmake"
+        # MSYS sh records the source dir as /d/...; native make cannot read it (see the script).
+        COMMAND ${CMAKE_COMMAND} -DBUILD_DIR=${bin} -DSRC_DIR=${src}
+                -P "${CMAKE_SOURCE_DIR}/cmake/PortPS5FFmpegFixPaths.cmake"
         BUILD_COMMAND ${CMAKE_COMMAND} -E env "PATH=${env_path}" "${PORTPS5_MAKE}" -j${jobs} libavcodec/libavcodec.a libavutil/libavutil.a
         INSTALL_COMMAND ""
         BUILD_BYPRODUCTS ${libs}
