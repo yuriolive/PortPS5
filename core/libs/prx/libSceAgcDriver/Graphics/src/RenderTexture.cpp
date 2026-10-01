@@ -31,6 +31,7 @@ Texture::Texture(const Context& context, const std::shared_ptr<ResidentColor>& s
             image = recycled->image;
             memory = recycled->memory;
             allocationBytes = recycled->bytes;
+            recyclable = true;
         } else {
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage resident texture");
             VkMemoryRequirements requirements{};
@@ -41,6 +42,8 @@ Texture::Texture(const Context& context, const std::shared_ptr<ResidentColor>& s
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory resident texture");
             Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory resident texture");
+            // Only a successfully bound image may enter the pool; a failed bind leaves it to be destroyed.
+            recyclable = true;
         }
         VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         viewInfo.image = image;

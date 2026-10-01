@@ -37,6 +37,8 @@ private:
     std::shared_ptr<ResidentColor> source;
     std::shared_ptr<ResidentImagePool> pool;
     ResidentImageKey poolKey;
+    /// True only while image and memory are bound and idle-able; guards recycling after a failed construction.
+    bool recyclable = false;
     std::unique_ptr<CommandBatch> upload;
 };
 
