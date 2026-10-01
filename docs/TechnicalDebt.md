@@ -7,7 +7,7 @@
 ### Silent stubs
 
 Throughout the project, every function at every stage either **does exactly what it's supposed to or throws an exception / logs and aborts**. Everywhere... except:
-- [M1] [`Config::Loader::Initialize`](../core/libs/prx/libc/src/Config.cpp) has no production caller, so every config value is inert at runtime and consumers fall back to defaults (bean `portps5-c06p`).
+- [M1] Config is loaded at startup (`libc/src/ConfigStartup.cpp`, PR #71), but conversion does not copy `config/` into the install dir, so a converted title runs on defaults unless the files are copied by hand (bean `portps5-c06p`).
 - [M1] The present mode is hard-coded to FIFO ([VulkanDevice.cpp](../core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp) `:507`, `:584`) and the `display` keys are ignored (bean `portps5-dtwf`).
 
 ### Host exceptions

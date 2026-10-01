@@ -65,7 +65,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Image codecs: shared stb-backed JPEG/PNG layer (`core/Decoder`), `libSceJpegEnc` and `libScePngDec` ([spec/image-codecs.md](spec/image-codecs.md)); `libScePngEnc` remains open.
 - [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section (beans `portps5-c06p`, `portps5-dtwf`).
   - [x] `Config` schema, validation and the typed `[debug]` section (`libc/src/Config.cpp`, `core/libs/tests/Config.cpp`); no `APS5_` string literals remain in `core/` and the `policy` job enforces it;
-  - [ ] startup loads config for the `param.json` title ID: `Loader::Initialize` has no production caller (bean `portps5-c06p`);
+  - [x] startup loads config for the `param.json` title ID before guest initializers (startup portion of bean `portps5-c06p`);
   - [ ] `display.present_mode` and `display.resolution_scale` reach the driver: the swapchain is hard-coded to FIFO (bean `portps5-dtwf`).
 - [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`). The telemetry core, watchdog and mixer counter integration exist (PR #78, bean `portps5-f9a3` completed; [spec/verification.md](spec/verification.md) 4.3); the start-up, presenter and guest-progress call sites are not wired, so this stays open (bean `portps5-w1re`).
 - [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI; merged into the `build_and_test` job by PR #38).
@@ -202,12 +202,12 @@ A lane can start when its blockers are done. Lanes in the same row can run in pa
 
 | Lane | Beans | Blocked by |
 |---|---|---|
-| Config at startup | `portps5-c06p` | none |
+| Config copy at conversion | `portps5-c06p` (startup call landed in PR #71) | none |
 | Results compare | `portps5-rrll` | none |
 | Tracker wiring | `portps5-421p` | none |
 | Recorder in submit path | `portps5-tiod` | none |
-| Telemetry call sites | `portps5-w1re` | `portps5-c06p` |
-| Display keys | `portps5-dtwf` | `portps5-c06p` |
+| Telemetry call sites | `portps5-w1re` | none (config startup landed in PR #71) |
+| Display keys | `portps5-dtwf` | none (config startup landed in PR #71) |
 | Frame breakdown | `portps5-hfiw` | `portps5-w1re`, `portps5-tiod` |
 | Violation counters | `portps5-aifo` | `portps5-w1re` |
 | Resident RT step 2 | `portps5-r7qk` | `portps5-w1re` (baseline needs telemetry) |
@@ -221,7 +221,7 @@ A lane can start when its blockers are done. Lanes in the same row can run in pa
 | Specialization constants | `portps5-9gsx` | `portps5-8gdr` |
 | Async pipeline compile | `portps5-c1oi` | `portps5-8gdr` |
 | Compile-time telemetry, crash, boot, dialogs | `portps5-tg51`, `portps5-yhj7`, `portps5-pk9m`, `portps5-7qon` | `portps5-w1re` |
-| Run metadata | `portps5-g2ll` | `portps5-w1re`, `portps5-c06p` |
+| Run metadata | `portps5-g2ll` | `portps5-w1re` |
 | Memory telemetry | `portps5-ybq3` | `portps5-w1re`, `portps5-l77s` |
 | Frame pacing | `portps5-jy7n` | `portps5-dtwf`, `portps5-w1re` |
 | Upload engine | `portps5-dtiq` | `portps5-hkwd` |
