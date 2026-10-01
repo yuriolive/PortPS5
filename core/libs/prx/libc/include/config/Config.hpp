@@ -96,6 +96,14 @@ struct DebugConfig {
     bool relinkerTraceSse4a = false;
 };
 
+/**
+ * @brief Reads a host environment variable; the only sanctioned environment access.
+ * @param name Variable name (case-insensitive on Windows, exact elsewhere).
+ * @return The value, or nullopt when unset or empty.
+ * Thread safety: reads the process environment block; do not race with setenv/putenv.
+ */
+std::optional<std::string> HostEnvironmentValue(const char* name);
+
 enum class WorkaroundType { Bool, Int, Double, String };
 using WorkaroundValue = std::variant<bool, std::int64_t, double, std::string>;
 
@@ -201,5 +209,13 @@ extern "C" bool PortPS5_Config_Loader_IsInitialized_nid_no_patch();
 // @brief Returns the parsed config; aborts when not initialized.
 // @return The process-wide parsed config owned by libc.
 extern "C" const PortPS5::Config::ResolvedConfig& PortPS5_Config_Loader_Get_nid_no_patch();
+
+/**
+ * @brief Loads configuration before guest initializers and threads run.
+ * Host ABI, called once by the Windows entry stub; errors are logged locally.
+ * @param executablePath Absolute path supplied by the host loader.
+ * @return True on success; false on invalid metadata, configuration or I/O failure.
+ */
+extern "C" bool PortPS5_Config_Startup_nid_no_patch(const char* executablePath) noexcept;
 
 #endif

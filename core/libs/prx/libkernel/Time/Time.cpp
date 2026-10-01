@@ -141,6 +141,17 @@ int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) noexcept 
 }
 
 /**
+ * @brief usleep_nid_postfix implementation (POSIX alias of sceKernelUsleep).
+ * Invoked by guest code using System V ABI calling convention. FreeBSD usleep reports success
+ * with 0; there are no signals to interrupt the sleep (no EINTR path) and 0 microseconds yields.
+ * @return Always 0.
+ */
+int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) noexcept {
+    SleepNanos(static_cast<std::uint64_t>(microseconds) * 1000ULL);
+    return 0;
+}
+
+/**
  * @brief sceKernelNanosleep implementation.
  * Invoked by guest code using System V ABI calling convention.
  * @return Status or error code.

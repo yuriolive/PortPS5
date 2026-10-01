@@ -1,7 +1,7 @@
 ---
 # portps5-3m3u
 title: 'M2: tools/regress local regression and results JSON'
-status: todo
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-09-30T23:49:51Z
@@ -18,10 +18,10 @@ Reproducible local runs that publish only metrics, hashes and pass/fail (ROADMAP
 
 ## Acceptance Criteria
 
-- [ ] tools/regress builds with the local label and runs boot, checkpoint load, frame-check and save round-trip steps
-- [ ] Emits results JSON with config_sha256, workarounds_set, debug_keys_set and the FMV played rule
-- [ ] Schema validated by a Python pytest under tests/tools
-- [ ] verification.md and build-toolchain.md M2 rows updated
+- [ ] tools/regress runs boot (done: `prepare`/`run`), checkpoint load, frame-check and save round-trip steps (only boot and results consumption done; the others pass in through `--checks-file`)
+- [x] Emits results JSON with config_sha256, workarounds_set, debug_keys_set and the FMV played rule
+- [x] Schema validated by a Python pytest under tests/tools (`tests/tools/test_regress.py`)
+- [x] verification.md and build-toolchain.md M2 rows updated
 
 ## Out of Scope
 
@@ -29,4 +29,4 @@ Automated upload to compat/results, publishing the compatibility list (M2 exit).
 
 ## Summary of Changes
 
-TBD
+Added tools/regress.py, tools/regress_metrics.py, tests/tools/test_regress.py, verification.md 4.1 and 4.2. Bean stays open for the frame-check, checkpoint and upload steps.

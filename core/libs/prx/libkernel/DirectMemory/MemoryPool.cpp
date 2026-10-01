@@ -8,6 +8,7 @@
 #define _GLIBCXX_HAS_GTHREADS 0
 #include "MemoryPool.hpp"
 #include "DirectMemory.hpp"
+#include <algorithm>
 #include <map>
 #include <mutex>
 
@@ -36,19 +37,28 @@ struct PhysicalMemoryPool {
      */
     int Alloc(int64_t searchStart, int64_t searchEnd, size_t len, size_t alignment, int memoryType, int64_t* physOut) {
         if (!physOut) return SCE_KERNEL_ERROR_EINVAL;
-        std::lock_guard<std::mutex> lock(_mutex);
         size_t align = (alignment == 0) ? PS5_PAGE_SIZE : alignment;
-        uint64_t start = static_cast<uint64_t>(searchStart);
-        uint64_t end = static_cast<uint64_t>(searchEnd);
-        uint64_t cur = (start + align - 1) & ~(align - 1);
-        while (cur + len <= end && cur + len <= DIRECT_MEMORY_SIZE) {
+        // A non-power-of-two alignment would make the mask arithmetic below produce misaligned offsets.
+        if (align < PS5_PAGE_SIZE || (align & (align - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+        if (searchStart < 0 || searchEnd <= searchStart || len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+        std::lock_guard<std::mutex> lock(_mutex);
+        const uint64_t limit = std::min<uint64_t>(static_cast<uint64_t>(searchEnd), DIRECT_MEMORY_SIZE);
+        const uint64_t start = static_cast<uint64_t>(searchStart);
+        // Every comparison below is written as `len <= limit - cur` so that no sum can wrap: the old
+        // `cur + len <= end` let a length near 2^64 wrap, after which the bitmap scan ran out of bounds.
+        if (len > limit || start > limit - len) return SCE_KERNEL_ERROR_EAGAIN;
+        // Round the search start up to the alignment (start <= limit - len <= DIRECT_MEMORY_SIZE, so this cannot wrap
+        // unless align itself is enormous, which the overflow check below catches).
+        uint64_t cur = start;
+        if (const uint64_t rem = cur % align; rem != 0 && __builtin_add_overflow(cur, align - rem, &cur)) return SCE_KERNEL_ERROR_EAGAIN;
+        while (cur <= limit && len <= limit - cur) {
             if (_isFree(cur, len)) {
                 _mark(cur, len, true);
                 _ranges[cur] = {cur, cur + len, memoryType};
                 *physOut = static_cast<int64_t>(cur);
                 return 0;
             }
-            cur += align;
+            if (__builtin_add_overflow(cur, static_cast<uint64_t>(align), &cur)) break;
         }
         return SCE_KERNEL_ERROR_EAGAIN;
     }
@@ -60,6 +70,9 @@ struct PhysicalMemoryPool {
      */
     void Free(uint64_t start, size_t len) {
         std::lock_guard<std::mutex> lock(_mutex);
+        // Defence in depth: the export validates, but the page bitmap is fixed-size, so an
+        // out-of-range or misaligned request from any caller is ignored rather than written.
+        if ((start & (PS5_PAGE_SIZE - 1)) != 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || start > DIRECT_MEMORY_SIZE || len > DIRECT_MEMORY_SIZE - start) return;
         _mark(start, len, false);
 
         // Walk every _ranges entry that overlaps [start, end), trimming or erasing each one.
@@ -112,6 +125,63 @@ struct PhysicalMemoryPool {
             run += PS5_PAGE_SIZE;
         }
         return run;
+    }
+
+    /**
+     * @brief Finds the allocated run containing offset (or following it) and merges adjacent same-type blocks.
+     * @param offset Physical offset to query.
+     * @param findNext When true and offset is free, answer with the next allocated block.
+     * @param block Output receiving start of the first block, merged end and memory type.
+     * @return true if a run was found, false if offset (and, with findNext, everything after it) is free.
+     */
+    bool QueryRun(uint64_t offset, bool findNext, DirectMemoryBlock* block) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _ranges.upper_bound(offset);
+        if (it != _ranges.begin() && std::prev(it)->second.end > offset) {
+            --it;
+        } else if (!findNext || it == _ranges.end()) {
+            return false;
+        }
+        DirectMemoryBlock run = it->second;
+        // The console tracks runs of one memory type, not individual allocation calls.
+        for (++it; it != _ranges.end() && it->second.start == run.end && it->second.memoryType == run.memoryType; ++it) {
+            run.end = it->second.end;
+        }
+        if (block) *block = run;
+        return true;
+    }
+
+    /**
+     * @brief Finds the largest contiguous free run inside a search window.
+     * @param searchStart Window start (rounded up to a page).
+     * @param searchEnd Window end (clamped to the aperture, rounded down to a page).
+     * @param alignment Power-of-two alignment (at least a page) the run start must satisfy.
+     * @param startOut Receives the aligned start of the run, or 0 if there is none.
+     * @param sizeOut Receives the size of the run in bytes, or 0 if there is none.
+     */
+    void LargestFreeRun(uint64_t searchStart, uint64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        *startOut = 0;
+        *sizeOut = 0;
+        const uint64_t limit = std::min<uint64_t>(searchEnd, DIRECT_MEMORY_SIZE) & ~static_cast<uint64_t>(PS5_PAGE_SIZE - 1);
+        if (searchStart > limit) return;
+        uint64_t page = (searchStart + PS5_PAGE_SIZE - 1) / PS5_PAGE_SIZE;  // searchStart <= limit <= DIRECT_MEMORY_SIZE: no wrap
+        const uint64_t lastPage = limit / PS5_PAGE_SIZE;
+        while (page < lastPage) {
+            if (_used[page]) {
+                ++page;
+                continue;
+            }
+            const uint64_t runFirst = page;
+            while (page < lastPage && !_used[page]) ++page;
+            const uint64_t runStart = runFirst * PS5_PAGE_SIZE;
+            const uint64_t runEnd = page * PS5_PAGE_SIZE;
+            const uint64_t aligned = (runStart + alignment - 1) & ~static_cast<uint64_t>(alignment - 1);
+            if (aligned < runEnd && runEnd - aligned > *sizeOut) {
+                *startOut = static_cast<int64_t>(aligned);
+                *sizeOut = static_cast<size_t>(runEnd - aligned);
+            }
+        }
     }
 
 private:
@@ -192,3 +262,19 @@ size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit) {
     return PhysicalMemoryPool::Instance().FreeRun(offset, limit);
 }
 
+
+/**
+ * @brief Implementation of allocated-run querying.
+ *
+ * Delegates to the pool under a single lock so the merge of adjacent same-type blocks is consistent.
+ */
+bool DirectMemoryQueryRun(uint64_t offset, bool findNext, DirectMemoryBlock* block) {
+    return PhysicalMemoryPool::Instance().QueryRun(offset, findNext, block);
+}
+
+/**
+ * @brief Implementation of the largest-free-run search used by sceKernelAvailableDirectMemorySize.
+ */
+void DirectMemoryLargestFreeRun(uint64_t searchStart, uint64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut) {
+    PhysicalMemoryPool::Instance().LargestFreeRun(searchStart, searchEnd, alignment, startOut, sizeOut);
+}

@@ -1,13 +1,26 @@
+// Device-side execution tests for the BDA guest-memory read ABI (libSceAgcDriver tests).
+// Runs generated compute shaders on a real Vulkan device (GPU or lavapipe) and checks data and fault
+// reports; each case builds its own pipeline and waits on a fence. Single-threaded, one Context per call.
 #include "BdaShader.hpp"
 #include "BdaAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <array>
 #include <cstring>
 #include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
 using namespace AgcDriver::Graphics;
+
+/// Formats a guest address for the failing-case message.
+std::string ToHex(std::uint64_t value) {
+    std::ostringstream text;
+    text << std::hex << value;
+    return text.str();
+}
 
 class Pipeline {
 public:
@@ -109,7 +122,14 @@ void RunBdaExecutionTests(const Context& context) {
         const std::uint32_t sentinel = 0xdeadbeef;
         std::memcpy(output.Bytes().data(), &sentinel, sizeof(sentinel));
         Pipeline pipeline(context, MakeBdaTestShader(address, bits, offset), {&table, &fault, &output});
-        pipeline.Run(groups);
+        // A device-side hang (fence timeout) otherwise surfaces without naming the case; hosted lavapipe
+        // runs need the failing parameters to tell a shader-fault-path hang from a slow software device.
+        try {
+            pipeline.Run(groups);
+        } catch (const std::exception& error) {
+            throw std::runtime_error(std::string(error.what()) + " (BDA case: address=0x" + ToHex(address) + " bits=" + std::to_string(bits) +
+                                     " count=" + std::to_string(count) + " groups=" + std::to_string(groups) + " offset=" + std::to_string(offset) + ")");
+        }
         Abi::Fault report{};
         std::uint32_t result = 0;
         std::memcpy(&report, fault.Bytes().data(), sizeof(report));

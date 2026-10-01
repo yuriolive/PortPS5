@@ -2,7 +2,7 @@
 //
 // Subsystem: AGC driver Graphics. Owns host images keyed by (guest address, T# words) and revalidates them
 // against guest memory (whole-snapshot compare, or render-target generation) on every lookup.
-// Threading: called under the GPU mutex from the draw prepare path; not internally synchronised.
+// Threading: used under the device graphics serialisation lock; not internally synchronised.
 // Spec: docs/spec/gpu-driver.md "Per-draw CPU cost".
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BytesEqual.hpp"
@@ -18,6 +18,11 @@ namespace AgcDriver::Graphics {
 
 TextureCache::TextureCache(const Context& context) : context(context) {
     Require(context.detiler != nullptr, "texture cache requires a device detiler");
+    // Pooled images are idle by construction (see Texture::release), so plain destruction is safe here.
+    residentImages = std::make_shared<ResidentImagePool>([context](const PooledImage& pooled) {
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, pooled.image, nullptr);
+        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, pooled.memory, nullptr);
+    }, residentPoolBytes, residentPoolImages);
 }
 
 void TextureCache::trim() {
@@ -66,7 +71,7 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
         break;
     }
     if (source) {
-        auto texture = std::make_shared<Texture>(context, source, resource, components);
+        auto texture = std::make_shared<Texture>(context, source, resource, components, residentImages);
         entries.push_back({key, {}, texture, source, source->Generation()});
         retainedBytes += texture->AllocationBytes();
         trim();

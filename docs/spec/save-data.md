@@ -43,6 +43,8 @@ References are relative to `core/libs/prx/`. The `main@e06dbff` column cites Any
 | Trophy2 | Fixed-constant game, group and trophy info (`libSceNpTrophy2/src/GameInfo.cpp:11-37`). Icon getters throw "icon file not found" (`GameInfo.cpp:39-47`, `GroupInfo.cpp:73-81`, `TrophyInfo.cpp:70-78`). | Same |
 | UniversalDataSystem | `PostEvent` accepts the event and drops it (`src/Event.cpp:36-37`) | Same |
 
+**`/savedata0` mount (PortPS5, M2).** `libc/src/General.cpp` owns a guest mount table (`MountGuestDirectory`, `ResolveGuestPathChecked`). `MountSaveData(titleId, DefaultSaveDataRoot())` creates `<root>/<titleId>/` and mounts it at `/savedata0`; `AppMetadata.cpp` calls it when `param.json` is first read, and a file API that touches `/savedata0` before that triggers the load. `sceKernelOpen/Read/Write/Lseek/Close/Stat/Unlink/Mkdir/Fsync` return SCE error codes (`0x80020000 | errno`) instead of throwing. `..` is resolved on raw components, so a path that leaves `/savedata0` returns `EACCES`; `:` in a component (NTFS streams) is also `EACCES`; an unmounted `/savedata0` returns `ENOENT` and never falls through to the working directory. Title ids accept only `[A-Za-z0-9_-]`, at most 32 characters. Tests: `tests/filesystem/SaveDataMountTests.cpp`.
+
 ## Decision
 
 This follows the decision table in [README.md](README.md#subsystem-specs) §Save data: adopt AnyPS5 main's `libSceSaveData.native` (merged PR #5), replace the silent dialog stubs with scripted and logged results, store saves under `%LOCALAPPDATA%/PortPS5/saves/<titleId>/`, and make a save round-trip per gate title part of local regression.
@@ -61,18 +63,27 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 **Migration.** At first start, if `./_sd` exists next to the executable and the target directory is empty, it is copied to the target directory and a log line is written. The source is never deleted.
 
-**Scripted dialogs.** Every dialog `Open` emits a structured log event: `dialog.open {lib, mode, type, result}`. Dialogs complete on the next `UpdateStatus` call, not inside `Open`, so titles that poll see the `RUNNING → FINISHED` sequence.
+**Scripted dialogs.** Every dialog `Open` emits a structured log event: `dialog.open {lib, mode, type, result}`. Dialogs complete on a later status poll, not inside `Open`, so titles that poll see the `RUNNING → FINISHED` sequence. `MsgDialog` reports the 44-byte `SceMsgDialogResult` (mode, result, button id, zeroed reserved bytes) and validates its guest parameter blocks (layouts and error codes follow shadPS4's public headers, GPL-2.0-or-later, as the oracle; no SDK header was used).
 
 | Dialog | Scripted result |
 |---|---|
 | SaveData: confirm, overwrite or save | OK / Yes. |
 | SaveData: list (load) | The newest existing dir by modification time, or Cancel if there are none. It never invents a dir name. |
 | SaveData: error or no-space notice | OK, logged at warning level. |
-| MsgDialog: user message | The default button (Yes/OK). Progress bars finish immediately. |
-| MsgDialog: system message | OK. |
+| MsgDialog: user message | Auto-answered after two status polls (`GetStatus` or `UpdateStatus`): the first button, except focus-No (`YESNO_FOCUS_NO`) answers No and focus-Cancel (`OK_CANCEL_FOCUS_CANCEL`) reports a user cancel. Dialogs with no pressable button (`NONE`, `WAIT`, `WAIT_CANCEL`) stay `RUNNING` until the title calls `sceMsgDialogClose`. |
+| MsgDialog: progress bar | Stays `RUNNING` until the title calls `sceMsgDialogClose`; the bar calls return `NOT_SUPPORTED` outside this mode and `PARAM_INVALID` for a non-default target. |
+| MsgDialog: system message | OK, after two polls. |
 | CommonDialog | `IsUsed` reflects whether any dialog is open. |
 
 **User and system services.** One user, id 1, named "Player" by default. `GetUserName` returns that name, and `ParamGetString` returns the user name or an empty string. Language comes from `ParamGetInt` (fixed English US in 1.0). Unknown params return 0 and are logged once.
+
+**Small system modules.** All offline, non-blocking and non-throwing (tests in `tests/modules/`):
+
+| Module | Behaviour |
+|---|---|
+| `libScePlayGo` | Everything is local. `scePlayGoOpen` reads the title's own `/app0/playgo-chunkdefs.xml` (chunk ids plus the range `0..default_chunk`; a confirmed missing file leaves `{0}` because a dump may omit it, an inference). Loci are LOCAL_FAST, ETA is 0, progress is complete, the to-do list is empty, install speed defaults to FULL. Error codes and check order follow KytyPS5 `libPlayGo.cpp` and shadPS4 `playgo_types.h`: `UNKNOWN` 0x80B20001 (status query, file open or read failed; logged without changing the handle or chunk set), `INVALID_ARGUMENT` 0x80B20004, `BAD_HANDLE` 0x80B20009, `BAD_POINTER` 0x80B2000A, `BAD_SIZE` 0x80B2000B, `BAD_CHUNK_ID` 0x80B2000C, `BAD_SPEED` 0x80B2000D, `BAD_LOCUS` 0x80B20010, `BAD_OPTIONAL_TYPE` 0x80B20024. |
+| `libSceConvertKeycode` | `sceConvertKeycodeGetImeKeyboardType` reports type 0. `sceConvertKeycodeGetVirtualKeycode` has no audited signature and aborts through `Unsupported()`. |
+| `libSceSysmodule` | Unloading an id missing from the module table is a logged no-op, like loading it. |
 
 **Offline NP and PSN.** Every NP entry point on a gate path returns a signed-out or offline result: state `SIGNED_OUT`, reachability unreachable, the signed-out error from availability checks, async requests finished with `SIGNED_OUT` on the first poll, and a network-unavailable error from WebApi calls. `Register*Callback` stores the callback and never calls it, because no state change ever happens. No call blocks and no call throws. An export first reached by a gate title is added to this list in the M1 inventory.
 
@@ -102,6 +113,8 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 ## Tests
 
+- `tests/modules/PlayGoTests.cpp`: confirmed missing XML falls back to `{0}`; status-query and open/read failures return `UNKNOWN` without terminating or changing published state; empty XML and reads across buffer boundaries succeed.
+
 - `OfflineNetStackTests` covers bind-family mismatches, port sharing across families/types, malformed and valid IPv6 groups, and concurrent plus post-abort accept calls using synthetic socket state.
 
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
@@ -125,13 +138,16 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 | Milestone | Work |
 |---|---|
 | M1 | - [x] Offline NP, trophies, user service and system dialogs non-blocking at boot for all five titles. NP, dialog and trophy import inventory. `MsgDialog` stops throwing. |
-| M2 | - [ ] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration:<br>- [x] per-title layout, snapshot crash safety, atomic blob swaps with quota, param and icon round trip, scripted dialogs, one-time `_sd` copy (PR #46, `tests/savedata/SaveDataFidelityTests.cpp`);<br>- [ ] guest `/savedata0` file I/O mount: not on `main`, PR #53 in flight (bean `portps5-10fr`);<br>- [ ] round-trip in `tools/regress` (bean `portps5-3m3u`);<br>- [ ] Dreaming Sarah and TMNT pass (bean `portps5-kmb6` for the first). |
+| M2 | - [ ] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration:<br>- [x] per-title layout, snapshot crash safety, atomic blob swaps with quota, param and icon round trip, scripted dialogs, one-time `_sd` copy (PR #46, `tests/savedata/SaveDataFidelityTests.cpp`);<br>- [x] guest `/savedata0` file I/O mount with sandboxed paths (PR #53, bean `portps5-10fr`);<br>- [ ] round-trip in `tools/regress` (bean `portps5-3m3u`);<br>- [ ] Dreaming Sarah and TMNT pass (bean `portps5-kmb6` for the first). |
 | M3 | - [ ] Tomb Raider save/load (the PRD gate for save/load), including the multi-slot list dialog. |
 | M4–M5 | - [ ] Bugsnax and Demon's Souls saves, including any backup events or memory-blob paths they use. |
 | M6 | - [ ] The user guide documents the save location and migration. |
 
 ## Open questions
 
+- `libSceVoiceChat` (AnyPS5 `556a7fcf` stubs it with a `SIGNED_OUT` error code) is not ported: no public source confirms the error code or the request signatures, so it stays unimplemented until a gate title imports it and the code can be verified.
+- `scePlayGoGetOptionalChunk` and the language mask report "all present" (KytyPS5 behaviour); the real values for a package with optional chunks are unverified.
+- `SceMsgDialogResult.mode`: the library writes the dialog's own mode; shadPS4 writes a constant 0. Which one a console returns is unverified, and no title is known to read it.
 - Multi-user saves: add a `<userId>` level before 1.0 or after? Not gated.
 - Should trophy metadata be parsed from the dump for display only, or skipped entirely?
 - Do any gate titles call `TransferringMount` or backup restore? This is answered by the M1 inventory (bean `portps5-3eh1`). It currently aborts through `Unsupported()` (PR #46).

@@ -63,5 +63,24 @@ bool DirectMemoryQueryBlock(uint64_t offset, DirectMemoryBlock* block);
  */
 size_t DirectMemoryFreeRun(uint64_t offset, uint64_t limit);
 
+/**
+ * @brief Finds the allocated run containing an offset, optionally the next one, merging same-type neighbours.
+ * @param offset Physical offset to query.
+ * @param findNext When true and offset is free, answer with the next allocated block.
+ * @param block Output receiving the first block's start, the merged run end and the memory type.
+ * @return true if a run was found, false otherwise.
+ */
+bool DirectMemoryQueryRun(uint64_t offset, bool findNext, DirectMemoryBlock* block);
+
+/**
+ * @brief Finds the largest contiguous free run inside [searchStart, searchEnd).
+ * @param searchStart Window start in bytes.
+ * @param searchEnd Window end in bytes (clamped to the aperture).
+ * @param alignment Power-of-two alignment, at least one page, the run start must satisfy.
+ * @param startOut Receives the aligned start of the run, 0 if none.
+ * @param sizeOut Receives the run size in bytes, 0 if none.
+ */
+void DirectMemoryLargestFreeRun(uint64_t searchStart, uint64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut);
+
 #endif
 
