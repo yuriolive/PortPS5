@@ -19,9 +19,7 @@ Untrusted ELF header fields never reach a bounds check that can wrap.
 
 ## Acceptance Criteria
 
-- [ ] Each listed site rewritten in the offset > size 
-- [ ] 
-- [ ]  len > size - offset form
+- [ ] Each listed site rewritten in the form `offset > size || len > size - offset`
 - [ ] One GoogleTest per site that fails without the fix
 - [ ] relinker.md failure-mode row lists the covered readers
 
