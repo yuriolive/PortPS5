@@ -11,6 +11,8 @@
 #include <mutex>
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
+#include "prx/libScePad/include/PadMotion.hpp"
+#include "prx/libScePad/include/PadOutputMapping.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 
 namespace Pad {
@@ -25,7 +27,12 @@ struct PadSlotState {
     PadData lastData{};
     PadVibrationParam vibration{};
     PadLightBarParam lightBar{};
-    bool motionSensorEnabled = false;
+    // Guest output requests for this slot (rumble, light bar, triggers, motion
+    // enable), fetched by the window thread through FetchOutput.
+    PadOutputState output;
+    Pad::MotionFusion fusion;         // orientation estimate for this slot's controller
+    Pad::TouchIdTracker touchIds;     // contact ids for this slot's touchpad fingers
+    std::uint64_t lastFuseTime = 0;   // process time (us) of the previous fusion step
     bool controllerPresent = false;   // a physical SDL controller owns this slot
     PadInputState controllerInput;    // latest controller sample for this slot
 };
@@ -44,6 +51,31 @@ public:
     int SetVibration(int handle, const PadVibrationParam* param);
     int SetLightBar(int handle, const PadLightBarParam* param);
     int ResetLightBar(int handle);
+    /**
+     * @brief Validates a handle without touching state.
+     * @param handle Pad handle (slot + 1).
+     * @return PAD_OK, or PAD_ERROR_INVALID_HANDLE for out-of-range or closed handles.
+     */
+    int CheckOpenHandle(int handle);
+    int ResetOrientation(int handle);
+    int SetVibrationMode(int handle, int mode);
+    /**
+     * @brief Applies a parsed guest trigger effect update to a slot.
+     *
+     * @param handle Pad handle (slot + 1).
+     * @param update Parsed update; only triggers selected in its mask change.
+     * @return PAD_OK, PAD_ERROR_INVALID_HANDLE for a bad or closed handle.
+     */
+    int SetTriggerEffect(int handle, const Pad::TriggerEffectUpdate& update);
+    /**
+     * @brief Copies a slot's output request when it changed since `*seenSequence`.
+     *
+     * @param slot Slot 0..PAD_MAX_SLOTS-1; out of range returns false.
+     * @param seenSequence In/out: last sequence the caller applied; updated on copy.
+     * @param out Receives the request on a change.
+     * @return true when a copy was made.
+     */
+    bool FetchOutput(int slot, std::uint32_t* seenSequence, PadOutputState* out);
 
     void PublishInput(const PadInputState& input);
     // Controller source for `slot` (0..3). Merged with keyboard/mouse on slot 0.
@@ -68,6 +100,8 @@ private:
     PadManager();
 
     void InitializeInternal();
+    void ResetOutput(PadSlotState& slot);
+    void FillMotionAndTouch(PadSlotState& slot, const PadInputState* host, std::uint64_t now);
 
     std::mutex mutex;
     bool initialized = false;
