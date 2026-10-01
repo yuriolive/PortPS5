@@ -377,6 +377,19 @@ portps5_add_test(progress_unit_tests
         -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/tools -p "test_progress.py" -v
 )
 
+# Cross-prx named-import check: fails when a prx imports a verbatim/mangled
+# name that the patched provider (usually libc.prx) does not export, which
+# surfaces at runtime as GetLastError 127 on load. Regression for the
+# libScePad -> libc `Unsupported` break that stopped the Dreaming Sarah boot.
+# Reads only the built patched libs; needs objdump on PATH (MinGW binutils).
+portps5_add_test(prx_cross_import_check
+    ${Python3_EXECUTABLE}
+    LABELS
+        unit
+    ARGS
+        ${CMAKE_SOURCE_DIR}/tools/check_prx_imports.py $<TARGET_FILE_DIR:libc>/..
+)
+
 # Compile shared dialog regressions separately to avoid duplicate native exports.
 portps5_add_gtest(savedata_dialog_non_native_tests
     SOURCES savedata/SaveDataDialogScanTests.cpp
