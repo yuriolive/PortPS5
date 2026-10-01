@@ -35,6 +35,9 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include/LocaleSupport.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Environment.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ConfigStartup.cpp
+        # Compile the standalone parser here to avoid a libc -> libkernel dependency cycle.
+        ${CMAKE_CURRENT_SOURCE_DIR}/../libkernel/AppMetadata/src/ParamJsonParser.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Config.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Directory.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Filesystem.cpp

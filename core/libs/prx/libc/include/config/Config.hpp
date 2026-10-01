@@ -202,4 +202,12 @@ extern "C" bool PortPS5_Config_Loader_IsInitialized_nid_no_patch();
 // @return The process-wide parsed config owned by libc.
 extern "C" const PortPS5::Config::ResolvedConfig& PortPS5_Config_Loader_Get_nid_no_patch();
 
+/**
+ * @brief Loads configuration before guest initializers and threads run.
+ * Host ABI, called once by the Windows entry stub; errors are logged locally.
+ * @param executablePath Absolute path supplied by the host loader.
+ * @return True on success; false on invalid metadata, configuration or I/O failure.
+ */
+extern "C" bool PortPS5_Config_Startup_nid_no_patch(const char* executablePath) noexcept;
+
 #endif

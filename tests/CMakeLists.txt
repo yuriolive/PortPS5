@@ -10,6 +10,7 @@ endif()
 portps5_add_gtest(agc_frame_timing_gate_tests
     SOURCES
         agc/FrameTimingGateTests.cpp
+        config/ConfigStartupTests.cpp
     LIBRARIES
         libc
     INCLUDES
