@@ -280,6 +280,20 @@ portps5_add_gtest(videodec2_tests
         unit
 )
 
+# Small PRX modules: PlayGo (chunk set, codes), ConvertKeycode, Sysmodule unload policy
+portps5_add_gtest(playgo_tests
+    SOURCES
+        modules/PlayGoTests.cpp
+    LIBRARIES
+        libScePlayGo
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 foreach(case
         "lgpl_accepted;lgpl;lgpl;PASS"
         "gpl_rejected;gpl;lgpl;FAIL;GPL"
@@ -303,6 +317,32 @@ foreach(case
             PASS_REGULAR_EXPRESSION "FFmpeg configure enabled CONFIG_${reject_flag};")
     endif()
 endforeach()
+
+portps5_add_gtest(convert_keycode_tests
+    SOURCES
+        modules/ConvertKeycodeTests.cpp
+    LIBRARIES
+        libSceConvertKeycode
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+portps5_add_gtest(sysmodule_tests
+    SOURCES
+        modules/SysmoduleTests.cpp
+    LIBRARIES
+        libSceSysmodule
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
 
 # Save data subsystem fidelity tests (mount modes, snapshots, atomic swaps, quotas, patterns, dialogs)
 portps5_add_gtest(savedata_fidelity_tests

@@ -140,6 +140,23 @@
       }
     },
     {
+      "name": "lavapipe",
+      "displayName": "Driver Tests on Lavapipe",
+      "description": "Runs lavapipe-labeled driver tests on a software Vulkan device (hosted driver-lavapipe job). Suites without a device skip themselves",
+      "configurePreset": "ci",
+      "execution": {
+        "jobs": 4
+      },
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "^lavapipe$"
+        }
+      }
+    },
+    {
       "name": "golden",
       "displayName": "Recompiler Golden Corpus",
       "description": "Runs golden-labeled tests (hosted recompiler-golden job)",
