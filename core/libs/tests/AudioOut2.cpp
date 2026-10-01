@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 #include <future>
 #include <thread>
@@ -130,7 +131,7 @@ AudioOut2PortHandle MakePort(AudioOut2ContextHandle ctx, std::uint32_t dataForma
     return port;
 }
 
-void SetPortData(AudioOut2PortHandle port, const float* pcm) {
+void SetPortData(AudioOut2PortHandle port, const void* pcm) {
     AudioOut2Attribute attr{};
     attr.attribute_id = 0;
     attr.value = &pcm;
@@ -332,6 +333,115 @@ TEST(AudioOut2Tests, PortsAndMix) {
     EXPECT_EQ(sceAudioOut2PortDestroy(mono), 0);
     EXPECT_EQ(sceAudioOut2PortDestroy(stereo), 0);
     EXPECT_EQ(sceAudioOut2ContextDestroy(ctx), 0);
+}
+
+// Verifies the data_format sample-type field (bits 0..6): 0 is float, 1 is signed 16-bit, anything
+// else is Unknown, and bit 7 (the standard 8-channel order) does not change the type. The channel
+// count field stays independent of the type.
+TEST(AudioOut2Tests, SampleTypeDecoding) {
+    EXPECT_EQ(AudioOut2DecodeSampleType(0x200), AudioOut2SampleType::Float);
+    EXPECT_EQ(AudioOut2DecodeSampleType(0x201), AudioOut2SampleType::Int16);
+    EXPECT_EQ(AudioOut2DecodeSampleType(0x880), AudioOut2SampleType::Float);
+    EXPECT_EQ(AudioOut2DecodeSampleType(0x881), AudioOut2SampleType::Int16);
+    EXPECT_EQ(AudioOut2DecodeSampleType(0x202), AudioOut2SampleType::Unknown);
+    EXPECT_EQ(AudioOut2DecodeSampleType(0x27F), AudioOut2SampleType::Unknown);
+    EXPECT_EQ(AudioOut2DecodeChannels(0x201), 2u);
+    EXPECT_EQ(AudioOut2DecodeChannels(0x101), 1u);
+}
+
+// Verifies the per-frame loader: int16 endpoints map to +32767/32768 and exactly -1.0, zero stays
+// zero, and the float path copies samples unchanged (including values outside +-1.0).
+TEST(AudioOut2Tests, LoadFrameConvertsInt16AndCopiesFloat) {
+    const std::int16_t shorts[4] = {32767, -32768, 0, 16384};
+    float out[2] = {};
+    AudioOut2LoadFrame(shorts, AudioOut2SampleType::Int16, 0, 2, out);
+    EXPECT_FLOAT_EQ(out[0], 32767.0f / 32768.0f);
+    EXPECT_FLOAT_EQ(out[1], -1.0f);
+    AudioOut2LoadFrame(shorts, AudioOut2SampleType::Int16, 1, 2, out);
+    EXPECT_FLOAT_EQ(out[0], 0.0f);
+    EXPECT_FLOAT_EQ(out[1], 0.5f);
+
+    const float floats[4] = {2.5f, -3.0f, 0.25f, 0.0f};
+    AudioOut2LoadFrame(floats, AudioOut2SampleType::Float, 1, 2, out);
+    EXPECT_FLOAT_EQ(out[0], 0.25f);
+    EXPECT_FLOAT_EQ(out[1], 0.0f);
+}
+
+// Verifies 16-bit ports mix like float ports: a stereo S16 port (0x201) and a mono S16 port (0x101)
+// land on the stereo mix at the converted level, and a 7.1 S16 bed (0x881) applies the same fold
+// (centre -3 dB, LFE -10 dB) as the float bed. Before 16-bit support these formats were read as
+// float, producing garbage or a crash on the half-sized buffer.
+TEST(AudioOut2Tests, Int16PortsMixLikeFloatPorts) {
+    AudioOut2ContextHandle ctx = MakeWallClockContext(4, 64);
+    auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
+    std::vector<float> out(64 * 2, 0.0f);
+
+    AudioOut2PortHandle stereo = MakePort(ctx, 0x201);
+    std::vector<std::int16_t> stereoPcm(64 * 2, 16384);  // 0.5 full scale
+    SetPortData(stereo, stereoPcm.data());
+    EXPECT_EQ(AudioOut2MixPorts(*context, out.data(), 64), 1u);
+    for (float sample : out) EXPECT_NEAR(sample, 0.5f, 1e-5f);
+
+    AudioOut2PortHandle mono = MakePort(ctx, 0x101);
+    std::vector<std::int16_t> monoPcm(64, -16384);  // -0.5 full scale
+    SetPortData(mono, monoPcm.data());
+    std::fill(out.begin(), out.end(), 0.0f);
+    EXPECT_EQ(AudioOut2MixPorts(*context, out.data(), 64), 2u);
+    for (float sample : out) EXPECT_NEAR(sample, 0.0f, 1e-5f);  // +0.5 stereo, -0.5 mono fanned out
+    EXPECT_EQ(sceAudioOut2PortDestroy(mono), 0);
+    EXPECT_EQ(sceAudioOut2PortDestroy(stereo), 0);
+
+    // 8 channels: only centre (index 2) and LFE (index 3) are non-zero.
+    AudioOut2PortHandle bed = MakePort(ctx, 0x881);
+    std::vector<std::int16_t> bedPcm(64 * 8, 0);
+    for (int frame = 0; frame < 64; frame++) {
+        bedPcm[frame * 8 + 2] = 16384;
+        bedPcm[frame * 8 + 3] = 16384;
+    }
+    SetPortData(bed, bedPcm.data());
+    std::fill(out.begin(), out.end(), 0.0f);
+    EXPECT_EQ(AudioOut2MixPorts(*context, out.data(), 64), 1u);
+    const float expected = 0.5f * AUDIO_OUT2_DOWNMIX_GAIN + 0.5f * AUDIO_OUT2_LFE_GAIN;
+    for (float sample : out) EXPECT_NEAR(sample, expected, 1e-5f);
+    EXPECT_EQ(sceAudioOut2PortDestroy(bed), 0);
+    EXPECT_EQ(sceAudioOut2ContextDestroy(ctx), 0);
+}
+
+// Verifies a port whose sample type is unknown (data_format low bits 2..0x7F) is created but left
+// unrendered: it is skipped by the mix and never reads its buffer, rather than being decoded as
+// float. The buffer pointer is deliberately dangling-looking (a tiny integer) to prove no read.
+TEST(AudioOut2Tests, UnknownSampleTypePortIsNotRendered) {
+    AudioOut2ContextHandle ctx = MakeWallClockContext(4, 64);
+    auto* context = reinterpret_cast<AudioOut2Context*>(ctx);
+    ::testing::internal::CaptureStdout();
+    AudioOut2PortHandle port = MakePort(ctx, 0x202);
+    const std::string log = ::testing::internal::GetCapturedStdout();
+    // The unrendered port is announced in the log rather than skipped silently.
+    EXPECT_NE(log.find("0x202 is not rendered"), std::string::npos) << log;
+    SetPortData(port, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)));
+    std::vector<float> out(64 * 2, 0.0f);
+    EXPECT_EQ(AudioOut2MixPorts(*context, out.data(), 64), 0u);
+    for (float sample : out) EXPECT_EQ(sample, 0.0f);
+    EXPECT_EQ(sceAudioOut2PortDestroy(port), 0);
+    EXPECT_EQ(sceAudioOut2ContextDestroy(ctx), 0);
+}
+
+// Pins the PS5 NGS2 waveform block layout: 64-bit data offset and size make the record 40 bytes
+// (KytyPS5 ngs2.cpp asserts the same), not the 32-byte PS4 layout. A title walks arrays of these
+// blocks, so a wrong stride would corrupt every block after the first.
+TEST(AudioOut2Tests, Ngs2WaveformBlockIsFortyBytes) {
+    static_assert(sizeof(Ngs2WaveformBlock) == 40);
+    EXPECT_EQ(sizeof(Ngs2WaveformBlock), 40u);
+    EXPECT_EQ(offsetof(Ngs2WaveformBlock, data_offset), 0u);
+    EXPECT_EQ(offsetof(Ngs2WaveformBlock, data_size), 8u);
+    EXPECT_EQ(offsetof(Ngs2WaveformBlock, num_repeats), 16u);
+    EXPECT_EQ(offsetof(Ngs2WaveformBlock, num_samples), 24u);
+    EXPECT_EQ(offsetof(Ngs2WaveformBlock, user_data), 32u);
+    Ngs2WaveformBlock block{};
+    block.data_offset = 0x1'0000'0000ull;  // > 4 GiB must survive.
+    block.data_size = 0x2'0000'0000ull;
+    EXPECT_EQ(block.data_offset, 0x1'0000'0000ull);
+    EXPECT_EQ(block.data_size, 0x2'0000'0000ull);
 }
 
 // Verifies telemetry snapshot stability and reset hooks for process-wide metrics.
