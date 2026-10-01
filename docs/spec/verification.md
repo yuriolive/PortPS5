@@ -23,13 +23,44 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | **codeql** | GitHub CodeQL SAST (C/C++, `security-extended` query suite). Performs semantic dataflow analysis of the project's own source (`core/`, `tools/`) for buffer overflows, integer overflows, use-after-free, and format-string bugs. Third-party submodules are excluded from the build (`ANYPS5_ENABLE_SPIRV_TOOLS=OFF`) so CodeQL's compiler-interception database never contains third-party code. Results appear in the GitHub Security → Code scanning tab as inline SARIF alerts on PRs. No external service account or token required; uses the automatic `GITHUB_TOKEN`. Also runs on a weekly schedule so new query packs surface vulnerabilities even with no code changes. |
 | **gitleaks** | Secret and legal-boundary scan of every push and PR diff. Detects private keys, API tokens, and Sony-specific patterns (IDPS keys, `.rap`/`.rif` licence content, firmware paths, AES-128 key material) as defined in `.github/gitleaks.toml`. Extends Gitleaks's built-in provider ruleset. No external token required. |
 | **doxygen-doc-gate** | Runs Doxygen (`docs/Doxyfile`) on `core/libs/prx` and `core/relinker` on every PR and push to `main` as a required status check. Configured with `WARN_AS_ERROR = FAIL_ON_WARNINGS` and `WARN_IF_DOC_ERROR = YES`. Fails if any doc comment contains malformed markup, scanning the entire source tree to report all violations before failing (`WARN_IF_UNDOCUMENTED` and `WARN_NO_PARAMDOC` are disabled initially to avoid blocking on inherited pre-existing debt and will be re-enabled incrementally). On failure, `build/doxygen_warnings.log` is uploaded as the `doxygen-warnings` artifact. This job does not require the MinGW toolchain and runs on a plain `windows-2022` runner with the official Doxygen 1.18.0 zip installed from doxygen.nl (SHA-256 pinned in the workflow). Complements the in-tree Python policy checker (`tools/check_comments.py`), which enforces PortPS5-specific rules (file-level headers, `APS5_VABI` doc coverage, `TEST()` invariant comments) on every changed file. |
-| **progress-report** | Runs `tools/progress.py` on every PR (no `main` filter): renders the base and head implementation counts (declared `APS5_VABI` functions in `core/libs/prx`, RDNA opcodes vs `tools/rdna_isa.txt`) and posts the delta as a PR comment (`progress-comment.yml`). Static source scan, no GPU, no game data. Full-site render plus badges deploy from `main` pushes via `workflows/progress.yml` (needs GitHub Pages enabled). |
+| **progress-report** | Runs `tools/progress.py` on every PR (no `main` filter): renders the base and head implementation counts (declared `APS5_VABI` functions in `core/libs/prx`, RDNA opcodes vs `tools/rdna_isa.txt`, counted twice: decoded by the `RdnaOpcode` enum, and translated, meaning a decoded opcode that `core/shader/recompiler/Translation` references, an upper bound on real lowering) and posts the delta as a PR comment (`progress-comment.yml`). Static source scan, no GPU, no game data. Full-site render plus badges deploy from `main` pushes via `workflows/progress.yml` (needs GitHub Pages enabled). |
 | **python-quality** | Astral toolchain gate for every Python file (`tools/`, `tests/tools/`, relinker self-tests): `ruff check` + `ruff format --check` and `pytest` with coverage over `tools/` (`fail_under = 85`, `pyproject.toml`). Runs on `ubuntu-latest` via pinned `uv` (`uv.lock` committed); versions pinned in `pyproject.toml` (`dependency-groups.dev`). CTest keeps running the same suites through stdlib `unittest` on Windows so hosted unit execution never depends on PyPI. |
 
 - **Status as of 2026-10-01:** every job above exists in `.github/workflows/`. `driver-lavapipe` (bean `portps5-ekx3`) first ran green on `main` with PRs #80/#82 (`0bb6edf1`). `main` CI was green through #53 (`07b76f75`). `build_and_test` then failed `prx_cross_import_check` on the #68 and #88 merges (`eaea7340`, `1c65844a`); PR #94 fixed it by exporting the mount-table API verbatim (bean `portps5-sjuv`, completed). `driver_lavapipe` still crashes intermittently in `agc_recorder_tests` (first seen as `RecorderTest.SubmitMakesDeviceWritesVisibleToTheHost`; it did not reproduce locally in about 7,350 runs), tracked as bean `portps5-3maf` until a dump is captured. `tools/regress.py` (conversion layout, launch, results JSON writer, pass rule) landed in PR #76 (bean `portps5-3m3u`); the frame-check, checkpoint-replay, shader-corpus and save steps of section 2 and the upload are still open. The runtime telemetry core (section 4.3) writes the section 4.1 log, but nothing calls its `Start` at process start-up yet, so `run` reports a missing log until that wiring lands (bean `portps5-w1re`).
 - [x] `driver-lavapipe` passes on `main` (first green run with PRs #80/#82, `0bb6edf1`).
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
+### 1.1 Planned CI reliability work
+
+Hosted CI has no GPU and no game data, so reliability comes from checks that run on synthetic inputs. Epic bean `portps5-7n6b`.
+
+| Check | What it catches | Where | Bean |
+|---|---|---|---|
+| Vulkan validation layers on the lavapipe job | Invalid Vulkan usage that lavapipe tolerates | `driver_lavapipe` | `portps5-977n` |
+| Synthetic guest ELF end to end | Broken loader, export tables or prx start-up, found today only with a dump | `build_and_test` (ctest) | `portps5-ktrt` |
+| PE structure validation (pefile) | Bad alignment, missing unwind data, unresolved imports in relinker output | `python_quality` and ctest | `portps5-s9zz` |
+| Codegen metrics per PR | SPIR-V instruction-count and relinker residual regressions with all tests green | PR comment, like `progress-report` | `portps5-g0n7` |
+| Linux sanitizers (ASan, UBSan, TSan) | Memory errors and data races in host-portable code; MinGW has no sanitizer runtimes | new `ubuntu-latest` job | `portps5-pbj2` |
+| Fuzzing | Crashes on malformed ELF, PM4 or shader input | Linux, time-boxed per PR, longer in `nightly` | `portps5-axx6` |
+| clang-tidy and `-Wcast-function-type` | Function-pointer casts and calling-convention mismatches across `APS5_VABI` exports | `build_and_test` | `portps5-hpx7` |
+| C++ coverage report | Untested modules (report only) | scheduled | `portps5-02a4` |
+| CPU microbenchmarks | Host hot-path regressions (trend only) | `nightly` | `portps5-i58o` |
+
+Deliverables:
+
+- [ ] Vulkan validation layers on the lavapipe job (bean `portps5-977n`).
+- [ ] PE structure validation of relinker output (bean `portps5-s9zz`).
+- [ ] Deterministic codegen metrics per PR (bean `portps5-g0n7`).
+- [ ] C++ coverage report (bean `portps5-02a4`).
+- [ ] Synthetic guest ELF end to end (bean `portps5-ktrt`).
+- [ ] Unsupported() counts and compat status tiers (bean `portps5-ba7d`).
+- [ ] Linux sanitizer job (ASan, UBSan, TSan) (bean `portps5-pbj2`).
+- [ ] Fuzzing of ELF, PM4 and shader decoders (bean `portps5-axx6`).
+- [ ] clang-tidy and `-Wcast-function-type` (bean `portps5-hpx7`).
+- [ ] Local nightly regression on the maintainer machine (bean `portps5-e6xg`).
+- [ ] CPU microbenchmarks with a nightly trend (bean `portps5-i58o`).
+
+Game-run checks stay local. A scheduled job on the maintainer machine runs boot, perf scenes and the baseline compare in a locked environment, and records results JSON only (bean `portps5-e6xg`; perf scenes `portps5-52bs`). `Unsupported()` abort counts feed the compatibility status tiers (bean `portps5-ba7d`). Captured GPU traces and frame references contain game data, so they never reach hosted CI.
 ## 2. Local regression (per build, maintainer GPU machine)
 
 `tools/regress` runs, for each gate title:
