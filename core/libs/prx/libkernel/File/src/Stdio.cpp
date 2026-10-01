@@ -213,15 +213,9 @@ int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
  * Returns: 0, or -1 with errno (EACCES, ENOENT, EEXIST).
  */
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
-    if (path == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
-    std::filesystem::path native;
-    if (const int error = ResolveKernelPath(path, native)) { errno = error; return -1; }
-    if (NativeMkdir(native, mode) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": mkdir failed for " + native.string() + ", errno=" + std::to_string(errno));
-    }
-    return 0;
+    // One implementation: sceKernelMkdir returns an SCE code (EFAULT for null, EACCES for a
+    // /savedata0 escape, EEXIST, ENOENT, ...) and SceToPosix turns it into -1 + errno.
+    return static_cast<int>(SceToPosix(sceKernelMkdir(path, mode)));
 }
 
 /**
