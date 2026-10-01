@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Build and Toolchain
 
-Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-10-01
 
 ## Scope
 
@@ -89,12 +89,13 @@ These are consistent with the decision table in [README.md](README.md#subsystem-
 | Preset | Purpose | Key cache vars |
 |---|---|---|
 | `release` | user build | `CMAKE_BUILD_TYPE=Release`, `BUILD_TESTING=OFF`, `ANYPS5_ENABLE_SPIRV_TOOLS=OFF` |
-| `dev` | development, local regression | `Debug`, `BUILD_TESTING=ON`, `ANYPS5_ENABLE_SPIRV_TOOLS=ON` |
-| `ci` | hosted CI, including `recompiler-golden` | inherits `dev` (so SPIRV-Tools is ON), `CMAKE_COMPILE_WARNING_AS_ERROR=ON` for PortPS5 targets only |
+| `dev` | development, local regression | `RelWithDebInfo`, `BUILD_TESTING=ON`, `ANYPS5_ENABLE_SPIRV_TOOLS=ON` |
+| `ci` | hosted CI, including `recompiler-golden` | inherits `dev` (so SPIRV-Tools is ON), `PORTPS5_COMPILE_WARNING_AS_ERROR=ON` (warnings as errors for PortPS5 targets only), `PORTPS5_REQUIRE_FFMPEG=ON` |
+| `asan` | local sanitizer runs | inherits `ci`, adds `-fsanitize=address,undefined -fno-omit-frame-pointer -g` to the C/C++ compile and link flags |
 
 SPIRV-Tools is ON in `dev` and `ci`. In `release` it is OFF by default, pending the PRD R1 decision. That is the current default, not a policy-enforced rule; R1 may change it.
 
-Build presets name the `relinker` and `libs` targets explicitly, so that patched prx are always produced. Test presets filter by label.
+Build presets name the `relinker` and `libs` targets explicitly, so that patched prx are always produced. Test presets filter by label: `ci` and `unit` (label `unit`, 4 jobs; `ci` adds a 300 s per-test timeout), `slow`, `lavapipe` (4 jobs), `golden`, `asan` (label `unit`).
 
 **Language level.** Set `CMAKE_CXX_STANDARD 23` once at the root, and delete the per-target `cxx_std_20` features in `core/libs/CMakeLists.txt:17` and `core/shader/recompiler/CMakeLists.txt:151`, the only two sites. Existing `CXX_EXTENSIONS OFF` properties stay. The rest keep GNU extensions, because `APS5_EXPORT` relies on GNU asm.
 
@@ -102,17 +103,18 @@ Build presets name the `relinker` and `libs` targets explicitly, so that patched
 
 | Label | Runs in | Members |
 |---|---|---|
-| `unit` | hosted `unit` job | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, libc extras (`guest_lifecycle`, `guest_wide_io`, `guest_libc_extras`, `guest_heap_frontend`, `application_heap_default`), `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, AnyPS5 main's (merged PR #5) `amd64_only_*`, ported Kyty kernel/sync/event suites |
+| `unit` | hosted `build_and_test` (`ctest --preset ci`) | relinker tests, libc/libkernel `guest_*`, `mspace`, `application_heap`, libc extras (`guest_lifecycle`, `guest_wide_io`, `guest_libc_extras`, `guest_heap_frontend`, `application_heap_default`), `windows_exception`, `exception_runtime`, `agc_command`, `agc_driver_pm4`, AnyPS5 main's (merged PR #5) `amd64_only_*`, ported Kyty kernel/sync/event suites |
 | `golden` | hosted `recompiler-golden` | `recompiler_golden_tests` (coverage gate + wave32/64 replay) and `agc_shader_replay --golden` over `core/shader/recompiler/tests/golden/corpus/` (M1) |
 | `lavapipe` | hosted `driver-lavapipe` (`ctest --preset lavapipe`) | driver tests that need a Vulkan device (M1) |
-| `stress` | local / nightly CI | multithreaded futex/umtx concurrency perturbation tests |
+| `slow` | scheduled `nightly.yml` (`ctest --preset slow`) | full-size fuzz runs too long for `unit`; today only `GuestArenaExtent.FuzzUncapped` (`tests/CMakeLists.txt:178-182`) |
+| `stress` | planned (local / nightly) | multithreaded futex/umtx concurrency perturbation tests; no test carries the label yet |
 | `local` | maintainer machine only | anything needing a hardware GPU or game data |
 
 Tests are progressively consolidated from standalone single-function executables into cohesive GoogleTest suite binaries discovered via `gtest_discover_tests()`. Python tests become required, so a missing interpreter is a configure error under `BUILD_TESTING`.
 
 **Runtime DLLs.** A POST_BUILD step on the `libs` target copies the three MinGW runtime DLLs from the toolchain `bin/` into the patched `libs/` directory. This matches the relinker default run path `$ORIGIN/libs`. Static linking of the prx runtime stays off; TechnicalDebt records that it conflicts.
 
-**Recompiler dependencies.** `tests/DummyShaders.cpp` moves out of the shipped static library into the test target that needs it, so glslang links only into tests and the build-time tools. The `libSceAgcDriver.prx` import and symbol table is then checked with `objdump -p`/`nm` in CI (the `policy` job) to prove that glslang is absent from release artifacts. The same check reports whether SPIRV-Tools is present, so the R1 status can be recorded; it does not fail on it.
+**Recompiler dependencies.** `tests/DummyShaders.cpp` moves out of the shipped static library into the test target that needs it, so glslang links only into tests and the build-time tools. The `libSceAgcDriver.prx` import and symbol table is then checked with `objdump -p`/`nm` in CI (the `policy` step) to prove that glslang is absent from release artifacts. The same check reports whether SPIRV-Tools is present, so the R1 status can be recorded; it does not fail on it.
 
 **Dependency pins.** Every dependency the specs add is pinned here, by submodule commit or by a vendored release with its version and SHA-256 recorded next to it. Exact versions are chosen when each lands:
 
@@ -150,19 +152,22 @@ Tests are progressively consolidated from standalone single-function executables
 | Wrong compiler version | Configure error naming the expected version. |
 | objcopy missing | Existing FATAL_ERROR (`core/libs/CMakeLists.txt:25-27`). |
 | `nid_patcher` duplicate export | Build fails (`NidResolver.cpp:28-35`). It is never downgraded to a warning. |
-| Plain `cmake --build` without `libs` | Fixed by the build presets. The CI `build` job runs the preset, not raw CMake. |
+| Plain `cmake --build` without `libs` | Fixed by the build presets. The CI build step runs the preset, not raw CMake. |
 | Missing runtime DLLs at launch | Prevented by the copy step. The loader prints `Failed to load module` with `GetLastError` (relinker stub). |
-| SPIRV-Tools in a release artifact | The `policy` job reports it for the R1 record. Release defaults to OFF pending PRD R1. |
-| glslang in a release artifact | The `policy` job fails. |
+| SPIRV-Tools in a release artifact | The `policy` step reports it for the R1 record. Release defaults to OFF pending PRD R1. |
+| glslang in a release artifact | The `policy` step fails. |
 | A dependency without a recorded pin | Review rejects it; every new dependency goes in the pin table above. |
 | Python absent with tests enabled | Configure error (today: silently skipped, `core/relinker/CMakeLists.txt:92`). |
+| `BUILD_TESTING=OFF` (the `release` preset) | `portps5_add_gtest`/`portps5_add_test` are no-ops (#66), and the decoder test registrations are guarded so configure does not reference missing test targets (#70). |
 
 ## Tests
 
-- **`build` job:** configure and build the `ci` preset from a clean clone, with submodules at their recorded SHAs.
-- **`unit` job:** `ctest --preset ci -L unit`. Its gate is that the total test count must not shrink from one commit to the next; the count is stored in a checked-in `tests/expected-count`.
-- **`recompiler-golden` job:** builds `recompiler_golden_tests` and `agc_shader_replay` (ci preset), then runs `ctest --preset golden` plus `agc_shader_replay --golden core/shader/recompiler/tests/golden/corpus`. The golden suite carries its own coverage gate, so no count file is needed.
-- **`policy` job:** the artifact dependency check above, plus the patterns in [verification.md](verification.md) §1.
+Hosted CI (`.github/workflows/ci.yml`) runs these as steps of the `build_and_test` job, next to the `driver_lavapipe` and `python_quality` jobs ([verification.md](verification.md) §1).
+
+- **build step:** configure and build the `ci` preset from a clean clone, with submodules at their recorded SHAs.
+- **unit step:** `ctest --preset ci` (label `unit`). Its gate is that the total test count must not shrink from one commit to the next; the count is stored in a checked-in `tests/expected-count`.
+- **recompiler-golden step:** builds `recompiler_golden_tests` and `agc_shader_replay` (ci preset), then runs `ctest --preset golden` plus `agc_shader_replay --golden core/shader/recompiler/tests/golden/corpus`. The golden suite carries its own coverage gate, so no count file is needed.
+- **`policy` step:** the artifact dependency check above, plus the patterns in [verification.md](verification.md) §1.
 - **`doxygen-doc-gate` job:** runs `doxygen docs/Doxyfile` on `core/libs/prx` and `core/relinker` via `.github/workflows/doxygen.yml` on every PR and push to `main` as a required status check. Does not require the MinGW toolchain. Installs the official Doxygen 1.18.0 Windows x64 zip from doxygen.nl, verified against a SHA-256 pinned in the workflow env (cached by version+checksum, retried on download failure). Fails on any malformed Doxygen markup with `WARN_AS_ERROR = FAIL_ON_WARNINGS` so all warnings are logged before failing (`WARN_IF_UNDOCUMENTED` and `WARN_NO_PARAMDOC` are disabled initially to avoid blocking on inherited pre-existing debt). Uploads `build/doxygen_warnings.log` as the `doxygen-warnings` artifact on failure. Complements the Python `check_comments.py` linter, which enforces PortPS5-specific per-file rules (file-level headers, `APS5_VABI` doc coverage, `TEST()` invariant comments) in the main `ci.yml` policy step.
 - **Local:** `ctest -L local` (tests that need a GPU or game data, when any exist) and then `python tools/regress.py run ...` (or `report ...` on an existing log; required options in [verification.md](verification.md) §4.2) before each regression run ([verification.md](verification.md) §2, §4.2). The runner is a script, not a ctest target.
 
@@ -171,13 +176,14 @@ Tests are progressively consolidated from standalone single-function executables
 - [x] **M0:** C++23; CMakePresets; the pinned toolchain file and CI download with checksum; every existing test in `ctest` with labels; runtime DLL copy; CONVENTIONS rewrite; TechnicalDebt clean-up; `build`, `unit` and `policy` jobs. `DummyShaders` extraction also lands in M0 because it touches licence posture.
 - [ ] **M1:** items:
   - [x] the AnyPS5 main (merged PR #5) relinker tests (PR #12, PR #56);
-  - [x] the `APS5_EXPORT_FN` migration (PR #11);
+  - [x] the `APS5_EXPORT_FN` macro (PR #11);
+  - [ ] migrate export call sites to `APS5_EXPORT_FN` (none use it yet; `libSceAgc` uses raw `APS5_EXPORT`) and add the `policy` check;
   - [x] the toml++ pin (`3rdparty/tomlplusplus`);
   - [x] `lavapipe` label and job (`driver-lavapipe`): label on the driver suites (`libSceAgcDriver/CMakeLists.txt:351-389`), job `driver_lavapipe` in `ci.yml` (bean `portps5-ekx3`);
   - [ ] the xxHash pin: no xxHash is vendored under `3rdparty/` yet.
 - [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from AnyPS5 main (merged PR #5) (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
 - [x] **M2:** `tools/regress.py` runner (bean `portps5-3m3u`). It is a Python script run by hand and covered by pytest in the `python-quality` job. It is not a ctest target and not a build target, so it adds no `local`-labelled test; the `local` label stays reserved for GPU or game-data tests. The checkbox covers the build-toolchain deliverable only; the runner's checkpoint, frame-check and upload steps stay open under ROADMAP M2.
-- [ ] **M2:** SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:46-48` since PR #20; the pin carries the HIDAPI PS5 driver and a unit test guards the build option, bean `portps5-j7ds`; run on a real DualSense is bean `portps5-ds7h`).
+- [ ] **M2:** SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:55,57` since PR #20; the pin carries the HIDAPI PS5 driver and a unit test guards the build option, bean `portps5-j7ds`; run on a real DualSense is bean `portps5-ds7h`).
 - [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
 - [ ] **M6:** release preset used for the release commit, with the R1 status recorded.
 

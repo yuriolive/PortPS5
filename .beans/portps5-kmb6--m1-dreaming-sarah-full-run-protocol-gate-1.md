@@ -5,9 +5,13 @@ status: todo
 type: task
 priority: high
 created_at: 2026-09-30T23:52:22Z
-updated_at: 2026-10-01T17:59:26Z
+updated_at: 2026-10-01T18:27:16Z
+parent: portps5-dbpx
 blocked_by:
     - portps5-ks96
+    - portps5-w1re
+    - portps5-3m3u
+    - portps5-8gdr
 ---
 
 

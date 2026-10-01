@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Shader recompiler
 
-Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-10-01
 
 Deepens the decision table in [README.md](README.md#subsystem-specs). The decisions recorded there are fixed: keep the pipeline, replace the structurizer's failure path, add a subgroup-size path and tests, and leave AOT post-1.0. Paths are relative to AnyPS5 `core/shader/recompiler/` unless prefixed. `main@e06dbff` is the pre-merge AnyPS5 main (the old baseline). `main@75a8668` is current AnyPS5 main, which includes merged PR #5. Its delta column cites `main@75a8668`. Anything marked *(inferred)* was not observed at runtime.
 
@@ -54,7 +54,7 @@ Other facts:
     coverage gate plus wave32/wave64 replay of every case (see Tests below).
   The driver tests that touch the recompiler are:
   - `agc_shader_memory_tests`, which is in ctest and checks the serializer round-trip and the cache policy;
-  - `agc_driver_recompiler_tests`, which is built but not registered.
+  - `agc_driver_recompiler_tests`, registered through `portps5_add_gtest` with label `lavapipe` (PR #80), so it runs in the hosted `driver_lavapipe` job.
 - **glslang.** `tests/DummyShaders.cpp` is compiled into the recompiler static library and pulls glslang in as a link dependency (`CMakeLists.txt:136,158-162`). Nothing references it outside the file, so the static archive probably drops it *(inferred)*.
 
 ### Upstream ports, lane E
@@ -103,7 +103,7 @@ The harness gained a wave-wide VGPR file with an independent DPP model, a SPIR-V
 | `s_bcnt0_i32_b64`, `s_ff0_i32_b64`, `s_or/xor/andn2_saveexec_b32` | PORT | SOP1 0x0e, 0x12, 0x3d, 0x3e, 0x3f. bcnt0 sets SCC = (D != 0); ff0 leaves SCC; the saveexec forms share `sSaveexec` (source read before the old EXEC is written, per-lane EXEC bit). |
 | `28b09d4` GLC/DLC buffer accesses are coherent | PORT ADAPTED | Decoder reads DLC (MUBUF/MTBUF word 0 bit 15); a buffer load or store with GLC or DLC is `MemoryInfo::coherent`, its guest buffers are decorated `Coherent` and its accesses `Volatile`. Atomics are excluded (GLC only returns the pre-op value). The BDA half of upstream (`BdaAccessMask`) depends on the GPU-descriptor path that is deferred below. FLAT GLC/DLC is not mapped yet (Open questions 10). |
 | `6a73ec4` selection whose arm continues | PORT | Inside a loop, an arm that reaches the post-dominator only past the continue/merge block leaves the selection by continuing; the merge is the other arm's target. Test: the smallest CFG that used to exhaust the split budget (hand-built blocks, no shader). |
-| `cd158c6` BDA fault in a continue target | PORT ADAPTED | Reproduced on main: a loop whose body is the continue target and loads through BDA failed pre-optimization `spirv-val` ("continue construct ... not structurally post dominated"). `SpirvEmitterState::bdaStopsInvocations` (our tree has no wave-LDS flag of that name) is cleared while a continue target is emitted; there the read is guarded so an unmapped or overflowed address reads zero instead of dereferencing a null pointer (upstream relies on its own per-byte guard). The optimizer-pass interaction found while testing is Open questions 11. |
+| `cd158c6` BDA fault in a continue target | PORT ADAPTED | Reproduced on main: a loop whose body is the continue target and loads through BDA failed pre-optimization `spirv-val` ("continue construct ... not structurally post dominated"). `SpirvEmitterState::bdaStopsInvocations` (our tree has no wave-LDS flag of that name) is cleared while a continue target is emitted; there the read is guarded so an unmapped or overflowed address reads zero instead of dereferencing a null pointer (upstream relies on its own per-byte guard), and a wrapped address from an overflowing add or subtract is replaced by the all-ones address, which the read's overflow check turns into a zero read (`SpirvBackend/src/SpirvBdaRead.cpp:20-26`, test `WrappedBdaAddressInContinueTargetIsPoisoned`). The optimizer-pass interaction found while testing is Open questions 11. |
 | `21cb5676` buffer access through GPU-computed V#s | DEFER | Needs the BDA ABI to carry a written-page set behind the fault record and the host to mark those pages GPU-written (`BdaAbi.hpp` plus `libSceAgcDriver/Graphics/*`). A recompiler-only port would write into memory the driver does not allocate. Follow-up for the AGC driver owner. |
 | `74454ee` scalar buffer loads through a GPU-selected V# | DEFER | Builds on `21cb5676` (`MemoryInfo::gpuDescriptor` does not exist here). |
 | `3d3f7122` V# at address 0 accesses nothing, `029dcdac` null V# accesses nothing | DEFER | Driver-side descriptor handling (`Graphics/src/ShaderResources.cpp`, `Draw.cpp`); out of lane, and `3d3f7122` also builds on the deferred GPU-descriptor path. |
@@ -112,7 +112,7 @@ The harness gained a wave-wide VGPR file with an independent DPP model, a SPIR-V
 | `9bb9416` `image_bvh_intersect_ray` node test, `976fa82` ray tracing miss fallback | SKIP | Ray tracing appears nowhere in the PRD or ROADMAP scope and `9bb9416` is a large port of AMD's GPURT software fallback through another emulator. `976fa82` is behaviour-changing through the `APS5_RAYTRACING` environment variable, which is rejected (`no-title-hacks.md`). Today `0xe6` is not decoded and fails loudly at translation, which is the right behaviour. |
 | `cf202b3` SRT handle-invariance guard | SKIP | Not reproducible: `IrValue::HasImmediate` is true only for constants and `Resolve` follows identities only, so a phi that merges a constant with a per-invocation value never reports an immediate. The first pass already requires `RuntimeValidator`. |
 | `cf202b3` BVH ray-query stub | SKIP | Returns an invented "miss" encoding (`0xFFFFFFFF`) and hides an unimplemented opcode; unsupported states abort loudly here. |
-| `cf202b3` rect-list interpolant truncation, SPIR-V 1.5 ceiling | SKIP | Silently dropping interpolants to make a draw succeed is the "skip work that fails" pattern (`no-title-hacks.md`); the SPIR-V version ceiling belongs to the Vulkan 1.3 floor work (#62). |
+| `cf202b3` rect-list interpolant truncation, SPIR-V 1.5 ceiling | SKIP | Silently dropping interpolants to make a draw succeed is the "skip work that fails" pattern (`no-title-hacks.md`); the SPIR-V version ceiling landed with the Vulkan 1.3 floor (#62). |
 | `87911b3` atomic-zero rewrite | SKIP (unchanged) | Still title-tuned; see Open questions 9. |
 | `4ea1209` f16 follow-ups | none remaining | Ported in lane E. |
 
@@ -230,7 +230,7 @@ Reviewed, not ported, outside this task's list: `33f91099` (NGG to mesh shader t
 
 ## Tests
 
-- **GoogleTest Unit Suites** (`recompiler_tests`, hosted `unit` job):
+- **GoogleTest Unit Suites** (`recompiler_fixes_tests` and `recompiler_ported_instruction_tests`, label `unit`; `recompiler_golden_tests`, label `golden`; all registered in `core/libs/prx/libSceAgcDriver/CMakeLists.txt:437-456`):
   - [ ] Decoder round-trip per opcode encoding with parameterized tests (`TEST_P`).
   - [ ] `ValidateProgram` negative cases.
   - [ ] SSA with synthetic flags.
@@ -255,7 +255,8 @@ Reviewed, not ported, outside this task's list: `33f91099` (NGG to mesh shader t
   - [x] Lane E2 ports (`recompiler_ported_instruction_tests`): DPP row/bank/bound_ctrl write gating per lane against an independent ISA
     model, mac accumulator not DPP-moved, `s_or/xor/andn2_saveexec_b32`, `s_bcnt0/ff0_i32_b64`, GLC/DLC coherent buffer stores
     (Coherent decoration and Volatile access, DLC bit decode), MRT 32_R/32_GR/32_AR export masks and SNORM16/UNORM16/FP16
-    unpack selection, structurizer termination on a selection whose arm continues, and BDA access in a loop continue target.
+    unpack selection, structurizer termination on a selection whose arm continues, and BDA access in a loop continue target
+    (a wrapped address there is poisoned to all ones: `WrappedBdaAddressInContinueTargetIsPoisoned`).
   - [x] Stage gate: `SharedMemoryBarrierInserter` inserts barriers only for compute, mesh, and
     tessellation-control stages (Workgroup execution scope is invalid elsewhere), covered by
     `Wave64VertexStageSkipsBarrierInsertion` and `TessellationControlStageInsertsBarrier`.
@@ -284,7 +285,7 @@ Reviewed, not ported, outside this task's list: `33f91099` (NGG to mesh shader t
 
 | Milestone | Recompiler deliverables | Exit evidence |
 |---|---|---|
-| M0 | - [x] C++23 flag. `recompiler_tests` and `agc_shader_memory_tests` in ctest. glslang made test-only. | ctest green |
+| M0 | - [x] C++23 flag. The recompiler suites (`recompiler_fixes_tests`, `recompiler_ported_instruction_tests`, `recompiler_golden_tests`) and `agc_shader_memory_tests` in ctest. glslang made test-only. | ctest green |
 | M1 | - [ ] Port `87911b3` and the flat-slot and hashed-key parts of `29b4601`. Bindless tables with bounds taken from device limits (bean `portps5-7li6`). Remove every `APS5_*` read (done: none remain in `core/`).<br>- [x] `agc_shader_replay` and serializer (adapted port: no env switches, return codes).<br>- [x] The `recompiler-golden` job.<br>- [x] The synthetic corpus. | M1 exit: every decoded class covered and green in CI, local corpus with 0 failures, DeS fill/copy kernels running as compiled shaders |
 | M2 | - [ ] `SourceKey`/`VariantKey` as defined in [pipeline-cache.md](pipeline-cache.md#target-design), and variant (de)serialisation for the disk cache. Depth and sample-mask export verified. | 0 `spirv_compilations` with a warm cache (F7) |
 | M3 | - [ ] Tier 2 structurizer. Bounded hash-indexed variants that compile outside the lock. V#/SRT loads on the GPU through BDA. SGPRs read from the user-data buffer. | Fuzz corpus with 0 structurizer throws |
@@ -306,7 +307,7 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
 1. Can a despecialised generic variant stand in once a source hits the variant cap?
 2. Does any wave32 program run on a host whose subgroup is fixed wider than 32?
 3. Follow-up to PR #36 (bean portps5-habc): `EmitGetShaderBase`
-   (`SpirvBackend/src/SpirvModuleEmitter.cpp:1052`) still emits constant zero, so
+   (`SpirvBackend/src/SpirvModuleEmitter.cpp:1064`) still emits constant zero, so
    SPIR-V consumers of an `s_getpc_b64` value see offset-only while the
    SRT/resource-tracker path (via `MakeRuntime` with `request.shader.codeAddress`)
    names the real base — same limitation as upstream. The fix is dispatch-time
@@ -352,3 +353,4 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
     source (`EmitDppWriteCondition` ignores the source lane's EXEC), while the ISA may treat a disabled source lane like an
     invalid one. The lane E2 tests keep all lanes active, so the case is not pinned either way; confirm against the ISA before
     relying on it.
+14. Release-build optimization: release builds ship without SPIRV-Tools (PRD R1), so release SPIR-V gets only stage 6 cleanup. Planned native passes: GVN/CSE, copy propagation and control-flow simplification (bean `portps5-t5qa`), uniformity analysis (`portps5-1uym`), and draw-state specialization constants keyed in `VariantKey` (`portps5-9gsx`). A spike checks whether `spirv-opt` can run as a separate process (`portps5-m5n7`). Compile time is measured as `shader.compile_ms` (`portps5-tg51`).

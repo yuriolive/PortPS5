@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Threading and synchronization
 
-Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-10-01
 
 ## Scope
 
@@ -114,12 +114,13 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 - **Affinity:** recorded, not applied. The guest masks name console cores, not host cores. This spec owns the rule; other specs refer to it here.
 - **Timer:** the 0.5 ms tick raise is kept unconditionally.
 - **`sceKernelUsleep(0)` and `scePthreadYield`:** both call `SwitchToThread`.
+- **POSIX `usleep`:** `usleep_nid_postfix` is an alias of `sceKernelUsleep` that always returns 0, as FreeBSD does without signals (`Time/Time.cpp:149-152`).
 
 **Error policy.**
 
 - Real POSIX and SCE conditions return codes: null pointer → `EINVAL`, plus `EBUSY`, `ETIMEDOUT`, `EDEADLK`, `EPERM`, `EAGAIN`, `ESRCH`.
 - A state that is truly unimplemented calls `[[noreturn]] Unsupported(const char* what)`. It logs the NID, caller offset and thread name, then calls `abort()`. It replaces the `throw` in `NotImplemented_nid_no_patch`, which the shared unwinder lets a guest `catch(...)` swallow.
-- Host exceptions never cross an `APS5_VABI` boundary. Every export body is `noexcept`, enforced by the export macro.
+- Target (not yet true): host exceptions never cross an `APS5_VABI` boundary, because every export body is `noexcept`, enforced by `APS5_EXPORT_FN`. Today the macro exists but has no call sites: `libSceAgc` registers through the raw `APS5_EXPORT`, and `libSceSysmodule/Export.cpp` still throws (see [TechnicalDebt.md](../TechnicalDebt.md) "Host exceptions").
 
 ## Interfaces
 
@@ -149,7 +150,7 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 
 - **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
   - Upstream ports (PR #28, adapted to the repo's per-API error families): equeue wait/delete + error-check mutex (`GuestKernelErrors.cpp`), cond timedwait slices (`GuestCondTimedwait.cpp`), thread identity/lifecycle (`GuestThreadSelf.cpp`), host TLS balance incl. Win32 threads (`HostThreadLocal.cpp` + helper TU).
-  - Kernel-sync ports: `PthreadSemHandleTests.cpp` (scePthreadSem return codes, lifecycle, token conservation), `PthreadBarrierOnceTests.cpp` (barrier rounds, serial thread, next-round regression, EBUSY destroy, `pthread_equal`, `sched_yield`, `scePthreadOnce`/`pthread_once`), `KernelSleepSignalTests.cpp` (`sceKernelSleep`, `sigprocmask` incl. invalid `how`), `GuestKernelErrors.cpp` literal equeue codes, `PthreadSemTests.cpp` `sceKernelDeleteSema`, `GuestThreadSelf.cpp` adopted handles.
+  - Kernel-sync ports: `PthreadSemHandleTests.cpp` (scePthreadSem return codes, lifecycle, token conservation), `PthreadBarrierOnceTests.cpp` (barrier rounds, serial thread, next-round regression, EBUSY destroy, `pthread_equal`, `sched_yield`, `scePthreadOnce`/`pthread_once`), `KernelSleepSignalTests.cpp` (`sceKernelSleep`, POSIX `usleep` returning 0 in `KernelSleep.UsleepSleepsAndReturnsZero`, `sigprocmask` incl. invalid `how`), `GuestKernelErrors.cpp` literal equeue codes, `PthreadSemTests.cpp` `sceKernelDeleteSema`, `GuestThreadSelf.cpp` adopted handles.
   - Every mutex type (lock, trylock, timedlock, `EDEADLK`, `EPERM`, `EBUSY`, destroy).
   - Lazy initialization with 64 threads racing on a zero slot, with exactly one INIT winner.
   - Condition-variable 10^6-round ping-pong and a broadcast storm with no lost wakeups.
@@ -182,7 +183,7 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 3. Does FIFO order matter for anything beyond FIFO-attributed semaphores? For example, would broadcast requeue avoid a thundering herd in job systems?
 4. Should the guest priority bands map to Windows priorities at all, or would that starve the presenter and driver threads?
 5. Sync assessment (PR #28): upstream `TimedWait` and `Pthread/Posix/Common.hpp` were trial-ported and reverted (unwired, no roadmap item names them; they return with the feature that needs them). Landed and green: GuestKernelErrors, GuestCondTimedwait, GuestThreadSelf, HostThreadLocal GTest suites — error expectations follow the repo's per-API families (equeue FreeBSD-style, pthread/SCE `0x8002`, cond `kSceTimedOut`), the host main thread was given no guest handle (superseded: it now gets an adopted handle, see Target design), and the Win32 TLS baseline is filter-proof. Reverted as unusable here: `tests/Fiber.cpp` (no fiber implementation; gates M4), `tests/GuestLocale.cpp` (bakes upstream's locale layout; ours differs), `tests/GuestDirectoryEntries.cpp` (pread/getdents are Unsupported stubs here).
-6. Resolved (bean `portps5-mn0m`): `DirectMemory.hpp` includes `KernelErrors.hpp` and `tests/kernel/KernelErrorValuesTests.cpp` pins the literal values. `File/src/Open.cpp` still has its own constant (`ENOENT`, already correct), which belongs to the filesystem owner. The original finding was that the kernel-sync port (AnyPS5 97cae145, 20810712) left `DirectMemory.hpp` on private `0x8001xxxx` statics (`EINVAL` was `0x80010005`, not `0x80020016`) that the tests in `tests/memory/` pinned; a header that declares its own statics cannot be included next to `KernelErrors.hpp`, so the header and its tests were migrated together.
+6. Resolved (bean `portps5-mn0m`): `DirectMemory.hpp` includes `KernelErrors.hpp` and `tests/kernel/KernelErrorValuesTests.cpp` pins the literal values. The File module still computes `0x80020000 | errno` through its own `SceKernelErrno`/`HostErrnoToSce` (`File/include/File.hpp:15-18`, `File/src/Open.cpp:118-131`) instead of `KernelErrors.hpp`; the values agree, and the migration belongs to the filesystem owner. The original finding was that the kernel-sync port (AnyPS5 97cae145, 20810712) left `DirectMemory.hpp` on private `0x8001xxxx` statics (`EINVAL` was `0x80010005`, not `0x80020016`) that the tests in `tests/memory/` pinned; a header that declares its own statics cannot be included next to `KernelErrors.hpp`, so the header and its tests were migrated together.
 7. `sceKernelAio*` (AnyPS5 c25c543f) is not ported: it needs a positional fd read/write primitive. `File/src/Stdio.cpp` `NativePread` emulates `pread` with seek, read and seek-restore, which races a concurrent reader on the same fd, and upstream's Aio used `_dup`, which shares the file offset on Windows. Port it on top of the filesystem owner's pread once that primitive is race-free.
 8. Errno validation (PR #61 follow-up) against FreeBSD `lib/libc/gen/sem_new.c` and `lib/libthr/thread/{thr_barrier,thr_mutexattr}.c` (BSD-2-Clause), the Open POSIX Test Suite assertions for `pthread_barrier_*`/`sem_*`/`pthread_once`/`pthread_mutexattr_setprotocol` (legacy code GPLv2+), and Wine `kernelbase/tests/sync.c` (LGPL): `sem_trywait` empty is `EAGAIN`, `sem_init` value above `INT_MAX` is `EINVAL`, `sem_post` at the maximum is `EOVERFLOW`, `setprotocol` accepts 0..2, barrier count 0 is `EINVAL`, `destroy` with waiters is `EBUSY`, the last arrival is the serial thread and the barrier resets for reuse, `WaitOnAddress` only returns on wake/timeout/mismatch (all loops re-check). Deliberate difference: FreeBSD `sem_destroy` does not report `EBUSY` for sleeping waiters (POSIX leaves it undefined); we return `EBUSY` rather than free under a sleeper. `flag != 0` rejection on `scePthreadSemInit` rests on shadPS4/SharpEmu only. FIFO wake order for equal-priority waiters (Open POSIX sem_post 8) is not implemented.
 9. Host core placement: the guest affinity masks name console cores and stay recorded but not applied (Target design, "Affinity"). Should the runtime steer threads by guest priority band instead, for example keeping the presenter, driver and the highest band off efficiency cores or a second CCD? Measure 1 % low on the reference tier with and without placement before deciding, in the M5 performance pass. No mask may be tuned to one title.

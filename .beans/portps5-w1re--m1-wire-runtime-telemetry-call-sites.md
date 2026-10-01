@@ -5,11 +5,10 @@ status: todo
 type: task
 priority: high
 created_at: 2026-10-01T03:00:00Z
-updated_at: 2026-10-01T18:08:16Z
+updated_at: 2026-10-01T19:20:18Z
 parent: portps5-r8mh
-blocked_by:
-    - portps5-c06p
 ---
+
 
 
 ## Context
@@ -22,7 +21,7 @@ Every local run produces the M2 gate metrics (ROADMAP M1 telemetry, PRD F9).
 
 ## Acceptance Criteria
 
-- [ ] Start called once at start-up after config load (depends on portps5-c06p), with resolution, cache state and audio device
+- [ ] Start called once at start-up after config load (config startup landed in PR #71), with resolution, cache state and audio device
 - [ ] Presenter calls NotePresent and SetVideoLatencyMs per present (coordinate with the AGC driver work)
 - [ ] A guest thread progress site calls NoteGuestProgress
 - [ ] `pipeline.create`, `spirv.compile`, `warmup.end` and `dialog.open` events emitted at their sites
