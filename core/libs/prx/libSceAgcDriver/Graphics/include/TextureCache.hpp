@@ -21,6 +21,8 @@ private:
         std::shared_ptr<Texture> texture;
         std::weak_ptr<ResidentColor> source;
         std::uint64_t generation = 0;
+        // Write-tracker generation the snapshot was taken at (0 = unknown: always compare bytes).
+        std::uint64_t guestGeneration = 0;
     };
     void trim();
     Context context;
