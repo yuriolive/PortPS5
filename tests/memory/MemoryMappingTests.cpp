@@ -214,4 +214,14 @@ TEST(MemoryMapping, MunmapOfAWrappingRangeIsRejected) {
     EXPECT_EQ(sceKernelMunmap(0xFFFFFFFFFFFFC000ull, 4 * kPage), ::SCE_KERNEL_ERROR_EINVAL);
 }
 
+// Invariant: a zero-length request on a real mapping is rejected and leaves the mapping alone (the
+// export-level counterpart of the registry's zero-byte rejection).
+TEST(MemoryMapping, MunmapOfZeroLengthIsRejected) {
+    void* base = MapFlexible(nullptr, 2 * kPage, 0);
+    ASSERT_NE(base, nullptr);
+    EXPECT_EQ(Unmap(base, 0), ::SCE_KERNEL_ERROR_EINVAL);
+    EXPECT_TRUE(IsRegistered(base));
+    EXPECT_EQ(Unmap(base, 2 * kPage), 0);
+}
+
 }  // namespace
