@@ -179,8 +179,8 @@ The track keeps the steady-state invariants of [PRD §4.5](PRD.md) true while th
 
 **P1: Per-draw CPU cost** (M2–M3, invariants P2 and P5)
 - [x] Pooled images for resident render-target sampling (PR #74, bean `portps5-r7qk` step 1).
-- [ ] Frame-timing report only when `debug.profile` has `gpu` (PR #71).
-- [ ] SSE2 compare of cached textures (PR #75) and the write-tracker skip of unchanged textures (PR #77; it takes effect once bean `portps5-421p` wires the tracker).
+- [x] Frame-timing report only when `debug.profile` has `gpu` (PR #71).
+- [ ] SSE2 compare of cached textures (PR #75) and the write-tracker skip of unchanged textures (PR #77; it takes effect once bean `portps5-421p` wires the tracker). The P5 violation itself is bean `portps5-2k6d`.
 - [ ] Resident render-target baseline, then decide step 2 (bean `portps5-r7qk`).
 
 **P2: GPU-side resolution** (M3, invariants P1 and P6). The work is the M3 driver scope: the Recorder in the submit path (bean `portps5-tiod`), the GPU path for the indirect family, block-generation tracking and the capture-ordering redesign. The M3 module split records into a GPU IR with explicit resource states ([spec/gpu-driver.md](spec/gpu-driver.md) Decision), so barrier optimization, multithreaded recording and frame overlap can come later without a rewrite.
@@ -229,6 +229,7 @@ A lane can start when its blockers are done. Lanes in the same row can run in pa
 | Stall attribution | `portps5-26s5` | `portps5-hfiw`, `portps5-aifo` |
 | Allocator | `portps5-03bi` | `portps5-wba0` |
 | PGO | `portps5-f2r1` | `portps5-52bs`, `portps5-8x1k` |
+| P5 texture revalidation | `portps5-2k6d` | `portps5-421p` |
 
 ## v2 seams in v1 (cross-cutting, M2–M5)
 
