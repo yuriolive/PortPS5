@@ -1,7 +1,7 @@
 ---
 # portps5-10fr
 title: 'M2: Mount per-title /savedata0 with sandboxed file I/O (PR #53)'
-status: completed
+status: in-progress
 type: feature
 priority: high
 created_at: 2026-09-30T23:46:59Z
@@ -18,7 +18,7 @@ PRD F2: a gate title can write and read its /savedata0 files across runs, inside
 
 ## Acceptance Criteria
 
-- [x] PR #53 reviewed and rebased on main (the merge itself lands this bean on main as completed)
+- [ ] PR #53 reviewed and rebased on main (the merge itself lands this bean on main as completed)
 - [x] Traversal, colon, unmounted and title-id cases covered by GoogleTest
 - [x] save-data.md Open questions and M2 row updated
 
