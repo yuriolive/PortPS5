@@ -1,3 +1,7 @@
+// Discovers, converts and orders the `sce_module` guest modules beside the
+// input executable. Subsystem: relinker. Runs `--to-intel` per module on the
+// module's own CodeMap, scans syscalls, resolves inter-module dependencies and
+// hands each image (with its trampoline sites) to GuestModuleWriter.
 #include <relinker/guest/GuestImage.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
@@ -74,10 +78,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
                 if (!converted.Residuals.empty())
                     std::cout << "Guest module " << image.OutputName << ": " << converted.Residuals.size() << " residual SSE4a sites left for the runtime trap\n";
                 image.Bytes = std::move(converted.Bytes);
-                // Trampolines for guest modules are not yet emitted; fail clearly
-                // if a module needs out-of-line lowering until the writer supports it.
-                if (!converted.Trampolines.empty())
-                    throw Domain::RelinkerException("Guest module requires AMD-only trampolines, which are not yet emitted for sce_module");
+                // Both guest writers append the stub bodies and patch the sites.
+                image.Trampolines = std::move(converted.Trampolines);
             }
         }
         std::optional<Domain::CodeMap> scanMap;
