@@ -25,6 +25,11 @@
 #include "Optimization/include/Optimization/ShaderStageInputInfo.hpp"
 #include "Translation/include/Translation/ShaderInputInfoBuilder.hpp"
 #include "Recompiler.hpp"
+#include "Optimization/include/Optimization/BindingAllocator.hpp"
+#include "Optimization/include/Optimization/DeadCodeEliminator.hpp"
+#include "Optimization/include/Optimization/DescriptorBindingBuilder.hpp"
+#include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
+#include "SpirvBackend/include/SpirvBackend/SpirvEmitter.hpp"
 #include "SyntheticCorpus.hpp"
 
 #include <array>
@@ -46,6 +51,8 @@
 #include <gtest/gtest.h>
 
 namespace ShaderRecompiler {
+// Defined in Recompiler.cpp with external linkage but not declared in Recompiler.hpp; the emit-only test helper uses it.
+IrProgram PrepareResourceProgram(const RecompileRequest& request);
 namespace {
 
 // ---------------------------------------------------------------------------------------------------------
@@ -1543,6 +1550,75 @@ TEST(RdnaPortedInstructionTests, BdaAccessInContinueTargetEmitsValidModule) {
         const std::string message = error.what();
         EXPECT_EQ(message.find("validation before optimization"), std::string::npos) << message;
     }
+}
+
+// Emits the request's module with the real pipeline stages but WITHOUT the SPIRV-Tools validate/optimize step of
+// Recompile (a flat load needs no resource plan, so the materializer is skipped). Lets a test inspect what the emitter
+// produced even where the optimizer rejects it (see the continue-target limitation above).
+std::vector<std::uint32_t> EmitUnoptimized(const RecompileRequest& request) {
+    IrProgram program = PrepareResourceProgram(request);
+    const auto inputInfo = BuildShaderStageInputInfo(ShaderStageKind::Vertex, request.context);
+    DeadCodeEliminator{}.RemoveIdentities(program);
+    DeadCodeEliminator{}.Eliminate(program);
+    ShaderInfoCollector{}.Collect(program, inputInfo);
+    auto bindings = BindingAllocator{}.Allocate(program, request.layout);
+    DescriptorBindingBuilder{}.Populate(bindings, program, ResourceSnapshot{});
+    SpirvTargetOptions options{};
+    options.vulkanVersion = request.target.vulkanVersion;
+    options.spirvVersion = request.target.spirvVersion;
+    options.subgroupSize = request.target.subgroupSize;
+    options.bdaAbiVersion = request.target.bdaAbiVersion;
+    options.supportedCapabilities = request.target.supportedCapabilities;
+    options.supportedExtensions = request.target.supportedExtensions;
+    return SpirvEmitter{}.Emit(program, inputInfo, bindings, options);
+}
+
+// Counts OpSelect instructions that choose the all-ones 64-bit constant (the poisoned address).
+std::uint32_t CountPoisonedAddressSelects(const std::vector<std::uint32_t>& spirv) {
+    std::uint32_t allOnesId = 0u;
+    const auto instrs = ParseSpirv(spirv);
+    for (const SpirvInstr& inst : instrs) {
+        // OpConstant: result type, result id, low word, high word (64-bit).
+        if (inst.opcode == spv::OpConstant && inst.count == 5u && inst.words[3] == 0xffffffffu && inst.words[4] == 0xffffffffu) allOnesId = inst.words[2];
+    }
+    std::uint32_t selects = 0u;
+    for (const SpirvInstr& inst : instrs) {
+        // OpSelect: result type, result id, condition, object 1, object 2.
+        if (allOnesId != 0u && inst.opcode == spv::OpSelect && inst.count == 6u && inst.words[4] == allOnesId) ++selects;
+    }
+    return selects;
+}
+
+// With the invocation stop suppressed (loop continue target) an overflowing address add or subtract only records the
+// fault; its wrapped result could land on a mapped page and read real bytes from the wrong place. The emitter must
+// poison the wrapped address (all ones, which the read's own overflow check turns into a zero read) whenever it keeps
+// going. Test: the same counting loop as above with a flat load at +4 (an address add that can overflow). Outside a
+// continue target the stop returns from the invocation, so no poison select is needed there.
+// Failure mode without the fix: no poisoned-address select in the loop module.
+TEST(RdnaPortedInstructionTests, WrappedBdaAddressInContinueTargetIsPoisoned) {
+    const auto build = [](bool inLoop) {
+        std::vector<std::uint32_t> code;
+        if (inLoop) {
+            code = {0xBE800380u, 0xDC300004u, 0x00000001u, 0xBF8C0000u, 0x80008100u, 0xBF0A8400u, 0xBF85FFFAu, 0xF80008CFu, 0x03020100u, 0xBF810000u};
+        } else {
+            code = {0xDC300004u, 0x00000001u, 0xBF8C0000u, 0xF80008CFu, 0x03020100u, 0xBF810000u};
+        }
+        const Golden::SyntheticCase testCase{Golden::SyntheticFamily::Flat, "flat_load_offset", code, {}, 8u, {}, ShaderStage::Vertex};
+        auto owned = Golden::MakeRequest(testCase, 64u, 64u);
+        owned.request.target.bdaAbiVersion = BdaAbi::Version;
+        static constexpr std::array<std::uint32_t, 3> kCapabilities{11u, 5347u, 4448u};
+        static constexpr std::array<std::string_view, 2> kExtensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+        owned.request.target.supportedCapabilities = kCapabilities;
+        owned.request.target.supportedExtensions = kExtensions;
+        try {
+            return CountPoisonedAddressSelects(EmitUnoptimized(owned.request));
+        } catch (const std::exception& error) {
+            ADD_FAILURE() << "emit threw: " << error.what();
+            return 0u;
+        }
+    };
+    EXPECT_GE(build(true), 1u) << "the overflowing add in the continue target must be poisoned";
+    EXPECT_EQ(build(false), 0u) << "outside a continue target the invocation stops instead";
 }
 
 } // namespace

@@ -1,6 +1,8 @@
-// core/shader/recompiler/Translation/src/MemoryInstructions/BufferInstructions.cpp
-// MUBUF/MTBUF buffer load, store and atomic translation for TranslationContext. A GLC/DLC load or store is tagged
-// MemoryInfo::coherent so the SPIR-V backend emits a Volatile access to a Coherent buffer. Single-threaded.
+/**
+ * @file BufferInstructions.cpp
+ * @brief MUBUF/MTBUF buffer load, store and atomic translation for TranslationContext. A GLC/DLC load or store is
+ * tagged MemoryInfo::coherent so the SPIR-V backend emits a Volatile access to a Coherent buffer. Single-threaded.
+ */
 #include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>

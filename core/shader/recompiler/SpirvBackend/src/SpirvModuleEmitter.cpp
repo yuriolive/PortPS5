@@ -1,7 +1,9 @@
-// core/shader/recompiler/SpirvBackend/src/SpirvModuleEmitter.cpp
-// Emits the SPIR-V module entry point: stage built-ins, parameter interpolation and the export paths (position,
-// parameter, MRT) including the SPI_SHADER_COL_FORMAT component masks and 16-bit unpack modes of MRT exports.
-// Single-threaded emission.
+/**
+ * @file SpirvModuleEmitter.cpp
+ * @brief Emits the SPIR-V module entry point: stage built-ins, parameter interpolation and the export paths
+ * (position, parameter, MRT), including the SPI_SHADER_COL_FORMAT component masks and 16-bit unpack modes of MRT
+ * exports. Single-threaded emission.
+ */
 #include "SpirvBackend/SpirvModuleEmitter.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"

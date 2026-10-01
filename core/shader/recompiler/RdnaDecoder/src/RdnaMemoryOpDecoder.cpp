@@ -1,6 +1,8 @@
-// core/shader/recompiler/RdnaDecoder/src/RdnaMemoryOpDecoder.cpp
-// Decoder for the RDNA2 memory formats (SMEM, MUBUF, MTBUF, FLAT, DS): field extraction into RdnaInstruction,
-// including the GLC/DLC cache-policy bits. Pure function of the code words; thread-safe.
+/**
+ * @file RdnaMemoryOpDecoder.cpp
+ * @brief Decoder for the RDNA2 memory formats (SMEM, MUBUF, MTBUF, FLAT, DS): field extraction into
+ * RdnaInstruction, including the GLC/DLC cache-policy bits. Pure function of the code words; thread-safe.
+ */
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
 #include <bit>
 #include <limits>

@@ -1,7 +1,9 @@
-// core/shader/recompiler/IntermediateRepresentation/include/IntermediateRepresentation/IrMetadata/ResourceInfo.hpp
-// MemoryInfo and ExportInfo: per-access metadata the translator attaches to memory and export IR operations and
-// the SPIR-V backend reads back (resource kind, widths, formats, cache policy). Plain data; equality is
-// field-wise so identical accesses share one metadata entry.
+/**
+ * @file ResourceInfo.hpp
+ * @brief MemoryInfo and ExportInfo: per-access metadata the translator attaches to memory and export IR operations
+ * and the SPIR-V backend reads back (resource kind, widths, formats, cache policy). Plain data; equality is
+ * field-wise so identical accesses share one metadata entry.
+ */
 #ifndef CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_RESOURCEINFO_HPP
 #define CORE_SHADER_RECOMPILIER_INTERMEDIATEREPRESENTATION_INCLUDE_INTERMEDIATEREPRESENTATION_IRMETADATA_RESOURCEINFO_HPP
 
@@ -49,9 +51,13 @@ struct MemoryInfo {
     bool idxen = false;
     bool offen = false;
     bool planningOnly = false;
-    // A buffer load or store with GLC or DLC: the RDNA2 ISA makes it bypass the caches (GLC: L0, DLC: the GL1) that
-    // another workgroup's stores may be stale in, so a look-back that polls a flag another workgroup publishes
-    // sees it. Atomics use GLC only to return the pre-op value and are never coherent in this sense.
+    /**
+     * @brief True for a buffer load or store with GLC or DLC.
+     *
+     * The RDNA2 ISA makes such an access bypass the caches (GLC: L0, DLC: the GL1) that another workgroup's stores
+     * may be stale in, so a look-back polling a flag another workgroup publishes sees it. Atomics use GLC only to
+     * return the pre-op value and are never coherent in this sense.
+     */
     bool coherent = false;
 
     bool operator==(const MemoryInfo& other) const = default;

@@ -17,6 +17,14 @@ std::uint32_t AddBdaAddress(SpirvValueEmitContext& ctx, const IrValue& inst, std
     const auto overflow = subtract ? Binary(state, spv::OpUGreaterThan, TypeBool(state), offset, address) : Binary(state, spv::OpULessThan, TypeBool(state), result, address);
     EmitIfCondition(state, overflow, [&] { RecordBdaFault(state, address, ConstantU32(state, 0u), ConstantU32(state, inst.Flags<MemoryFlags>().pc), BdaAbi::FaultReason::Overflow); });
     StopBdaInvocationIf(state, overflow);
+    // Where the stop is suppressed (a loop continue target) the fault is recorded but emission goes on, and a wrapped
+    // `result` could land on a mapped page and read real bytes from the wrong place. Poison it with the all-ones
+    // address instead: EmitBdaRead's own overflow check then reads zero for it.
+    if (!state.bdaStopsInvocations) {
+        const auto poisoned = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelect, TypeScalarU64(state), poisoned, overflow, BdaConstant(state, std::numeric_limits<std::uint64_t>::max()), result);
+        return poisoned;
+    }
     return result;
 }
 
