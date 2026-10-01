@@ -251,6 +251,89 @@ def _write_lib_with_edge_cases(lib):
     )
 
 
+class ExportCoverageTests(unittest.TestCase):
+    """--exports: implemented functions measured against a local export list."""
+
+    _EXPORTS = """# libSceFoo
+AAAAAAAAAAA sceFooInit
+BBBBBBBBBBB sceFooRun
+CCCCCCCCCCC sceFooQuit
+# libSceFoo_nosubmission
+DDDDDDDDDDD sceFooDebug
+# libkernel
+EEEEEEEEEEE _open
+2 stub libraries, 5 symbols
+"""
+
+    def test_parser_drops_debug_libraries_and_noise_lines(self):
+        # Invariant: only "<11-char NID> <name>" lines under a header count;
+        # *_nosubmission libraries are dropped (retail titles cannot import
+        # them) and the trailing counter line is ignored.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stubs.txt"
+            path.write_text(self._EXPORTS)
+            exports = progress.load_exports(path)
+        self.assertEqual(
+            exports,
+            {"libSceFoo": {"sceFooInit", "sceFooRun", "sceFooQuit"}, "libkernel": {"_open"}},
+        )
+
+    def test_coverage_normalises_nid_suffixes_and_counts_stubs(self):
+        # Invariant: a definition named with a nid_patcher suffix counts as the
+        # export it hashes to (_open_nid_postfix -> _open), a stubbed definition
+        # counts as stub, and absent exports count as todo.
+        libraries = progress.summarize(
+            [
+                {
+                    "name": "libSceFoo",
+                    "label": "Foo",
+                    "done": 1,
+                    "todo": 1,
+                    "done_names": ["sceFooInit"],
+                    "todo_names": ["sceFooRun"],
+                },
+                {
+                    "name": "libkernel",
+                    "label": "libkernel",
+                    "done": 1,
+                    "todo": 0,
+                    "done_names": ["_open_nid_postfix"],
+                    "todo_names": [],
+                },
+            ]
+        )
+        exports = {"libSceFoo": {"sceFooInit", "sceFooRun", "sceFooQuit"}, "libkernel": {"_open"}}
+        result = progress.collect_export_coverage(libraries, exports)
+        by_name = {g["name"]: g for g in result["groups"]}
+        self.assertEqual((by_name["libSceFoo"]["done"], by_name["libSceFoo"]["todo"]), (1, 2))
+        self.assertEqual(by_name["libSceFoo"]["stub"], 1)
+        self.assertEqual(by_name["libkernel"]["done"], 1)
+        self.assertEqual((result["done"], result["total"]), (2, 4))
+
+    def test_export_name_strips_stacked_suffixes_in_nid_patcher_order(self):
+        # Invariant: same order as StripNidPostfix (NidPatcherUtils.hpp):
+        # _nid_postfix first, then _nid_disambig<N>. A regex anchored at the
+        # end once would leave fstat_nid_disambig1 and miss the fstat export.
+        self.assertEqual(progress.export_name("fstat_nid_disambig1_nid_postfix"), "fstat")
+        self.assertEqual(progress.export_name("pwrite_nid_disambig12"), "pwrite")
+        self.assertEqual(progress.export_name("_open_nid_postfix"), "_open")
+        self.assertEqual(progress.export_name("Foo_nid_no_patch_cut"), "Foo")
+        self.assertEqual(progress.export_name("sceFooInit"), "sceFooInit")
+
+    def test_main_writes_exports_only_when_requested(self):
+        # Invariant: without --exports progress.json has no "exports" key, so
+        # CI output (which never has the third-party file) is unchanged.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            progress.main([str(out)])
+            self.assertNotIn("exports", json.loads((out / "progress.json").read_text()))
+            stubs = Path(tmp) / "stubs.txt"
+            stubs.write_text(self._EXPORTS)
+            progress.main([str(out), "--exports", str(stubs)])
+            data = json.loads((out / "progress.json").read_text())
+        self.assertEqual(data["exports"]["total"], 4)
+
+
 class ProgressScanTests(unittest.TestCase):
     """Stub-heuristic edges: comment-only STUB mentions and tests/ exclusion."""
 

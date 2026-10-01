@@ -124,6 +124,72 @@ def collect_libraries(prx_dir=PRX):
     return summarize([scan_library(p) for p in sorted(prx_dir.iterdir()) if p.is_dir()])
 
 
+NID_TOKEN = re.compile(r"^[A-Za-z0-9+\-]{11}$")
+
+
+def load_exports(path):
+    """Parse a local per-library export list into {library: set(names)}.
+
+    Format (e.g. ps5rs data/stubs.txt): ``# libName`` headers, then
+    ``<nid> <name>`` lines. Other lines (counters, blanks) are ignored, and
+    ``*_nosubmission`` debug libraries are dropped because retail titles
+    cannot import them. The file is third-party reference data: it is read
+    from a path the user passes and never committed (only counts are).
+    """
+    exports, library = {}, None
+    for line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if line.startswith("#"):
+            library = line.lstrip("#").strip() or None
+            continue
+        parts = line.split()
+        if library and len(parts) == 2 and NID_TOKEN.match(parts[0]):
+            exports.setdefault(library, set()).add(parts[1])
+    return {lib: names for lib, names in exports.items() if not lib.endswith("_nosubmission")}
+
+
+NID_POSTFIX = "_nid_postfix"
+NID_NO_PATCH_CUT = "_nid_no_patch_cut"
+NID_DISAMBIG = re.compile(r"_nid_disambig\d+$")
+
+
+def export_name(name):
+    """Return the symbol name nid_patcher hashes for a definition name.
+
+    Mirrors core/libs/nid NidPatcherUtils: ``_nid_no_patch_cut`` is cut, or
+    else ``_nid_postfix`` is stripped first and then ``_nid_disambig<N>``, so
+    stacked suffixes (``fstat_nid_disambig1_nid_postfix``) reduce to ``fstat``.
+    """
+    if name.endswith(NID_NO_PATCH_CUT):
+        return name.removesuffix(NID_NO_PATCH_CUT)
+    return NID_DISAMBIG.sub("", name.removesuffix(NID_POSTFIX))
+
+
+def collect_export_coverage(libraries, exports):
+    """Measure implemented functions against a full per-library export list.
+
+    NIDs hash only the symbol name, so a name implemented in any prx counts
+    for every library that exports it. ``todo`` is the rest of the library's
+    exports (stubbed or absent); ``stub`` counts the stubbed subset.
+    """
+    done_names = {export_name(n) for g in libraries["groups"] for n in g["done_names"]}
+    todo_names = {export_name(n) for g in libraries["groups"] for n in g["todo_names"]} - done_names
+    groups = []
+    for lib in sorted(exports):
+        names = exports[lib]
+        done = names & done_names
+        groups.append(
+            {
+                "name": lib,
+                "label": lib.removeprefix("libSce"),
+                "done": len(done),
+                "todo": len(names) - len(done),
+                "stub": len(names & todo_names),
+            }
+        )
+    return summarize(groups)
+
+
 def camel(name):
     """Convert an ISA UPPER_SNAKE name to decoder CamelCase (TEST_ADD -> TestAdd)."""
     return "".join(part.capitalize() for part in name.split("_"))
@@ -497,6 +563,12 @@ def main(argv=None):
         metavar=("BASE", "HEAD"),
         help="print a markdown report of the changes between two progress.json files",
     )
+    parser.add_argument(
+        "--exports",
+        type=Path,
+        help="local per-library export list (e.g. ps5rs data/stubs.txt) used as the library "
+        "denominator; never committed, only the counts land in progress.json",
+    )
     args = parser.parse_args(argv)
     if args.compare:
         base, head = (json.loads(path.read_text()) for path in args.compare)
@@ -519,9 +591,10 @@ def main(argv=None):
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
     libraries, shaders = collect_libraries(prx), collect_shaders(opcodes, isa)
-    (output / "progress.json").write_text(
-        json.dumps({"libraries": libraries, "shaders": shaders}, indent=2)
-    )
+    result = {"libraries": libraries, "shaders": shaders}
+    if args.exports:
+        result["exports"] = collect_export_coverage(libraries, load_exports(args.exports))
+    (output / "progress.json").write_text(json.dumps(result, indent=2))
     (output / "badge-libraries.svg").write_text(badge("libraries*", libraries))
     (output / "badge-shaders.svg").write_text(badge("shaders", shaders))
     (output / "progress.svg").write_text(render(libraries, shaders))
@@ -531,6 +604,11 @@ def main(argv=None):
     print(
         f"shaders translated {shaders['translated']}/{shaders['total']} ({shaders['translated_percent']}%)"
     )
+    if args.exports:
+        exp = result["exports"]
+        print(
+            f"exports {exp['done']}/{exp['total']} ({exp['percent']}%) against {args.exports.name}"
+        )
     return 0
 
 
