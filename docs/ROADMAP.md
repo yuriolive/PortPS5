@@ -241,7 +241,7 @@ Checks that run on synthetic inputs and so need no GPU and no game data ([spec/v
 | Codegen metrics per PR | `portps5-g0n7` | none |
 | C++ coverage report | `portps5-02a4` | none |
 | Synthetic guest ELF end to end | `portps5-ktrt` | `portps5-sjuv` |
-| Unsupported() counts and compat tiers | `portps5-ba7d` | `portps5-w1re` |
+| Unsupported() counts and compat tiers | `portps5-ba7d` | `portps5-w1re`, `portps5-4bkt` |
 | Linux sanitizers | `portps5-pbj2` | `portps5-37j0` |
 | Fuzzing | `portps5-axx6` | `portps5-pbj2` |
 | clang-tidy and stricter warnings | `portps5-hpx7` | `portps5-qf1m` |

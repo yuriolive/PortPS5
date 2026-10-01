@@ -5,15 +5,16 @@ status: todo
 type: task
 priority: normal
 created_at: 2026-10-01T19:01:26Z
-updated_at: 2026-10-01T19:01:26Z
+updated_at: 2026-10-01T19:07:43Z
 parent: portps5-7n6b
 blocked_by:
     - portps5-w1re
+    - portps5-4bkt
 ---
 
 ## Context
 
-The compat list needs a status (boots, in-game, playable) and the blocker. Unsupported() aborts name our own library export, which is project data, not game data. Blocked by: portps5-w1re.
+The compat list needs a status (boots, in-game, playable) and the blocker. Unsupported() aborts name our own library export, which is project data, not game data. Blocked by: portps5-w1re, portps5-4bkt (the generator must exist before it gains tiers).
 
 ## Higher Goal
 
