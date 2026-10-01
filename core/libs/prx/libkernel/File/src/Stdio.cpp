@@ -1,3 +1,6 @@
+// libkernel POSIX-named file exports (open/read/write/stat/...) and directory calls.
+// POSIX-named exports return -1 with errno; sceKernel* return SCE codes. All use APS5_VABI.
+// Unimplemented calls abort through the logging abort path (never throw across the guest ABI).
 #include <cstdint>
 #include <cstddef>
 #include <limits>
@@ -99,19 +102,39 @@ static std::int64_t NativePwrite(int descriptor, const void* buf, std::size_t nb
 }
 #endif
 
+// The sceKernel* file calls report failure as a negative SCE code (0x80020000 | errno);
+// the POSIX-named exports must follow the POSIX convention instead: -1 and errno set,
+// so guest `== -1` checks and errno reads behave like FreeBSD libc.
+static std::int64_t SceToPosix(std::int64_t result) {
+    if (result < 0) {
+        errno = static_cast<int>(static_cast<std::uint32_t>(result) & 0xFFFFu);
+        return -1;
+    }
+    return result;
+}
+
 extern "C" {
 
+/**
+ * POSIX chmod over the checked path resolver. A resolver error sets errno; a host chmod failure still throws (legacy).
+ * Returns: 0, or -1 with errno (EACCES, EFAULT) for resolver errors
+ */
 int APS5_VABI chmod_nid_postfix(const char* path, int mode) {
     if (path == nullptr) {
         APS5_INVALID_ARG_EX;
     }
-    auto native = ResolvePath_nid_no_patch(path);
+    std::filesystem::path native;
+    if (const int error = ResolveKernelPath(path, native)) { errno = error; return -1; }
     if (NativeChmod(native, mode) != 0) {
         throw std::runtime_error(std::string(__func__) + ": chmod failed for " + native.string() + ", errno=" + std::to_string(errno));
     }
     return 0;
 }
 
+/**
+ * POSIX close; socket descriptors are routed to the socket layer.
+ * Returns: 0, or -1 with errno (EBADF).
+ */
 int APS5_VABI close_nid_postfix(int d) {
     if (d >= GuestSockets::FirstDescriptor) return GuestSockets::Close(d);
 #ifdef _WIN32
@@ -121,10 +144,18 @@ int APS5_VABI close_nid_postfix(int d) {
 #endif
 }
 
+/**
+ * Underscore alias of close.
+ * Returns: same as close.
+ */
 int APS5_VABI _close_nid_postfix(int descriptor) {
     return close_nid_postfix(descriptor);
 }
 
+/**
+ * POSIX flock advisory lock. Legacy behaviour: failures throw (not yet converted to errno returns).
+ * Returns: 0; throws std::runtime_error on a host failure
+ */
 int APS5_VABI flock_nid_postfix(int d, int operation) {
     if (NativeFlock(d, operation) != 0) {
 #ifdef _WIN32
@@ -136,6 +167,10 @@ int APS5_VABI flock_nid_postfix(int d, int operation) {
     return 0;
 }
 
+/**
+ * POSIX fstat on a descriptor. Legacy behaviour: a null buffer or host failure throws.
+ * Returns: 0; throws on failure
+ */
 int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
     if (sb == nullptr) {
         APS5_INVALID_ARG_EX;
@@ -144,6 +179,10 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
     return 0;
 }
 
+/**
+ * POSIX ftruncate on a descriptor. Legacy behaviour: failures throw.
+ * Returns: 0; throws on failure
+ */
 int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
     if (length < 0) {
         APS5_INVALID_ARG_EX;
@@ -161,25 +200,36 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
     return 0;
 }
 
+/**
+ * POSIX lseek; wraps sceKernelLseek.
+ * Returns: new offset, or -1 with errno.
+ */
 int64_t APS5_VABI lseek_nid_postfix(int d, int64_t offset, int whence) {
-    return static_cast<int64_t>(sceKernelLseek(d, offset, whence));
+    return SceToPosix(sceKernelLseek(d, offset, whence));
 }
 
+/**
+ * POSIX mkdir over the checked path resolver.
+ * Returns: 0, or -1 with errno (EACCES, ENOENT, EEXIST).
+ */
 int APS5_VABI mkdir_nid_postfix(const char* path, uint16_t mode) {
-    if (path == nullptr) {
-        APS5_INVALID_ARG_EX;
-    }
-    auto native = ResolvePath_nid_no_patch(path);
-    if (NativeMkdir(native, mode) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": mkdir failed for " + native.string() + ", errno=" + std::to_string(errno));
-    }
-    return 0;
+    // One implementation: sceKernelMkdir returns an SCE code (EFAULT for null, EACCES for a
+    // /savedata0 escape, EEXIST, ENOENT, ...) and SceToPosix turns it into -1 + errno.
+    return static_cast<int>(SceToPosix(sceKernelMkdir(path, mode)));
 }
 
+/**
+ * POSIX open; wraps sceKernelOpen.
+ * Returns: fd, or -1 with errno.
+ */
 int APS5_VABI open_nid_postfix(const char* path, int flags, int mode) {
-    return sceKernelOpen(path, flags, static_cast<std::uint16_t>(mode));
+    return static_cast<int>(SceToPosix(sceKernelOpen(path, flags, static_cast<std::uint16_t>(mode))));
 }
 
+/**
+ * Underscore variadic open; the mode argument is read only when O_CREAT is set.
+ * Returns: fd, or -1 with errno.
+ */
 int APS5_VABI _open_nid_postfix(const char* path, int flags, ...) {
     std::uint16_t mode = 0;
     if (flags & SCE_KERNEL_O_CREAT) {
@@ -195,9 +245,13 @@ int APS5_VABI _open_nid_postfix(const char* path, int flags, ...) {
         va_end(arguments);
 #endif
     }
-    return sceKernelOpen(path, flags, mode);
+    return static_cast<int>(SceToPosix(sceKernelOpen(path, flags, mode)));
 }
 
+/**
+ * POSIX pread (positional read). Legacy behaviour: failures throw (not yet converted to errno returns).
+ * Returns: bytes read; throws std::runtime_error on a host failure
+ */
 int64_t APS5_VABI pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t offset) {
     if (buf == nullptr) {
         APS5_INVALID_ARG_EX;
@@ -212,6 +266,10 @@ int64_t APS5_VABI pread_nid_postfix(int d, void* buf, size_t nbytes, int64_t off
     return n;
 }
 
+/**
+ * POSIX pwrite (positional write). Legacy behaviour: failures throw (not yet converted to errno returns).
+ * Returns: bytes written; throws std::runtime_error on a host failure
+ */
 int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_t nbytes, int64_t offset) {
     if (buf == nullptr) {
         APS5_INVALID_ARG_EX;
@@ -226,39 +284,71 @@ int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int d, const void* buf, size_
     return n;
 }
 
+/**
+ * POSIX read; wraps sceKernelRead.
+ * Returns: bytes read, or -1 with errno.
+ */
 int64_t APS5_VABI read_nid_postfix(int d, void* buf, uint64_t nbytes) {
-    return sceKernelRead(d, buf, static_cast<size_t>(nbytes));
+    return SceToPosix(sceKernelRead(d, buf, static_cast<size_t>(nbytes)));
 }
 
+/**
+ * Underscore alias of read.
+ * Returns: bytes read, or -1 with errno.
+ */
 std::int64_t APS5_VABI _read_nid_postfix(int descriptor, void* buffer, std::size_t count) {
-    return sceKernelRead(descriptor, buffer, count);
+    return SceToPosix(sceKernelRead(descriptor, buffer, count));
 }
 
+/**
+ * POSIX write; wraps sceKernelWrite.
+ * Returns: bytes written, or -1 with errno.
+ */
 int64_t APS5_VABI write_nid_postfix(int d, const char* str, int64_t size) {
     if (size < 0) {
         APS5_INVALID_ARG_EX;
     }
-    return sceKernelWrite(d, str, static_cast<size_t>(size));
+    return SceToPosix(sceKernelWrite(d, str, static_cast<size_t>(size)));
 }
 
+/**
+ * Underscore alias of write.
+ * Returns: bytes written, or -1 with errno.
+ */
 std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, std::size_t count) {
-    return sceKernelWrite(descriptor, buffer, count);
+    return SceToPosix(sceKernelWrite(descriptor, buffer, count));
 }
 
+/**
+ * POSIX stat; wraps sceKernelStat.
+ * Returns: 0, or -1 with errno.
+ */
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
-    return sceKernelStat(path, sb);
+    return static_cast<int>(SceToPosix(sceKernelStat(path, sb)));
 }
 
+/**
+ * POSIX unlink; wraps sceKernelUnlink.
+ * Returns: 0, or -1 with errno.
+ */
 int APS5_VABI unlink_nid_postfix(const char* path) {
-    return sceKernelUnlink(path);
+    return static_cast<int>(SceToPosix(sceKernelUnlink(path)));
 }
 
+/**
+ * Not implemented yet.
+ * Returns: never returns normally: aborts through the logging abort path.
+ */
 int APS5_VABI sceKernelCheckReachability(const char* path) {
  (void)path;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
 
+/**
+ * Not implemented yet.
+ * Returns: never returns normally: aborts through the logging abort path.
+ */
 int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
  (void)d;
  (void)sb;
@@ -266,12 +356,25 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
  return 0;
 }
 
+/**
+ * Flushes a descriptor to stable storage (save files rely on it).
+ * Returns: 0, or SCE error (EBADF, EIO).
+ */
 int APS5_VABI sceKernelFsync(int fd) {
- (void)fd;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    // Flush to stable storage; save files rely on this for crash-safe writes.
+    EnsureCrtReturnsOnBadFd();
+#ifdef _WIN32
+    if (::_commit(fd) != 0) return HostErrnoToSce(errno);
+#else
+    if (::fsync(fd) != 0) return HostErrnoToSce(errno);
+#endif
+    return 0;
 }
 
+/**
+ * Not implemented yet.
+ * Returns: never returns normally: aborts through the logging abort path.
+ */
 int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
  (void)fd;
  (void)buf;
@@ -280,6 +383,10 @@ int APS5_VABI sceKernelGetdents(int fd, char* buf, int nbytes) {
  return 0;
 }
 
+/**
+ * Not implemented yet.
+ * Returns: never returns normally: aborts through the logging abort path.
+ */
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
  (void)fd;
  (void)buf;
@@ -289,13 +396,23 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
  return 0;
 }
 
+/**
+ * Creates one directory level (POSIX semantics; the parent must exist).
+ * Returns: 0, or SCE error (EEXIST, ENOENT for a missing parent, EACCES, EFAULT).
+ */
 int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
- (void)path;
- (void)mode;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    if (path == nullptr) return SceKernelErrno(EFAULT);
+    std::filesystem::path native;
+    if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
+    // Single-level mkdir like POSIX: a missing parent is ENOENT, an existing entry EEXIST.
+    if (NativeMkdir(native, mode) != 0) return HostErrnoToSce(errno);
+    return 0;
 }
 
+/**
+ * Positional read (SCE name): not implemented yet.
+ * Returns: Not implemented yet: aborts through the logging abort path (Unsupported), never returns normally.
+ */
 int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset) {
  (void)d;
  (void)buf;
@@ -305,6 +422,10 @@ int64_t APS5_VABI sceKernelPread(int d, void* buf, size_t nbytes, int64_t offset
  return 0;
 }
 
+/**
+ * Positional write (SCE name): not implemented yet.
+ * Returns: Not implemented yet: aborts through the logging abort path (Unsupported), never returns normally.
+ */
 int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t offset) {
  (void)d;
  (void)buf;
@@ -314,6 +435,10 @@ int64_t APS5_VABI sceKernelPwrite(int d, const void* buf, size_t nbytes, int64_t
  return 0;
 }
 
+/**
+ * Renames a path: not implemented yet.
+ * Returns: Not implemented yet: aborts through the logging abort path (Unsupported), never returns normally.
+ */
 int APS5_VABI sceKernelRename(const char* from, const char* to) {
  (void)from;
  (void)to;
@@ -321,25 +446,35 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
  return 0;
 }
 
+/**
+ * Removes an empty directory.
+ * Returns: 0, or SCE error (ENOENT, ENOTEMPTY, EACCES, EFAULT for a null path).
+ */
 int APS5_VABI sceKernelRmdir(const char* path) {
-    if (path == nullptr) {
-        throw std::invalid_argument(std::string(__func__) + ": path is null");
-    }
-    auto native = ResolvePath_nid_no_patch(path);
-    if (NativeRmdir(native) != 0) {
-        throw std::runtime_error(std::string(__func__) + ": rmdir failed for " + native.string() + ", errno=" + std::to_string(errno));
-    }
+    if (path == nullptr) return SceKernelErrno(EFAULT);
+    std::filesystem::path native;
+    if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
+    // A real console returns ENOENT/ENOTEMPTY/EACCES as codes; do not throw across the ABI.
+    if (NativeRmdir(native) != 0) return HostErrnoToSce(errno);
     return 0;
 }
 
+/**
+ * POSIX rmdir; wraps sceKernelRmdir.
+ * Returns: 0, or -1 with errno.
+ */
 int APS5_VABI rmdir_nid_postfix(const char* path) {
-    return sceKernelRmdir(path);
+    return static_cast<int>(SceToPosix(sceKernelRmdir(path)));
 }
 
 }
 
 extern "C" {
 
+/**
+ * Not implemented yet (chmod with SCE naming).
+ * Returns: aborts through the logging abort path.
+ */
 int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
     (void)path;
     (void)mode;
@@ -347,6 +482,10 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
     return 0;
 }
 
+/**
+ * Not implemented yet (truncate by path).
+ * Returns: aborts through the logging abort path.
+ */
 int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t length) {
     (void)path;
     (void)length;
@@ -354,6 +493,10 @@ int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t lengt
     return 0;
 }
 
+/**
+ * Not implemented yet (set file times).
+ * Returns: aborts through the logging abort path.
+ */
 int APS5_VABI sceKernelUtimes_nid_postfix(const char* path, const KernelTimeval* times) {
     (void)path;
     (void)times;

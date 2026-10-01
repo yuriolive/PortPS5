@@ -10,10 +10,15 @@
 #include <mutex>
 #include <cerrno>
 #include <cstring>
+#include <map>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <vector>
 #include <utility>
 #include <optional>
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/config/Config.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 
 namespace {
@@ -59,20 +64,148 @@ struct WorkingDirectory {
     std::mutex mutex;
     const std::filesystem::path root = std::filesystem::canonical(std::filesystem::current_path());
     std::filesystem::path current = root;
+    // Guest top-level mount name (no slashes, e.g. "savedata0") -> host directory.
+    // Guarded by `mutex` together with the working directory.
+    std::map<std::string, std::filesystem::path> mounts;
 };
 WorkingDirectory& Directories() { static WorkingDirectory state; return state; }
-std::filesystem::path Resolve(WorkingDirectory& state, const char* path) {
+
+// Fully resolved path of an EXISTING file/directory, following symlinks and NTFS
+// junctions. libstdc++'s canonical()/weakly_canonical() on MinGW does not resolve
+// junctions (a test showed a junction inside the container leaking writes outside),
+// so Windows asks the OS for the final path of an opened handle.
+bool RealPathExisting(const std::filesystem::path& path, std::filesystem::path& out) {
+#ifdef _WIN32
+    const HANDLE handle = CreateFileW(path.c_str(), 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, nullptr);  // BACKUP_SEMANTICS: allow opening directories
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    std::wstring buffer(512, L'\0');
+    DWORD length = GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_DOS);
+    if (length >= buffer.size()) {
+        buffer.assign(length + 1, L'\0');
+        length = GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), VOLUME_NAME_DOS);
+    }
+    CloseHandle(handle);
+    if (length == 0 || length >= buffer.size()) return false;
+    buffer.resize(length);
+    // Strip the "\\?\" (or "\\?\UNC\" -> "\\") extended-length prefix for comparison.
+    if (buffer.rfind(L"\\\\?\\UNC\\", 0) == 0) buffer = L"\\\\" + buffer.substr(8);
+    else if (buffer.rfind(L"\\\\?\\", 0) == 0) buffer = buffer.substr(4);
+    out = std::filesystem::path(buffer);
+    return true;
+#else
+    std::error_code error;
+    out = std::filesystem::canonical(path, error);
+    return !error;
+#endif
+}
+
+// True when `host` (whose final component may not exist yet) stays under `root` after
+// resolving links in its deepest existing ancestor. Non-existent tail components cannot
+// be links, so they need no resolution.
+bool StaysUnderRoot(const std::filesystem::path& host, const std::filesystem::path& root) {
+    std::filesystem::path realRoot;
+    if (!RealPathExisting(root, realRoot)) return false;
+    std::filesystem::path ancestor = host;
+    std::error_code error;
+    while (!std::filesystem::exists(ancestor, error)) {
+        if (!ancestor.has_relative_path() || ancestor == ancestor.parent_path()) return false;
+        ancestor = ancestor.parent_path();
+        error.clear();
+    }
+    std::filesystem::path realAncestor;
+    if (!RealPathExisting(ancestor, realAncestor)) return false;
+    const auto relative = realAncestor.lexically_relative(realRoot);
+    return !relative.empty() && *relative.begin() != "..";
+}
+
+// Reserved mount names never fall through to <root>/<name>: an unmounted reserved
+// name must fail rather than silently write next to the executable.
+bool IsReservedMountName(const std::string& name) { return name == SaveDataMountName; }
+
+// Walks `text` ('/'-separated; joined to the guest cwd when relative) and
+// classifies it against the mount table. Returns true when the first surviving
+// component is a mount or reserved name, filling `result`. ".." is resolved on the
+// raw components BEFORE the host path is built, so a traversal out of a mount is
+// reported (EACCES) instead of being lexically clamped to the guest root.
+bool ResolveMounted(WorkingDirectory& state, const std::string& text, bool absolute,
+                    GuestPathResult& result) {
+    std::vector<std::string> stack;
+    bool escaped = false;
+    auto walk = [&](const std::string& source) {
+        std::size_t pos = 0;
+        while (pos <= source.size()) {
+            std::size_t end = source.find('/', pos);
+            if (end == std::string::npos) end = source.size();
+            const std::string part = source.substr(pos, end - pos);
+            pos = end + 1;
+            if (part.empty() || part == ".") continue;
+            if (part == "..") {
+                // Popping the mount component itself would leave the container.
+                if (stack.size() == 1 && (state.mounts.count(stack[0]) || IsReservedMountName(stack[0]))) escaped = true;
+                if (!stack.empty()) stack.pop_back();
+                continue;
+            }
+            stack.push_back(part);
+        }
+    };
+    if (!absolute) {
+        const auto relative = state.current.lexically_relative(state.root).generic_string();
+        walk(relative == "." ? std::string() : relative);
+    }
+    walk(text);
+    // A ".." that popped a mount component is a container escape even if the path
+    // then re-enters elsewhere (e.g. /app0/../savedata0/../x): deny, never clamp.
+    if (escaped) { result.error = 13; return true; }
+    if (stack.empty()) return false;
+    const auto mount = state.mounts.find(stack[0]);
+    if (mount == state.mounts.end()) {
+        if (!IsReservedMountName(stack[0])) return false;
+        result.unmounted = true;
+        return true;
+    }
+    // ':' would address NTFS alternate data streams / drive-relative paths.
+    for (std::size_t i = 1; i < stack.size(); ++i)
+        if (stack[i].find(':') != std::string::npos) escaped = true;
+    if (escaped) { result.error = 13; return true; }
+    std::filesystem::path host = mount->second;
+    for (std::size_t i = 1; i < stack.size(); ++i) host /= stack[i];
+    // Lexical checks cannot see a symlink/junction that a host user placed inside the
+    // container. The deepest existing ancestor is resolved through the OS (final path of
+    // an opened handle) and must stay under the real mount root.
+    // Residual: a link swapped in between this check and the native open (TOCTOU);
+    // guests cannot create links through the kernel API, so only a host-side actor can.
+    if (!StaysUnderRoot(host, mount->second)) { result.error = 13; return true; }
+    result.host = host.make_preferred();
+    return true;
+}
+
+std::filesystem::path Resolve(WorkingDirectory& state, const char* path, GuestPathResult* checked = nullptr) {
     std::string text(path);
     for (auto& character : text) if (character == '\\') character = '/';
     std::filesystem::path input(text);
 #ifdef _WIN32
     // Preserve the existing ability to pass explicit native drive paths.
-    if (input.has_root_name()) return input;
+    if (input.has_root_name()) { if (checked) checked->host = input; return input; }
 #endif
+    {
+        GuestPathResult mounted;
+        if (ResolveMounted(state, text, !text.empty() && text[0] == '/', mounted)) {
+            if (checked) *checked = mounted;
+            return mounted.host;
+        }
+    }
     auto guest = (std::filesystem::path("/") / state.current.lexically_relative(state.root));
     guest = (input.is_absolute() ? input : guest / input).lexically_normal();
-    if (auto aliased = ResolveAlias(guest.relative_path().generic_string())) return *aliased;
-    return (state.root / guest.relative_path()).make_preferred();
+    // Runtime path aliases (e.g. save-data "/_sm/<slot>") apply after the mount table.
+    if (auto aliased = ResolveAlias(guest.relative_path().generic_string())) {
+        if (checked) checked->host = *aliased;
+        return *aliased;
+    }
+    auto host = (state.root / guest.relative_path()).make_preferred();
+    if (checked) checked->host = host;
+    return host;
 }
 int DirectoryFailure(const std::error_code& error) {
     if (error == std::errc::permission_denied) return 13;
@@ -115,6 +248,58 @@ extern "C" std::filesystem::path ResolvePath_nid_no_patch(const char* path) {
     auto& state = Directories();
     std::lock_guard lock(state.mutex);
     return Resolve(state, path);
+}
+
+GuestPathResult ResolveGuestPathChecked(const char* path) {
+    GuestPathResult result;
+    if (!path) { result.error = 14; return result; }
+    auto& state = Directories();
+    std::lock_guard lock(state.mutex);
+    Resolve(state, path, &result);
+    return result;
+}
+
+bool MountGuestDirectory(const char* name, const std::filesystem::path& hostDirectory) {
+    if (!name || !*name || std::string(name).find_first_of("/\\:") != std::string::npos) return false;
+    std::error_code error;
+    std::filesystem::create_directories(hostDirectory, error);
+    if (error) return false;
+    const auto canonical = std::filesystem::canonical(hostDirectory, error);
+    if (error) return false;
+    auto& state = Directories();
+    std::lock_guard lock(state.mutex);
+    state.mounts[name] = canonical;
+    return true;
+}
+
+void UnmountGuestDirectory(const char* name) {
+    if (!name) return;
+    auto& state = Directories();
+    std::lock_guard lock(state.mutex);
+    state.mounts.erase(name);
+}
+
+std::filesystem::path DefaultSaveDataRoot() {
+    // docs/spec/save-data.md: %LOCALAPPDATA%/PortPS5/saves/<titleId>/.
+    // Env access goes through Config (CI policy bans getenv outside it).
+    if (const auto base = PortPS5::Config::HostEnvironmentValue("LOCALAPPDATA"))
+        return std::filesystem::path(*base) / "PortPS5" / "saves";
+    if (const auto xdg = PortPS5::Config::HostEnvironmentValue("XDG_DATA_HOME"))
+        return std::filesystem::path(*xdg) / "PortPS5" / "saves";
+    if (const auto home = PortPS5::Config::HostEnvironmentValue("HOME"))
+        return std::filesystem::path(*home) / ".local" / "share" / "PortPS5" / "saves";
+    return std::filesystem::path("savedata");
+}
+
+bool MountSaveData(const std::string& titleId, const std::filesystem::path& saveRoot) {
+    // titleId becomes a path component: allow only [A-Za-z0-9_-] so a hostile
+    // param.json cannot redirect the container ("..", separators, drive letters).
+    if (titleId.empty() || titleId.size() > 32) return false;
+    for (const char c : titleId) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if (!ok) return false;
+    }
+    return MountGuestDirectory(SaveDataMountName, saveRoot / titleId);
 }
 
 // Changes current guest working directory within guest sandbox root.
@@ -161,7 +346,7 @@ extern "C" char* APS5_VABI getcwd_nid_postfix(char* buffer, std::size_t size) {
       catch (const std::filesystem::filesystem_error& error) { errno = DirectoryFailure(error.code()); return nullptr; }
 }
 
-void Unsupported(const char* what) {
+extern "C" void Unsupported_nid_no_patch(const char* what) {
     APS5_LOG_ERR("Unsupported: %s", what ? what : "?");
     std::abort();
 }
