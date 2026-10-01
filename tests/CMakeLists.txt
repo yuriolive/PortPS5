@@ -39,6 +39,9 @@ portps5_add_gtest(kernel_pthread_tests
         kernel/PthreadMutexTests.cpp
         kernel/PthreadCondTests.cpp
         kernel/PthreadSemTests.cpp
+        kernel/PthreadSemHandleTests.cpp
+        kernel/PthreadBarrierOnceTests.cpp
+        kernel/KernelSleepSignalTests.cpp
     LIBRARIES
         libkernel
         libc

@@ -95,4 +95,42 @@ TEST(ElfReaderBounds, ValidProgramHeaderStillReads) {
     EXPECT_EQ(headers[0].Type, 1u);
 }
 
+// Invariant: ReadSegment/ReadSection reject Offset + Size that wraps past
+// UINT64_MAX. Previously Offset=16, FileSize=2^64-8 summed to 8 <= file size,
+// passed the check and built a vector from an inverted iterator range.
+TEST(ElfReaderBounds, SegmentAndSectionSizeWrapRejected) {
+    Relinker::ElfReader reader(MakeHeader(0x40));
+    Domain::ProgramHeader ph{};
+    ph.Offset = 16;
+    ph.FileSize = ~std::uint64_t{0} - 7;
+    EXPECT_THROW(reader.ReadSegment(ph), Domain::RelinkerException);
+    Domain::SectionHeader sh{};
+    sh.Offset = 16;
+    sh.SectionSize = ~std::uint64_t{0} - 7;
+    EXPECT_THROW(reader.ReadSection(sh), Domain::RelinkerException);
+    // In-range reads, including one ending exactly at the end of the file, still work.
+    ph.FileSize = 0x30;
+    EXPECT_EQ(reader.ReadSegment(ph).size(), 0x30u);
+    sh.SectionSize = 0x30;
+    EXPECT_EQ(reader.ReadSection(sh).size(), 0x30u);
+}
+
+// Invariant: ReadDynamicTags tolerates an absurd p_filesz (wrapping
+// Offset + FileSize) by clamping to the file, and stops at DT_NULL.
+TEST(ElfReaderBounds, DynamicTagsHugeFileSizeClamped) {
+    Bytes b = MakeHeader(0x40 + 32);
+    Put<std::int64_t>(b, 0x40, 5);        // DT_STRTAB
+    Put<std::uint64_t>(b, 0x48, 0x1234);
+    // Second entry is DT_NULL (already zero).
+    Relinker::ElfReader reader(std::move(b));
+    Domain::ProgramHeader dyn{};
+    dyn.Offset = 0x40;
+    dyn.FileSize = ~std::uint64_t{0} - 7;
+    const auto tags = reader.ReadDynamicTags(dyn);
+    ASSERT_EQ(tags.size(), 1u);
+    EXPECT_EQ(tags[0].Value, 0x1234u);
+    dyn.Offset = ~std::uint64_t{0} - 3;  // offset itself wraps: no tags, no crash
+    EXPECT_TRUE(reader.ReadDynamicTags(dyn).empty());
+}
+
 }  // namespace

@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -104,6 +105,63 @@ TEST(PthreadSem, ZeroWaitReturnsImmediately) {
     EXPECT_EQ(res, KERNEL_SEMA_ERROR_ETIMEDOUT);
 
     delete sem;
+}
+
+// Deleting a null handle is a guest error reported as a code, not an exception.
+TEST(PthreadSem, DeleteNullReturnsEinval) {
+    EXPECT_EQ(sceKernelDeleteSema(nullptr), KERNEL_SEMA_ERROR_EINVAL);
+}
+
+// An idle semaphore (no waiters) is freed immediately and returns OK.
+TEST(PthreadSem, DeleteIdleSemaphore) {
+    KernelSema sem = nullptr;
+    ASSERT_EQ(sceKernelCreateSema(&sem, "delete_idle", 0, 1, 5, nullptr), KERNEL_SEMA_OK);
+    EXPECT_EQ(sceKernelDeleteSema(sem), KERNEL_SEMA_OK);
+}
+
+// Regression for AnyPS5 be127fd0: deleting a semaphore wakes every sleeping
+// waiter (blocking and timed) with SCE_KERNEL_ERROR_EACCES, and the delete call
+// only returns (and frees the object) after all waiters have left it, so a
+// waiter never touches freed memory.
+TEST(PthreadSem, DeleteWakesWaitersWithEacces) {
+    KernelSema sem = nullptr;
+    ASSERT_EQ(sceKernelCreateSema(&sem, "delete_waiters", 0, 0, 5, nullptr), KERNEL_SEMA_OK);
+
+    std::atomic<int> blockingResult{-1};
+    std::atomic<int> timedResult{-1};
+    std::atomic<int> entered{0};
+    std::thread blocking([&] {
+        entered.fetch_add(1);
+        blockingResult.store(sceKernelWaitSema(sem, 1, nullptr));
+    });
+    std::thread timed([&] {
+        KernelUseconds longTimeout = 10u * 1000u * 1000u;  // 10 s, must not elapse.
+        entered.fetch_add(1);
+        timedResult.store(sceKernelWaitSema(sem, 1, &longTimeout));
+    });
+    // Deterministic rendezvous: wait until both threads are registered as
+    // waiters (waiterCount is guarded by the semaphore mutex), so the delete
+    // can never race a waiter that has not entered the semaphore yet.
+    for (;;) {
+        std::int32_t registered = 0;
+        {
+            std::lock_guard<std::mutex> lock(sem->mutex);
+            registered = sem->waiterCount;
+        }
+        if (registered == 2) {
+            break;
+        }
+        std::this_thread::yield();
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_EQ(sceKernelDeleteSema(sem), KERNEL_SEMA_OK);
+    blocking.join();
+    timed.join();
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(5));
+
+    EXPECT_EQ(blockingResult.load(), KERNEL_SEMA_ERROR_EACCES);
+    EXPECT_EQ(timedResult.load(), KERNEL_SEMA_ERROR_EACCES);
 }
 
 } // namespace

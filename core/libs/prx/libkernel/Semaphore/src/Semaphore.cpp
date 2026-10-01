@@ -1,3 +1,10 @@
+// PortPS5 libkernel counting semaphore implementation (sceKernelSema*).
+//
+// Subsystem: libkernel Semaphore (interface and error contract in
+// Semaphore.hpp). Threading: every entry point locks the per-semaphore mutex;
+// waiters sleep on its condition variable. Delete handshake: `deleted` and
+// `waiterCount` (both under the mutex) let Delete wake waiters and free the
+// object only after the last waiter has left it. All exports are APS5_VABI.
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 
 #include <stdexcept>
@@ -10,6 +17,7 @@ KernelSemaPrivate::KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCou
 
 extern "C" {
 
+/** Implements sceKernelCreateSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt) {
  (void)opt;
  if (sem == nullptr || name == nullptr || attr > 2 || init < 0 || max <= 0 || init > max) {
@@ -20,6 +28,30 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
  return KERNEL_SEMA_OK;
 }
 
+/**
+ * @brief sceKernelDeleteSema implementation.
+ * Wakes every waiter with SCE_KERNEL_ERROR_EACCES, waits until they have left
+ * the semaphore and then frees it. Using the handle after this returns (or
+ * racing a new wait/signal against the delete) is a guest bug, as on hardware.
+ * @return KERNEL_SEMA_OK, or SCE_KERNEL_ERROR_EINVAL for a null handle.
+ */
+int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
+ if (sem == nullptr) {
+  return KERNEL_SEMA_ERROR_EINVAL;
+ }
+
+ std::unique_lock<std::mutex> lock(sem->mutex);
+ sem->deleted = true;
+ sem->condition.notify_all();
+ while (sem->waiterCount > 0) {
+  sem->condition.wait(lock);
+ }
+ lock.unlock();
+ delete sem;
+ return KERNEL_SEMA_OK;
+}
+
+/** Implements sceKernelPollSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
  if (sem == nullptr || need <= 0) {
   APS5_INVALID_ARG_EX;
@@ -33,6 +65,7 @@ int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
  return KERNEL_SEMA_OK;
 }
 
+/** Implements sceKernelSignalSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
  if (sem == nullptr || count <= 0) {
   APS5_INVALID_ARG_EX;
@@ -47,20 +80,43 @@ int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
  return KERNEL_SEMA_OK;
 }
 
+/** Implements sceKernelWaitSema; parameters and return codes are documented in Semaphore.hpp. */
 int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) {
  if (sem == nullptr || need <= 0) {
   APS5_INVALID_ARG_EX;
  }
 
  std::unique_lock<std::mutex> lock(sem->mutex);
+ // A semaphore that is already being deleted must not gain new waiters: the
+ // deleter is waiting for waiterCount to reach zero.
+ if (sem->deleted) {
+  return KERNEL_SEMA_ERROR_EACCES;
+ }
+ ++sem->waiterCount;
+ // Runs with `lock` still held (declared after it, destroyed first): the last
+ // waiter out wakes the deleter blocked in sceKernelDeleteSema.
+ struct WaiterGuard {
+  KernelSemaPrivate* sem;
+  ~WaiterGuard() {
+   --sem->waiterCount;
+   sem->condition.notify_all();
+  }
+ } waiterGuard{sem};
+
  if (time == nullptr) {
-  sem->condition.wait(lock, [&] { return sem->tokenCount >= need; });
+  sem->condition.wait(lock, [&] { return sem->tokenCount >= need || sem->deleted; });
+  if (sem->deleted) {
+   return KERNEL_SEMA_ERROR_EACCES;
+  }
   sem->tokenCount -= need;
   return KERNEL_SEMA_OK;
  }
 
  auto timeout = std::chrono::microseconds(*time);
- bool acquired = sem->condition.wait_for(lock, timeout, [&] { return sem->tokenCount >= need; });
+ bool acquired = sem->condition.wait_for(lock, timeout, [&] { return sem->tokenCount >= need || sem->deleted; });
+ if (sem->deleted) {
+  return KERNEL_SEMA_ERROR_EACCES;
+ }
  if (!acquired) {
   return KERNEL_SEMA_ERROR_ETIMEDOUT;
  }
@@ -76,12 +132,6 @@ int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
  (void)sem;
  (void)count;
  (void)threads;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
- (void)sem;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }
