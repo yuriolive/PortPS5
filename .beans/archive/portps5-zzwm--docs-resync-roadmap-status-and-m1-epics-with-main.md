@@ -18,7 +18,7 @@ ROADMAP checkboxes and beans describe `main` exactly, so the next milestone seed
 
 ## Acceptance Criteria
 
-- [x] ROADMAP status line lists the merged and open PRs as of 2026-10-01
+- [x] ROADMAP status line lists the merged and open PRs as of 2026-10-01 (including #53, #68 and #88, merged after this PR opened); the `/savedata0` item is ticked
 - [x] ROADMAP M1 telemetry item and verification.md 4.3 point at the open wiring bean (portps5-w1re)
 - [x] portps5-f9a3 completed and archived; wiring tracked by portps5-w1re
 - [x] The three epics typed `epic`, retitled, refreshed against main, and their children parented
