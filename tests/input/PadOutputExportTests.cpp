@@ -113,6 +113,27 @@ TEST_F(PadOutputTest, VibrationReachesOutputQueueOnChangeOnly) {
     EXPECT_EQ(scePadSetVibration(2, &v), PAD_ERROR_INVALID_HANDLE) << "slot 1 was never opened";
 }
 
+// Invariant: repeating the same light bar colour (many titles do it every frame)
+// or resetting an already-default light bar must not bump the output sequence,
+// otherwise the window thread re-sends the whole output state, including raw
+// trigger effect reports that SDL does not de-duplicate.
+TEST_F(PadOutputTest, LightBarRepeatDoesNotBumpSequence) {
+    const PadLightBarParam c{10, 20, 30};
+    ASSERT_EQ(scePadSetLightBar(1, &c), PAD_OK);
+    std::uint32_t seen = 0xFFFFFFFFu;
+    PadOutputState out;
+    ASSERT_TRUE(PadFetchOutput_nid_postfix(0, &seen, &out));
+    ASSERT_EQ(scePadSetLightBar(1, &c), PAD_OK);
+    EXPECT_FALSE(PadFetchOutput_nid_postfix(0, &seen, &out)) << "same colour";
+    const PadLightBarParam other{10, 20, 31};
+    ASSERT_EQ(scePadSetLightBar(1, &other), PAD_OK);
+    EXPECT_TRUE(PadFetchOutput_nid_postfix(0, &seen, &out)) << "colour changed";
+    ASSERT_EQ(scePadResetLightBar(1), PAD_OK);
+    ASSERT_TRUE(PadFetchOutput_nid_postfix(0, &seen, &out));
+    ASSERT_EQ(scePadResetLightBar(1), PAD_OK);
+    EXPECT_FALSE(PadFetchOutput_nid_postfix(0, &seen, &out)) << "already default";
+}
+
 // Invariant: a light bar request is flagged valid with its colour, and a reset
 // returns to "default colour" so the poller restores it on the host pad.
 TEST_F(PadOutputTest, LightBarSetAndReset) {

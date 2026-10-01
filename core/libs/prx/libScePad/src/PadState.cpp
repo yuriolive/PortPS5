@@ -259,9 +259,14 @@ int PadManager::SetLightBar(int handle, const PadLightBarParam* param) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     slot.lightBar = *param;
-    slot.output.lightBarValid = true;
-    slot.output.lightBar = {param->r, param->g, param->b};
-    ++slot.output.sequence;
+    // Only signal the poller on a real change: titles often repeat the colour
+    // every frame and each bump re-sends the whole output state to the host pad.
+    const std::array<std::uint8_t, 3> colour{param->r, param->g, param->b};
+    if (!slot.output.lightBarValid || slot.output.lightBar != colour) {
+        slot.output.lightBarValid = true;
+        slot.output.lightBar = colour;
+        ++slot.output.sequence;
+    }
     return PAD_OK;
 }
 
@@ -276,9 +281,11 @@ int PadManager::ResetLightBar(int handle) {
         return PAD_ERROR_INVALID_HANDLE;
     }
     slot.lightBar = {};
-    slot.output.lightBarValid = false;
-    slot.output.lightBar = {};
-    ++slot.output.sequence;
+    if (slot.output.lightBarValid) {
+        slot.output.lightBarValid = false;
+        slot.output.lightBar = {};
+        ++slot.output.sequence;
+    }
     return PAD_OK;
 }
 
