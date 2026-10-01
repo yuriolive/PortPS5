@@ -230,6 +230,22 @@ A lane can start when its blockers are done. Lanes in the same row can run in pa
 | Allocator | `portps5-03bi` | `portps5-wba0` |
 | PGO | `portps5-f2r1` | `portps5-52bs`, `portps5-8x1k` |
 
+## CI reliability (cross-cutting, M2–M5)
+
+Checks that run on synthetic inputs and so need no GPU and no game data ([spec/verification.md](spec/verification.md) §1.1). Epic bean `portps5-7n6b`.
+
+| Lane | Bean | Blocked by |
+|---|---|---|
+| Vulkan validation layers | `portps5-977n` | none |
+| PE structure validation | `portps5-s9zz` | none |
+| Codegen metrics per PR | `portps5-g0n7` | none |
+| C++ coverage report | `portps5-02a4` | none |
+| Synthetic guest ELF end to end | `portps5-ktrt` | `portps5-sjuv` |
+| Unsupported() counts and compat tiers | `portps5-ba7d` | `portps5-w1re` |
+| Linux sanitizers | `portps5-pbj2` | `portps5-37j0` |
+| Fuzzing | `portps5-axx6` | `portps5-pbj2` |
+| clang-tidy and stricter warnings | `portps5-hpx7` | `portps5-qf1m` |
+| Local nightly regression | `portps5-e6xg` | `portps5-3m3u`, `portps5-52bs` |
 ## v2 seams in v1 (cross-cutting, M2–M5)
 
 Design for 2.0, implement for 1.0. A seam moves into v1 only when v1 code uses it, it is cheap now, and the 2.0 milestone that plugs into it is named. Nothing here adds a 2.0 feature to 1.0. Epic bean `portps5-epoi`.

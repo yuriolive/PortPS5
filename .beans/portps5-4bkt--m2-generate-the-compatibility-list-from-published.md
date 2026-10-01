@@ -5,11 +5,12 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-10-01T18:26:44Z
-updated_at: 2026-10-01T18:27:10Z
+updated_at: 2026-10-01T19:01:40Z
 parent: portps5-dbpx
 blocked_by:
     - portps5-3m3u
 ---
+
 
 ## Context
 
@@ -22,6 +23,7 @@ Close the ROADMAP M2 scope with a general mechanism and a test that runs without
 ## Acceptance Criteria
 
 - [ ] Generator reads compat/results/**.json and writes the list (metrics and pass/fail only)
+- [ ] Status tiers (nothing, boots, intro, in-game, playable) from results and the Unsupported() counts (portps5-ba7d)
 - [ ] pytest on synthetic results
 - [ ] ROADMAP M2 exit item ticked once Dreaming Sarah and TMNT results are published
 - [ ] ROADMAP and verification.md checkboxes ticked in the same PR
