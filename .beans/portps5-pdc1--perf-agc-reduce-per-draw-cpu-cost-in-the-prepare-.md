@@ -19,7 +19,7 @@ Hold the 60 Hz flip rate on the M2 gate titles (ROADMAP M2 perf bar) with genera
 ## Acceptance Criteria
 
 - [x] Design note and slice plan in `docs/spec/gpu-driver.md`.
-- [x] Slice 1: `BytesEqual` replaces the TextureCache memcmp, with a GoogleTest that fails when the helper is broken.
+- [x] Slice 1: `BytesEqual` replaces the TextureCache memcmp and the `GuestBufferMemory` snapshot comparisons in `AddSnapshot` and `Upload`, with a GoogleTest that fails when the helper is broken.
 - [ ] Baseline and after numbers on the release preset (average, 1% low, per-stage metrics) from a maintainer machine. Not measurable in the cloud container used for slice 1.
 - [ ] Slice 2: cheaper texture revalidation (spec open question 10).
 - [ ] Slice 3: reuse prepared `ShaderResources` state across unchanged draws.
@@ -32,4 +32,4 @@ Hold the 60 Hz flip rate on the M2 gate titles (ROADMAP M2 perf bar) with genera
 
 ## Summary of Changes
 
-Slice 1 only so far: `Graphics/include/BytesEqual.hpp`, `Graphics/src/TextureCache.cpp`, `tests/BytesEqualTests.cpp`, `CMakeLists.txt`, spec note. This bean stays open for slices 2 to 4.
+Slice 1 only so far: `Graphics/include/BytesEqual.hpp`, `Graphics/src/TextureCache.cpp`, `Graphics/src/GuestBufferMemory.cpp`, `tests/BytesEqualTests.cpp`, `CMakeLists.txt`, spec note. This bean stays open for slices 2 to 4.

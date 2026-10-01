@@ -4,8 +4,10 @@
 // Purpose: a bounded equality compare for large guest snapshots, used by the TextureCache to revalidate a
 // cached texture against guest memory on every draw. The result is exactly `memcmp(a, b, n) == 0`; only the
 // speed differs (SSE2, four 16-byte loads per iteration, early exit on the first differing block).
-// Threading: pure function, no state. Neither buffer may be written concurrently by the caller's thread;
-// a concurrent guest write can only make the answer stale, never invalid, same as memcmp.
+// Threading: pure function, no state, no synchronisation. Guest memory can be written by guest threads while this
+// runs, exactly as with the memcmp it replaces; formally that is a data race, so a result taken during a concurrent
+// write only means "equal at some instant". The TextureCache accepts that: a write it misses is seen by the next
+// revalidation, and a caller that needs a stable answer must exclude the writers itself.
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_BYTESEQUAL_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_BYTESEQUAL_HPP
 

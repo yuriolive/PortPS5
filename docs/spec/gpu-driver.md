@@ -213,10 +213,10 @@ Slices, each its own PR with a regression test that needs no game data. A textur
 
 | # | Mechanism | Status |
 |---|---|---|
-| 1 | `BytesEqual` (SSE2, `memcmp == 0` semantics) for the TextureCache whole-texture revalidation and the `GuestBufferMemory` snapshot consistency checks. Cuts the compare cost, keeps exact semantics. | in this PR |
-| 2 | Replace the per-draw compare with write-watch invalidation. The existing `GuestMemoryTracking::Watch` is page-protection based (`PAGE_NOACCESS` / `PAGE_READONLY`) and requires committed, writable, non-executable memory (`MemoryTrackingWindows.cpp` `Query`). A read-only texture page makes a kernel write into it (a file read, DMA) fail with an error instead of faulting, so this needs a design decision before code. | open, see Open question 10 |
-| 3 | Reuse prepared `ShaderResources` state (layout, descriptor writes, vertex layout) when shaders, bindings and descriptors are unchanged between draws (the idea behind AnyPS5 `29b4601` draw recipes, behaviour only). | open |
-| 4 | Batch guest reads and uploads (`GuestMemory.Read` calls, vertex and memory upload). | open |
+| 1 | `BytesEqual` (SSE2, `memcmp == 0` semantics) for the TextureCache whole-texture revalidation and the `GuestBufferMemory` snapshot consistency checks. Cuts the compare cost, keeps exact semantics. | - [x] done in PR #75 |
+| 2 | Replace the per-draw compare with write-watch invalidation. The existing `GuestMemoryTracking::Watch` is page-protection based (`PAGE_NOACCESS` / `PAGE_READONLY`) and requires committed, writable, non-executable memory (`MemoryTrackingWindows.cpp` `Query`). A read-only texture page makes a kernel write into it (a file read, DMA) fail with an error instead of faulting, so this needs a design decision before code. | - [ ] open, see Open question 10 |
+| 3 | Reuse prepared `ShaderResources` state (layout, descriptor writes, vertex layout) when shaders, bindings and descriptors are unchanged between draws (the idea behind AnyPS5 `29b4601` draw recipes, behaviour only). | - [ ] open |
+| 4 | Batch guest reads and uploads (`GuestMemory.Read` calls, vertex and memory upload). | - [ ] open |
 
 Out of scope here: the render-target-as-texture copy (`RenderTexture.cpp`), owned by another change.
 
