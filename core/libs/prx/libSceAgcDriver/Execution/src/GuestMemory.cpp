@@ -1,3 +1,9 @@
+/*
+ * Guest-memory validation and copy primitives for the AGC driver (CheckRange, Read, Write).
+ * Every access is range-checked against the host mapping and routed through the active
+ * MemoryAccessScope and the guest-memory tracker before bytes move. Thread-safe: the only
+ * shared state is the thread-local MemoryAccessScope hook defined here.
+ */
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestMemoryTracking.hpp"
 #include "prx/libSceAgcDriver/Execution/include/MemoryAccessScope.hpp"
@@ -18,6 +24,12 @@
 #endif
 
 namespace AgcDriver::GuestMemory {
+
+MemoryAccessScope::State& MemoryAccessScope::Current() {
+    static thread_local State state{nullptr, nullptr};
+    return state;
+}
+
 namespace {
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("AGC driver: ") + reason);

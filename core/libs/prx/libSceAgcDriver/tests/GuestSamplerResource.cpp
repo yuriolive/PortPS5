@@ -1,3 +1,7 @@
+/*
+ * Tests DecodeSamplerResource: S# bit-field decoding into Vulkan sampler state and rejection of
+ * unsupported fields. Pure host logic, no Vulkan device.
+ */
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include <array>
@@ -24,7 +28,7 @@ struct Fields {
     std::uint32_t filterMode = 0;
     bool disableDegamma = false;
     std::uint32_t minLodRaw = 0;
-    std::uint32_t maxLodRaw = 0x3c00;
+    std::uint32_t maxLodRaw = 0xc00;  // 12.0 in the 12-bit 4.8 fixed-point MAX_LOD field (bits 12-23 of DWORD 1)
     std::uint32_t perfMip = 0;
     std::uint32_t perfZ = 0;
     std::uint32_t lodBiasRaw = 0;
@@ -82,7 +86,7 @@ void RunGuestSamplerResourceTests() {
     Require(result.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR, "linear mip filter must decode to linear mipmap mode");
     Require(result.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, "clamp mode 2 must decode to clamp-to-edge");
     Require(!result.anisotropyEnable && result.maxAnisotropy == 1.0f, "non-anisotropic filter must leave anisotropy disabled");
-    Require(nearlyEqual(result.maxLod, static_cast<float>(0x3c00) / 256.0f), "max LOD decoded incorrectly");
+    Require(nearlyEqual(result.maxLod, 12.0f), "max LOD decoded incorrectly");
     Require(result.borderColor == VK_BORDER_COLOR_INT_TRANSPARENT_BLACK, "border color type 0 must decode to transparent black");
 
     Fields nearest = base;
