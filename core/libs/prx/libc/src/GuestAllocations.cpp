@@ -1,5 +1,15 @@
+// GuestAllocations.cpp: the guest allocation registry (ranges, protections,
+// pins) shared by libc, libkernel and the AGC driver.
+//
+// Every access goes through the tracking recursive mutex taken by Mutation (or
+// internally by the noexcept read-only queries such as Cover/Acquire). The
+// mutating exports throw std::runtime_error on contract violations and are
+// only called from host code that catches it; the noexcept queries never throw
+// so APS5_VABI callers (GuestMemoryValidation) can use them directly.
+
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestMemoryTracking.hpp"
+#include <algorithm>
 #include <limits>
 #include <iterator>
 #include <map>
@@ -237,6 +247,46 @@ Lease GuestAllocationsAcquire_nid_postfix() {
         if (range->readable && range->bytes != 0) result.push_back(range);
     }
     return result;
+}
+
+/**
+ * Walks the registered ranges in address order. Adjacent ranges with the same
+ * permission may jointly cover a request (a mapping split by mprotect leaves
+ * several Range entries), so coverage is tracked with a moving cursor rather
+ * than requiring one range to contain the whole request. A registered range
+ * without the requested permission is reported as Denied instead of falling
+ * back to the host: the registry holds the guest's idea of the protection and
+ * the host protection can differ (the write tracker makes tracked pages
+ * read-only on the host while the guest still sees them as writable).
+ */
+Coverage GuestAllocationsCover_nid_postfix(std::uint64_t address, std::uint64_t bytes, bool writable, std::uint64_t* gapStart, std::uint64_t* gapEnd) noexcept {
+    std::lock_guard lock(registry().mutex);
+    const auto end = address + bytes;  // caller rejected wrap
+    auto cursor = address;
+    const auto& ranges = registry().ranges;
+    // The only range that can start before `address` yet overlap it is the one just before upper_bound.
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;
+    for (; it != ranges.end() && cursor < end; ++it) {
+        const auto& range = *it->second;
+        const auto finish = range.address + range.bytes;
+        if (finish <= cursor) continue;
+        if (range.address >= end) break;
+        if (range.address > cursor) {
+            // Unregistered hole before the next range.
+            *gapStart = cursor;
+            *gapEnd = std::min<std::uint64_t>(range.address, end);
+            return Coverage::Gap;
+        }
+        if (writable ? !range.writable : !range.readable) return Coverage::Denied;
+        cursor = finish;
+    }
+    if (cursor < end) {
+        *gapStart = cursor;
+        *gapEnd = end;
+        return Coverage::Gap;
+    }
+    return Coverage::Covered;
 }
 
 }

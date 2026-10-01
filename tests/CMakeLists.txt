@@ -79,6 +79,19 @@ portps5_add_gtest(memory_tracker_tests
         unit
 )
 
+# Guest-pointer range validation API (GuestMemoryValidation.hpp)
+portps5_add_gtest(guest_memory_validation_tests
+    SOURCES
+        memory/GuestMemoryValidationTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Direct memory physical pool and SceKernelMemoryPool API verification
 portps5_add_gtest(direct_memory_pool_tests
     SOURCES

@@ -14,8 +14,12 @@
 // guest catch(...) swallow host exceptions.
 //
 // Guest pointers are untrusted: null/alignment/size arithmetic are validated
-// (all multiplications in uint64), but no guest-memory range-validation API
-// is exported to PRXs yet (see Open questions in docs/spec/image-codecs.md).
+// (all multiplications in uint64) and every guest range the host reads or
+// writes (param structs, context header, work memory, PNG bytes, image_info
+// and the output raster) goes through GuestMemoryValidation first. A struct
+// pointer that is unreadable gets the same code as a null one (INVALID_PARAM
+// for param structs, INVALID_HANDLE for handles); an unusable data buffer
+// gets INVALID_ADDR. The host never faults on a bad guest pointer.
 //
 // Ported from AnyPS5 a0e2f880, adapted to drop throws and add noexcept.
 
@@ -29,6 +33,7 @@
 #include "Decoder/Png.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestMemoryValidation.hpp"
 
 // Guest-visible layouts; a size change here silently breaks titles.
 static_assert(sizeof(PngDecCreateParam) == 0xC);
@@ -79,8 +84,16 @@ struct Context {
 
 static_assert(sizeof(Context) + HANDLE_ALIGNMENT - 1 <= MEMORY_SIZE);
 
+// True when the host may read/write the whole guest range (see GuestMemoryValidation.hpp).
+bool guestReadable(const void* pointer, std::size_t bytes) {
+    return GuestMemoryValidation::CheckReadable(pointer, bytes) == GuestMemoryValidation::Status::Ok;
+}
+bool guestWritable(const void* pointer, std::size_t bytes) {
+    return GuestMemoryValidation::CheckWritable(pointer, bytes) == GuestMemoryValidation::Status::Ok;
+}
+
 std::int32_t validateCreateParam(const PngDecCreateParam* param) {
-    if (!param) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    if (!param || !guestReadable(param, sizeof(PngDecCreateParam))) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     if (param->attribute != ATTRIBUTE_NONE && param->attribute != ATTRIBUTE_BIT_DEPTH_16) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     // "- 1" first so max_image_width == 0 wraps to a huge value and fails.
     if (param->max_image_width == 0 || param->max_image_width - 1 > MAX_IMAGE_WIDTH) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
@@ -90,6 +103,8 @@ std::int32_t validateCreateParam(const PngDecCreateParam* param) {
 Context* toContext(void* handle) {
     const auto address = reinterpret_cast<std::uintptr_t>(handle);
     if (address == 0 || address % HANDLE_ALIGNMENT != 0) return nullptr;
+    // A forged handle must not make the host fault while reading the tag.
+    if (!guestReadable(handle, sizeof(Context))) return nullptr;
     auto* context = reinterpret_cast<Context*>(handle);
     return context->self == context ? context : nullptr;
 }
@@ -140,6 +155,9 @@ int32_t APS5_VABI scePngDecCreate(const PngDecCreateParam* param, void* memory_a
     if (result != 0) return result;
     if (!memory_address || !handle) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (memory_size < MEMORY_SIZE) return SCE_PNG_DEC_ERROR_INVALID_WORK_MEMORY;
+    // The context is written inside the first MEMORY_SIZE bytes (alignment padding included).
+    if (!guestWritable(memory_address, MEMORY_SIZE)) return SCE_PNG_DEC_ERROR_INVALID_WORK_MEMORY;
+    if (!guestWritable(handle, sizeof(void*))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     const auto address = reinterpret_cast<std::uintptr_t>(memory_address);
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
     auto* context = new (reinterpret_cast<void*>(aligned)) Context{};
@@ -155,10 +173,13 @@ int32_t APS5_VABI scePngDecCreate(const PngDecCreateParam* param, void* memory_a
 int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, PngDecImageInfo* image_info) noexcept {
     const Context* context = toContext(handle);
     if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
-    if (!param) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    if (!param || !guestReadable(param, sizeof(PngDecDecodeParam))) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     if (!param->png_mem_addr || !param->image_mem_addr) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (param->png_mem_size == 0 || param->image_mem_size == 0) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
     if (param->pixel_format != PIXEL_FORMAT_R8G8B8A8 && param->pixel_format != PIXEL_FORMAT_B8G8R8A8) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    // The decoder reads the whole PNG, so the whole declared size must be readable.
+    if (!guestReadable(param->png_mem_addr, param->png_mem_size)) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (image_info && !guestWritable(image_info, sizeof(PngDecImageInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
 
     const std::span<const std::uint8_t> png = toBytes(param->png_mem_addr, param->png_mem_size);
     const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(png);
@@ -173,7 +194,10 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
     const std::uint64_t rowSize = static_cast<std::uint64_t>(header->width) * BYTES_PER_PIXEL;
     const std::uint64_t pitch = param->image_pitch == 0 ? rowSize : param->image_pitch;
     if (pitch < rowSize) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
-    if ((header->height - 1) * pitch + rowSize > param->image_mem_size) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
+    const std::uint64_t outputExtent = (header->height - 1) * pitch + rowSize;
+    if (outputExtent > param->image_mem_size) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
+    // image_mem_size is the title's claim; the rows below are only written inside this extent.
+    if (!guestWritable(param->image_mem_addr, static_cast<std::size_t>(outputExtent))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
 
     const std::optional<Decoder::Png::Image> image = Decoder::Png::Decode(png);
     if (!image || image->width != header->width || image->height != header->height) return SCE_PNG_DEC_ERROR_DECODE_ERROR;
@@ -202,7 +226,7 @@ int32_t APS5_VABI scePngDecDecode(void* handle, const PngDecDecodeParam* param, 
 // null, misaligned, forged or already-deleted handles.
 int32_t APS5_VABI scePngDecDelete(void* handle) noexcept {
     Context* context = toContext(handle);
-    if (!context) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
+    if (!context || !guestWritable(handle, sizeof(Context))) return SCE_PNG_DEC_ERROR_INVALID_HANDLE;
     context->self = nullptr;  // invalidates the tag so a second Delete fails
     return 0;
 }
@@ -211,9 +235,12 @@ int32_t APS5_VABI scePngDecDelete(void* handle) noexcept {
 // (null param), INVALID_ADDR (null data/info), INVALID_SIZE (zero size) or
 // INVALID_DATA (not a valid PNG header).
 int32_t APS5_VABI scePngDecParseHeader(const PngDecParseParam* param, PngDecImageInfo* image_info) noexcept {
-    if (!param) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
+    if (!param || !guestReadable(param, sizeof(PngDecParseParam))) return SCE_PNG_DEC_ERROR_INVALID_PARAM;
     if (!param->png_mem_addr || !image_info) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     if (param->png_mem_size == 0) return SCE_PNG_DEC_ERROR_INVALID_SIZE;
+    // ParseHeader reads at most the header, but the declared buffer is the contract: all of it must be readable.
+    if (!guestReadable(param->png_mem_addr, param->png_mem_size)) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
+    if (!guestWritable(image_info, sizeof(PngDecImageInfo))) return SCE_PNG_DEC_ERROR_INVALID_ADDR;
     const std::optional<Decoder::Png::Header> header = Decoder::Png::ParseHeader(toBytes(param->png_mem_addr, param->png_mem_size));
     if (!header) return SCE_PNG_DEC_ERROR_INVALID_DATA;
     fillImageInfo(*header, image_info);
