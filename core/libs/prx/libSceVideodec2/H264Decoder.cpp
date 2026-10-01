@@ -36,6 +36,13 @@ struct FrameDeleter {
 };
 using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
 
+/** Logs an FFmpeg error code with its message; failures here must never be silent (no-title-hacks rule). */
+void LogAvError(const char* what, int code) {
+    char err[AV_ERROR_MAX_STRING_SIZE] = {};
+    av_strerror(code, err, sizeof(err));
+    std::fprintf(stderr, "[VIDEODEC2] %s failed: %s\n", what, err);
+}
+
 /** Copies `rows` rows of `bytes` bytes from a strided FFmpeg plane into a packed destination. */
 void CopyRows(std::uint8_t* dst, const std::uint8_t* src, std::ptrdiff_t stride, std::uint32_t rows, std::uint32_t bytes) {
     for (std::uint32_t r = 0; r < rows; ++r) {
@@ -94,7 +101,16 @@ struct H264Decoder::Impl {
     void Collect() {
         for (;;) {
             FramePtr frame(av_frame_alloc());
-            if (!frame || avcodec_receive_frame(context, frame.get()) < 0) {
+            if (!frame) {
+                std::fprintf(stderr, "[VIDEODEC2] av_frame_alloc failed\n");
+                return;
+            }
+            const int rc = avcodec_receive_frame(context, frame.get());
+            if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) {
+                return;  // Normal end states: more input needed, or the stream was fully drained.
+            }
+            if (rc < 0) {
+                LogAvError("avcodec_receive_frame", rc);
                 return;
             }
             ready.push_back(std::move(frame));
@@ -164,9 +180,7 @@ DecodeStatus H264Decoder::Decode(const std::uint8_t* data, std::size_t size, con
     }
     av_packet_free(&packet);
     if (result < 0) {
-        char err[AV_ERROR_MAX_STRING_SIZE] = {};
-        av_strerror(result, err, sizeof(err));
-        std::fprintf(stderr, "[VIDEODEC2] avcodec_send_packet failed: %s\n", err);
+        LogAvError("avcodec_send_packet", result);
         return DecodeStatus::BadAccessUnit;
     }
     impl_->Collect();
@@ -203,7 +217,10 @@ void H264Decoder::Drain() {
         return;
     }
     impl_->draining = true;
-    avcodec_send_packet(impl_->context, nullptr);
+    const int rc = avcodec_send_packet(impl_->context, nullptr);
+    if (rc < 0 && rc != AVERROR(EAGAIN) && rc != AVERROR_EOF) {
+        LogAvError("avcodec_send_packet(drain)", rc);
+    }
     impl_->Collect();
 }
 

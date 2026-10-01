@@ -529,6 +529,16 @@ TEST_F(Videodec2Test, DecodeProbesGuestStructPointers) {
     EXPECT_EQ(sceVideodec2Decode(handle_, &in, &frame, static_cast<OutputInfo*>(bad)), kArgumentPointer);
     EXPECT_EQ(sceVideodec2Flush(handle_, static_cast<FrameBuffer*>(bad), &out), kArgumentPointer);
     EXPECT_EQ(sceVideodec2Flush(handle_, &frame, static_cast<OutputInfo*>(bad)), kArgumentPointer);
+
+    // Review regression: every other export that reads a guest struct probes it before the first read.
+    EXPECT_EQ(sceVideodec2QueryComputeMemoryInfo(static_cast<ComputeMemoryInfo*>(bad)), kArgumentPointer);
+    DecoderSetup probe;
+    std::uint64_t outHandle = 0;
+    EXPECT_EQ(sceVideodec2QueryDecoderMemoryInfo(static_cast<const DecoderConfigInfo*>(bad), &probe.memory), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2QueryDecoderMemoryInfo(&probe.config, static_cast<DecoderMemoryInfo*>(bad)), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2CreateDecoder(&probe.config, &probe.memory, static_cast<std::uint64_t*>(bad)), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2CreateDecoder(static_cast<const DecoderConfigInfo*>(bad), &probe.memory, &outHandle), kArgumentPointer);
+    EXPECT_EQ(sceVideodec2GetPictureInfo(static_cast<const OutputInfo*>(bad), fb.data(), nullptr), kArgumentPointer);
 }
 
 // Flush with nothing pending produces no picture and no error; after Flush the decoder accepts a

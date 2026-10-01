@@ -314,7 +314,7 @@ foreach(case
         # Match the specific rejection so a missing fixture or unrelated CMake error cannot pass.
         list(GET case 4 reject_flag)
         set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES
-            PASS_REGULAR_EXPRESSION "FFmpeg configure enabled CONFIG_${reject_flag};")
+            PASS_REGULAR_EXPRESSION "FFmpeg configure enabled CONFIG_${reject_flag}[;]")
     endif()
 endforeach()
 

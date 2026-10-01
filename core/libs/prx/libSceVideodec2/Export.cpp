@@ -321,6 +321,18 @@ int EmitNext(Instance& inst, std::uint64_t handle, FrameBuffer* frame, OutputInf
     return 0;
 }
 
+/**
+ * Validates a guest struct whose first word is its own size: the size word is probed readable, compared with
+ * sizeof(T) (STRUCT_SIZE), then the whole struct is probed readable (or writable when the export fills it).
+ * Returns 0, ARGUMENT_POINTER (unmapped or protected memory) or STRUCT_SIZE.
+ */
+template <typename T>
+int CheckGuestStruct(const T* p, bool write) {
+    if (!GuestRangeUsable(p, sizeof(std::uint64_t), false)) return kErrArgumentPointer;
+    if (p->thisSize != sizeof(T)) return kErrStructSize;
+    return GuestRangeUsable(p, sizeof(T), write) ? 0 : kErrArgumentPointer;
+}
+
 /** Common argument checks of Decode and Flush on the frame buffer and output reply. */
 int CheckFrameAndOutput(const FrameBuffer* frame, const OutputInfo* out) {
     if (!GuestRangeUsable(frame, sizeof(FrameBuffer), true) || !GuestRangeUsable(out, sizeof(std::uint64_t), false)) {
@@ -341,7 +353,7 @@ extern "C" {
 /** Reports the compute scratch size a queue needs. Returns 0, ARGUMENT_POINTER or STRUCT_SIZE. */
 int APS5_VABI sceVideodec2QueryComputeMemoryInfo(ComputeMemoryInfo* info) noexcept {
     if (info == nullptr) return kErrArgumentPointer;
-    if (info->thisSize != sizeof(ComputeMemoryInfo)) return kErrStructSize;
+    if (const int e = CheckGuestStruct(info, true)) return e;
     info->cpuGpuMemorySize = kMinMemorySize;
     info->cpuGpuMemory = 0;
     return 0;
@@ -354,7 +366,9 @@ int APS5_VABI sceVideodec2QueryComputeMemoryInfo(ComputeMemoryInfo* info) noexce
  */
 int APS5_VABI sceVideodec2AllocateComputeQueue(const ComputeConfigInfo* config, const ComputeMemoryInfo* memory, std::uint64_t* queue) noexcept {
     if (config == nullptr || memory == nullptr || queue == nullptr) return kErrArgumentPointer;
-    if (config->thisSize != sizeof(ComputeConfigInfo) || memory->thisSize != sizeof(ComputeMemoryInfo)) return kErrStructSize;
+    if (const int e = CheckGuestStruct(config, false)) return e;
+    if (const int e = CheckGuestStruct(memory, false)) return e;
+    if (!GuestRangeUsable(queue, sizeof(*queue), true)) return kErrArgumentPointer;
     if (config->reserved0 != 0 || config->reserved1 != 0) return kErrConfigInfo;
     if (config->computePipeId > 4) return kErrComputePipeId;
     if (config->computeQueueId > 7) return kErrComputeQueueId;
@@ -374,7 +388,8 @@ int APS5_VABI sceVideodec2ReleaseComputeQueue(std::uint64_t queue) noexcept { re
  */
 int APS5_VABI sceVideodec2QueryDecoderMemoryInfo(const DecoderConfigInfo* config, DecoderMemoryInfo* memory) noexcept {
     if (config == nullptr || memory == nullptr) return kErrArgumentPointer;
-    if (config->thisSize != sizeof(DecoderConfigInfo) || memory->thisSize != sizeof(DecoderMemoryInfo)) return kErrStructSize;
+    if (const int e = CheckGuestStruct(config, false)) return e;
+    if (const int e = CheckGuestStruct(memory, true)) return e;
     if (const int e = ValidateDecoderConfig(*config, false)) return e;
     memory->cpuMemorySize = memory->gpuMemorySize = memory->cpuGpuMemorySize = kMinMemorySize;
     memory->cpuMemory = memory->gpuMemory = memory->cpuGpuMemory = 0;
@@ -391,7 +406,9 @@ int APS5_VABI sceVideodec2QueryDecoderMemoryInfo(const DecoderConfigInfo* config
  */
 int APS5_VABI sceVideodec2CreateDecoder(const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) noexcept {
     if (config == nullptr || memory == nullptr || handle == nullptr) return kErrArgumentPointer;
-    if (config->thisSize != sizeof(DecoderConfigInfo) || memory->thisSize != sizeof(DecoderMemoryInfo)) return kErrStructSize;
+    if (const int e = CheckGuestStruct(config, false)) return e;
+    if (const int e = CheckGuestStruct(memory, false)) return e;
+    if (!GuestRangeUsable(handle, sizeof(*handle), true)) return kErrArgumentPointer;
     if (const int e = ValidateDecoderConfig(*config, true)) return e;
     if (memory->cpuMemorySize < kMinMemorySize || memory->gpuMemorySize < kMinMemorySize || memory->cpuGpuMemorySize < kMinMemorySize ||
         memory->maxFrameBufferSize < kMinMemorySize) {
@@ -494,7 +511,9 @@ int APS5_VABI sceVideodec2Reset(std::uint64_t handle) noexcept {
  */
 int APS5_VABI sceVideodec2GetPictureInfo(const OutputInfo* output, void* first, void* second) noexcept {
     if (output == nullptr || first == nullptr) return kErrArgumentPointer;
+    if (!GuestRangeUsable(output, sizeof(std::uint64_t), false)) return kErrArgumentPointer;
     if (!OutputInfoSizeValid(output->thisSize)) return kErrStructSize;
+    if (!GuestRangeUsable(output, static_cast<std::size_t>(output->thisSize), false)) return kErrArgumentPointer;
     if (output->isValid == 0 || output->pictureCount == 0 || output->frameBuffer == 0) return kErrOutputInfo;
     PictureMeta meta;
     {
