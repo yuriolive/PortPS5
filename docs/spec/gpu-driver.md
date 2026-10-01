@@ -235,6 +235,19 @@ Slices, each its own PR with a regression test that needs no game data. A textur
 
 Out of scope here: the render-target-as-texture copy (`RenderTexture.cpp`), owned by another change.
 
+### Diagnostics (planned)
+
+Triage tools for local runs, all behind `[debug]` keys ([configuration.md](configuration.md)), all off by default and free when off. Captures, dumps and reports stay in `<install>`; names and labels use numbers and hashes only, never guest strings. Epic bean `portps5-etxc`.
+
+- [ ] **Device-loss triage** (bean `portps5-636k`): `debug.gpu.breadcrumbs` records progress before and after each draw and dispatch. With `VK_AMD_buffer_marker`, `vkCmdWriteBufferMarkerAMD` writes a marker value into a host-visible buffer that the host reads after the loss. With `VK_NV_device_diagnostic_checkpoints`, `vkCmdSetCheckpointNV` inserts opaque checkpoints and the host reads the last ones per pipeline stage with `vkGetQueueCheckpointDataNV`; no buffer is involved. Either way, on `VK_ERROR_DEVICE_LOST` the driver logs `VK_EXT_device_fault` info when supported and the last completed marker or checkpoint as PM4 packet and draw index, then aborts.
+- [ ] **Debug names and labels** (bean `portps5-ey3w`): `debug.gpu.labels` names objects and labels each submit, draw and dispatch through `VK_EXT_debug_utils`, so RenderDoc, RGP and Nsight captures show queue, packet index, draw index, shader hash and render-target address.
+- [ ] **Capture trigger** (bean `portps5-bbxe`): `debug.gpu.capture = {frame, count}` calls the RenderDoc in-application API when RenderDoc is injected.
+- [ ] **Validation** (bean `portps5-c5if`): `debug.gpu.validation` enables the Khronos validation layer (`core`, `sync`, `gpu_assisted`, `best_practices`) and counts errors. The CI side (lavapipe with the layer, any error fails the job) is bean `portps5-977n`. The layer is a tool, never linked into a shipped binary (PRD R1).
+- [ ] **Shader statistics** (bean `portps5-dktm`): with `debug.recompiler.profile`, per-pipeline register counts and spills from `VK_KHR_pipeline_executable_properties`.
+- [ ] **Overlay** (bean `portps5-h2rv`): `debug.overlay` draws frame time, breakdown and counters in the presenter's final pass, never into a guest image.
+
+Vendor crash SDKs (Nsight Aftermath, Radeon GPU Detective) are proprietary and are not linked; they can be used as external tools on local runs.
+
 ## Interfaces
 
 | Peer | Contract |
@@ -261,7 +274,7 @@ Out of scope here: the render-target-as-texture copy (`RenderTexture.cpp`), owne
 | A BDA load hits an unmapped range. | Reads the fault buffer (zeros) and records the fault. The fault is reported after the batch. A repeated fault at one site is fatal in verify runs. |
 | Descriptor heap exhausted. | LRU eviction. If every slot is still in flight, the batch is split and eviction retried. |
 | Waits make no progress for more than 30 s. | The watchdog flags a softlock and dumps the per-queue PM4 positions and the label table ([verification.md](verification.md) §3). |
-| `VK_ERROR_DEVICE_LOST`. | Logs the last recorded serials and packet history (`PacketHistory`), then aborts. |
+| `VK_ERROR_DEVICE_LOST`. | Logs the last recorded serials and packet history (`PacketHistory`), then aborts. Planned: with `debug.gpu.breadcrumbs`, also the `VK_EXT_device_fault` report and the last completed draw (bean `portps5-636k`). |
 
 ## Tests
 

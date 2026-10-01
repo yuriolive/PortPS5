@@ -263,6 +263,34 @@ Deliverables:
 - [ ] clang-tidy and `-Wcast-function-type` (bean `portps5-hpx7`).
 - [ ] Local nightly regression on the maintainer machine (bean `portps5-e6xg`).
 
+## Diagnostics track (cross-cutting, M2–M5)
+
+Local triage for failures, next to the performance track's measurement. Everything sits behind `[debug]` keys, so a run that uses it never passes (verification.md §4.2), and captures, dumps and crash reports stay in `<install>`. Design: [spec/gpu-driver.md](spec/gpu-driver.md) "Diagnostics", [spec/configuration.md](spec/configuration.md), [spec/verification.md](spec/verification.md) §1 and §4.4. Epic bean `portps5-etxc`.
+
+**Deliverables:**
+- [ ] Device-loss triage: `VK_EXT_device_fault` and per-draw breadcrumbs (bean `portps5-636k`).
+- [ ] Vulkan validation layer as a debug key for local runs (bean `portps5-c5if`); the CI side is `portps5-977n` in the CI reliability track.
+- [ ] Debug names and labels mapped to guest packets (bean `portps5-ey3w`), then a RenderDoc capture trigger (bean `portps5-bbxe`).
+- [ ] Shader printf at a guest PC (bean `portps5-7e2a`).
+- [ ] Symbolised crash reports with a flight recorder (bean `portps5-cmyp`).
+- [ ] Per-pipeline shader statistics (bean `portps5-dktm`).
+- [ ] On-screen debug overlay (bean `portps5-h2rv`).
+- [ ] Sanitizer presets that link on Windows: GCC UBSan in trap mode, plus an llvm-mingw ASan spike for host-only tests (bean `portps5-hmw8`); the Linux ASan/UBSan/TSan job is `portps5-pbj2`.
+
+### Parallel lanes (diagnostics)
+
+| Lane | Bean | Blocked by |
+|---|---|---|
+| Validation layer debug key | `portps5-c5if` | none |
+| Debug names and labels | `portps5-ey3w` | none |
+| Shader statistics | `portps5-dktm` | none |
+| Sanitizer presets | `portps5-hmw8` | none |
+| Device-loss triage | `portps5-636k` | `portps5-tiod` |
+| RenderDoc trigger | `portps5-bbxe` | `portps5-ey3w` |
+| Shader printf | `portps5-7e2a` | `portps5-c5if` |
+| Crash reports | `portps5-cmyp` | `portps5-yhj7` |
+| Overlay | `portps5-h2rv` | `portps5-71o2`, `portps5-hfiw` |
+
 ## v2 seams in v1 (cross-cutting, M2–M5)
 
 Design for 2.0, implement for 1.0. A seam moves into v1 only when v1 code uses it, it is cheap now, and the 2.0 milestone that plugs into it is named. Nothing here adds a 2.0 feature to 1.0. Epic bean `portps5-epoi`.

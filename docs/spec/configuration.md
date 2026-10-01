@@ -83,6 +83,12 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Conf
 | `debug.pipeline_cache_verify` | bool | false | Recompiles on a cache hit and compares the SPIR-V ([pipeline-cache.md](pipeline-cache.md)). |
 | `debug.relinker.trace_sse4a` | bool | false | Traces the runtime SSE4a trap ([relinker.md](relinker.md)). |
 | `debug.threading.dump_futex_owners` | bool | false | Log owner thread IDs of contended futex words on watchdog softlock ([threading.md](threading.md)). |
+| `debug.gpu.breadcrumbs` | bool | false | Planned (bean `portps5-636k`). Per-draw markers for device-loss triage ([gpu-driver.md](gpu-driver.md) Diagnostics). |
+| `debug.gpu.labels` | bool | false | Planned (bean `portps5-ey3w`). `VK_EXT_debug_utils` object names and command labels, numbers and hashes only. |
+| `debug.gpu.capture` | table `{frame: u64, count: int}` | none | Planned (bean `portps5-bbxe`). RenderDoc in-application capture; warns once when RenderDoc is not injected. TOML file only, like `watch`. |
+| `debug.gpu.validation` | array of enum | `[]` | Planned (bean `portps5-c5if`). `core`, `sync`, `gpu_assisted`, `best_practices`. |
+| `debug.recompiler.printf` | array of `{shader: string, pc: u64, regs: array of string}` | `[]` | Planned (bean `portps5-7e2a`). Injects `NonSemantic.DebugPrintf` after the instruction at `pc`; instrumented modules bypass the disk pipeline cache. TOML file only. |
+| `debug.overlay` | bool | false | Planned (bean `portps5-h2rv`). On-screen frame time and counters. |
 
 **Validation.** The TOML parser is toml++ (MIT, header-only), vendored and pinned at v3.4.0 (`3rdparty/tomlplusplus/toml.hpp`, [build-toolchain.md](build-toolchain.md)).
 
