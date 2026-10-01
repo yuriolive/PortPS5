@@ -70,12 +70,13 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - [x] Filesystem sandbox: port path-traversal containment (`../`), mount sandbox isolation, and default-deny permission tests from SharpEMU (`KernelSandboxEscapeTests`) ([spec/save-data.md](spec/save-data.md));
   - [x] Save data: port directory layout, quota enforcement, atomic commit, and crash-safe snapshot restore tests;
   - [x] Input: port DualSense USB report parsing, radial deadzone calculation, rumble motor translation, and hotplug slot assignment tests from KytyPS5 (`PadHapticsTests`) ([spec/input.md](spec/input.md));
-  - [ ] Audio: port AudioOut2 port lifecycle, ATRAC9 header decoding, and mixer resampling tests from KytyPS5 (`AudioOut2PortTests`) ([spec/audio.md](spec/audio.md)).
+  - [x] Audio: port AudioOut2 port lifecycle, ATRAC9 header decoding, and mixer resampling tests from KytyPS5 (`AudioOut2PortTests`) ([spec/audio.md](spec/audio.md)).
 - [x] Save data: dialogs return scripted and logged results instead of silent stubs; saves are stored per title, with crash-safe snapshots and a one-time copy of the old `_sd` layout ([spec/save-data.md](spec/save-data.md)).
-- [ ] Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
+- [x] Audio: a single host mixer with a resampler and a soft limiter, on one device clock ([spec/audio.md](spec/audio.md)).
 - [ ] The disk pipeline cache.
-- [x] Driver: depth/stencil and conditional colour-write state decode, `VkPipelineDepthStencilStateCreateInfo` emission and pipeline-cache keying (`Graphics/src/State.cpp`). No host depth image yet.
-- [ ] Driver: host depth/stencil surface (`DB_Z_INFO` decode, attachment, clears, retile). A bound surface with an enabled test is rejected until then.
+- [x] Driver: depth/stencil and conditional colour-write state decode, `VkPipelineDepthStencilStateCreateInfo` emission and pipeline-cache keying (`Graphics/src/State.cpp`).
+- [x] Driver: host depth/stencil surface (`DB_Z_INFO` decode, host `VkImage`, render-pass attachment, `DB_RENDER_CONTROL` clears, depth bounds, `DB_DEPTH_CONTROL` bit 31 colour suppression) (`Graphics/src/DepthSurface.cpp`, [spec/gpu-driver.md](spec/gpu-driver.md)).
+- [ ] Driver: retile depth to guest memory (CPU or shader reads of a depth buffer) and guest-memory upload of never-cleared depth surfaces. A draw that depth-tests a surface that was never cleared is rejected until then.
 - [ ] `tools/regress` local regression plus results JSON upload, with the config hash and the "FMV played" rule.
 
 **Exit criteria**

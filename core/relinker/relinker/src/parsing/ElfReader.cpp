@@ -6,6 +6,7 @@
 
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/domain/Types.hpp>
+#include <algorithm>
 #include <cstring>
 
 namespace Relinker {
@@ -167,9 +168,13 @@ std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeade
 std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicHeader) const {
     std::vector<DynamicTag> tags;
     FileByteOffset offset = dynamicHeader.Offset;
-    const FileByteOffset end = dynamicHeader.Offset + dynamicHeader.FileSize;
+    // Clamp to the file and avoid Offset + FileSize wrapping past UINT64_MAX.
+    if (offset > _fileBuffer.size()) return tags;
+    const FileByteOffset available = _fileBuffer.size() - offset;
+    const FileByteOffset span = std::min<FileByteOffset>(dynamicHeader.FileSize, available);
+    const FileByteOffset end = offset + span;
 
-    while (offset + 16 <= end && offset + 16 <= _fileBuffer.size()) {
+    while (end - offset >= 16) {
         DynamicTag tag;
         tag.Tag = static_cast<std::int64_t>(_readU64At(offset));
         tag.Value = _readU64At(offset + 0x08);
@@ -209,7 +214,8 @@ FileByteOffset ElfReader::TranslateVirtualAddress(VirtualAddress address) const 
 }
 
 std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& header) const {
-    if (header.Offset + header.SectionSize > _fileBuffer.size()) {
+    // Wrap-free: Offset/SectionSize are untrusted 64-bit values.
+    if (header.Offset > _fileBuffer.size() || header.SectionSize > _fileBuffer.size() - header.Offset) {
         throw RelinkerException("Section offset out of bounds", header.Offset);
     }
 
@@ -219,7 +225,8 @@ std::vector<std::uint8_t> ElfReader::ReadSection(const SectionHeader& header) co
 }
 
 std::vector<std::uint8_t> ElfReader::ReadSegment(const ProgramHeader& header) const {
-    if (header.Offset + header.FileSize > _fileBuffer.size()) {
+    // Wrap-free: Offset/FileSize are untrusted 64-bit values.
+    if (header.Offset > _fileBuffer.size() || header.FileSize > _fileBuffer.size() - header.Offset) {
         throw RelinkerException("Segment offset out of bounds", header.Offset);
     }
 

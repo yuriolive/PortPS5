@@ -1,8 +1,8 @@
 // Unit tests for pthread identity and lifecycle — threading subsystem scope.
 //
 // Covers the return-code contract mandated by docs/spec/threading.md:
-//   - scePthreadSelf is stable and non-null on the main thread
-//   - joining/detaching the main thread is rejected with EINVAL
+//   - scePthreadSelf is stable and non-null on the main thread (adopted handle)
+//   - joining/detaching an adopted handle is rejected with EINVAL
 //   - a worker observes its own handle via scePthreadSelf, exits with a value
 //   - unlocking another thread's held mutex is rejected with EPERM
 //
@@ -22,6 +22,13 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include "prx/libkernel/Pthread/include/GuestTid.hpp"
+#include <atomic>
+#include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 // Creates a guest thread. Returns SCE_OK on success.
@@ -80,14 +87,37 @@ static void* APS5_VABI Worker(void* arg) {
     return nullptr;
 }
 
-// The host main thread is not a guest thread: scePthreadSelf() returns null
-// (Thread.cpp:440 returns thread-local currentThread, never registered for
-// the host main). Joining or detaching a null handle fails with EINVAL
-// (Thread.cpp:340-341,381-382), which is what this test pins.
-TEST(PthreadSelf, MainThreadHasNoGuestHandleAndNullJoinRejected) {
-    EXPECT_EQ(scePthreadSelf(), nullptr);
+// A host thread that never went through scePthreadCreate (the gtest main
+// thread standing in for the guest main thread) gets a lazily adopted handle
+// instead of null (AnyPS5 76b7f998): the guest routinely passes
+// scePthreadSelf() to scePthreadRename/Getprio/Setaffinity. The handle is
+// stable across calls, detached (join/detach are EINVAL like a null handle),
+// and distinct per thread. Null handles remain EINVAL.
+TEST(PthreadSelf, HostThreadGetsStableAdoptedHandle) {
+    const Pthread mainSelf = scePthreadSelf();
+    ASSERT_NE(mainSelf, nullptr);
+    EXPECT_EQ(scePthreadSelf(), mainSelf);
+    EXPECT_EQ(scePthreadJoin(mainSelf, nullptr), SCE_KERNEL_ERROR_EINVAL);
+    EXPECT_EQ(scePthreadDetach(mainSelf), SCE_KERNEL_ERROR_EINVAL);
     EXPECT_EQ(scePthreadJoin(nullptr, nullptr), SCE_KERNEL_ERROR_EINVAL);
     EXPECT_EQ(scePthreadDetach(nullptr), SCE_KERNEL_ERROR_EINVAL);
+}
+
+// Two different host threads get distinct adopted handles, each stable within
+// its own thread, and the handle stays usable through the public API (the
+// adopted handle carries a real guest tid so mutex ownership keeps working).
+TEST(PthreadSelf, AdoptedHandlesAreDistinctPerHostThread) {
+    const Pthread mainSelf = scePthreadSelf();
+    Pthread first = nullptr;
+    Pthread again = nullptr;
+    std::thread host([&] {
+        first = scePthreadSelf();
+        again = scePthreadSelf();
+    });
+    host.join();
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first, again);
+    EXPECT_NE(first, mainSelf);
 }
 
 // A worker sees its own handle (equal to the created handle, distinct from
@@ -120,6 +150,82 @@ TEST(PthreadSelf, WorkerIdentityExitValueAndForeignUnlock) {
 
     EXPECT_EQ(scePthreadMutexUnlock(&mutex), ::PortPS5::Testing::SCE_OK);
     EXPECT_EQ(scePthreadMutexDestroy(&mutex), ::PortPS5::Testing::SCE_OK);
+}
+
+// Stress for the adopted-handle lifetime: hundreds of short-lived host threads
+// each adopt a handle (scePthreadSelf) and exit, in concurrent batches, via
+// both std::thread and raw Win32 threads. The handle lives in FLS storage freed
+// at thread exit; a thread_local unique_ptr version of this crashed
+// intermittently at exit (libc.prx's __cxa_thread_atexit override), so run this
+// under `ctest --repeat until-fail:N`. Invariants: the handle is non-null,
+// stable within the thread, and distinct from every other live thread's.
+std::atomic<int> g_stressBad{0};
+
+void StressBody() {
+    const Pthread first = scePthreadSelf();
+    if (first == nullptr || scePthreadSelf() != first) {
+        g_stressBad.fetch_add(1);
+    }
+}
+
+TEST(PthreadSelf, AdoptedHandleSpawnExitStress) {
+    g_stressBad.store(0);
+    for (int batch = 0; batch < 40; ++batch) {
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 16; ++i) {
+            threads.emplace_back(StressBody);
+        }
+        for (auto& t : threads) {
+            t.join();
+        }
+    }
+#ifdef _WIN32
+    for (int i = 0; i < 100; ++i) {
+        HANDLE h = CreateThread(nullptr, 0, +[](void*) -> DWORD { StressBody(); return 0; },
+                                nullptr, 0, nullptr);
+        ASSERT_NE(h, nullptr);
+        ASSERT_EQ(WaitForSingleObject(h, 5000), WAIT_OBJECT_0);
+        CloseHandle(h);
+    }
+#endif
+    EXPECT_EQ(g_stressBad.load(), 0);
+}
+
+// Regression (CodeRabbit on PR #61): when the compact tid allocator is
+// exhausted (Ensure() returns 0) the adopted path must keep the old null answer
+// instead of publishing a handle whose guestTid is 0, and must not cache it, so
+// a later call succeeds once a tid is recycled. Exhaustion is reached cheaply by
+// allocating all 2^24-1 tids (no threads needed; ~64 MB of ids), then a fresh
+// host thread calls scePthreadSelf. Runs in its own process under ctest.
+TEST(PthreadSelf, AdoptedHandleNullWhenTidsExhaustedThenRetries) {
+    std::vector<std::uint32_t> held;
+    held.reserve(1u << 24);
+    for (;;) {
+        const std::uint32_t tid = GuestTid::AllocateForThread();
+        if (tid == 0) {
+            break;
+        }
+        held.push_back(tid);
+    }
+    ASSERT_FALSE(held.empty());
+
+    Pthread first = reinterpret_cast<Pthread>(1);
+    Pthread second = reinterpret_cast<Pthread>(1);
+    Pthread afterRecycle = nullptr;
+    std::thread host([&] {
+        first = scePthreadSelf();
+        second = scePthreadSelf();  // must retry, not return a cached bad handle.
+        GuestTid::Recycle(held.back());
+        held.pop_back();
+        afterRecycle = scePthreadSelf();
+    });
+    host.join();
+    EXPECT_TRUE(first == nullptr);
+    EXPECT_TRUE(second == nullptr);
+    EXPECT_TRUE(afterRecycle != nullptr);
+    // Remaining tids are deliberately not recycled: Recycle() scans the free
+    // list for duplicates (O(n)), so returning 16M ids would be quadratic, and
+    // the process exits right after this single-test run.
 }
 
 }  // namespace

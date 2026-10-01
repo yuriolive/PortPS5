@@ -1,3 +1,14 @@
+// AudioOut2Internal.hpp
+// PortPS5 - Internal AudioOut2 Context and Port Definitions (Audio Subsystem M2)
+//
+// Subsystem Ownership:
+//   Owned by core/libs/prx/libSceAudioOut. Defines structures, channel decoding,
+//   and downmixing helpers shared across AudioOut2 implementation modules.
+//
+// Threading & Lifecycle:
+//   - Header-only utilities and context structures.
+//   - Downmixing routines are thread-safe and non-allocating.
+
 #ifndef CORE_LIBS_PRX_LIBSCEAUDIOOUT_SRC_AUDIOOUT2INTERNAL_HPP
 #define CORE_LIBS_PRX_LIBSCEAUDIOOUT_SRC_AUDIOOUT2INTERNAL_HPP
 
@@ -12,6 +23,7 @@
 
 #include "SDL.h"
 #include "SceTypes.hpp"
+#include "AudioMixer.hpp"
 
 // Shared by the AudioOut2 context and port files (ported from AnyPS5 PR #5 as
 // general mechanisms; no per-title branches).
@@ -50,9 +62,10 @@ static constexpr std::uint32_t AUDIO_OUT2_FORMAT_CHANNELS_MASK = 0xFu;
 
 // 8-channel order FL FR C LFE RL RR SL SR (a swapped rear/side pair order sums
 // the same): the rear and side pairs fold into the front at -3 dB and the
-// centre into both sides. The LFE channel is dropped here; folding it into the
-// front pair is M2 mixer work (docs/spec/audio.md Target design).
-static constexpr float AUDIO_OUT2_DOWNMIX_GAIN = 0.7071f;
+// centre into both sides. The LFE channel folds into the front pair at -10 dB
+// (docs/spec/audio.md Target design M2).
+static constexpr float AUDIO_OUT2_DOWNMIX_GAIN = 0.70710678f;
+static constexpr float AUDIO_OUT2_LFE_GAIN = 0.31622777f;
 
 static constexpr std::size_t AUDIO_OUT2_OUTPUT_FRAME_BYTES = AUDIO_OUT2_OUTPUT_CHANNELS * sizeof(float);
 static constexpr std::uint32_t AUDIO_OUT2_OUTPUT_BYTES_PER_MS =
@@ -70,7 +83,7 @@ inline std::uint32_t AudioOut2DecodeChannels(std::uint32_t dataFormat) {
 // Downmixes one source frame onto the stereo pair, adding to out[0..1].
 // in holds `channels` floats with per-channel gains in volume. Mono fans out,
 // 2-7 channels mix the front pair directly, and 8 channels fold centre,
-// rears and sides per the order above.
+// rears and sides per the order above, with LFE folded at -10 dB.
 inline void AudioOut2DownmixFrame(const float* in, std::uint32_t channels,
                                   const float* volume, float* out) {
     float left = 0.0f;
@@ -82,9 +95,10 @@ inline void AudioOut2DownmixFrame(const float* in, std::uint32_t channels,
         right = in[1] * volume[1];
     } else {
         const float centre = in[2] * volume[2] * AUDIO_OUT2_DOWNMIX_GAIN;
-        left = in[0] * volume[0] + centre +
+        const float lfe = in[3] * volume[3] * AUDIO_OUT2_LFE_GAIN;
+        left = in[0] * volume[0] + centre + lfe +
                (in[4] * volume[4] + in[6] * volume[6]) * AUDIO_OUT2_DOWNMIX_GAIN;
-        right = in[1] * volume[1] + centre +
+        right = in[1] * volume[1] + centre + lfe +
                 (in[5] * volume[5] + in[7] * volume[7]) * AUDIO_OUT2_DOWNMIX_GAIN;
     }
     out[0] += left;
@@ -138,6 +152,7 @@ struct AudioOut2Context {
     std::uint32_t queued = 0;
     std::chrono::steady_clock::time_point playHead;
     SDL_AudioDeviceID device = 0;
+    AudioSource* source = nullptr;
     // Stereo float mix of the ports for one push.
     std::vector<float> mix;
     // Trace counters.

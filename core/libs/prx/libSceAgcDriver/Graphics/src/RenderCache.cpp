@@ -1,7 +1,11 @@
+// Resident colour target upload/download and the render-target/depth-surface cache (AGC graphics subsystem).
+// Colour data round-trips through guest memory under tracking; depth surfaces are host-only and keyed
+// by their guest write base. Serialised by the device graphics path.
 #include "prx/libSceAgcDriver/Graphics/include/RenderCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DrawQueue.hpp"
 #include "prx/libSceAgcDriver/Execution/include/MemoryAccessScope.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libc/include/general/LogMacros.hpp"
 #include <limits>
 
 namespace AgcDriver::Graphics {
@@ -93,6 +97,46 @@ std::shared_ptr<ResidentColor> RenderCache::Get(const ColorTarget& color, bool b
     }
     auto entry = std::make_shared<ResidentColor>(context, color);
     entries.emplace(color.address, entry);
+    return entry;
+}
+
+std::shared_ptr<ResidentDepth> RenderCache::GetDepth(const DepthTarget& target) {
+    Require(target.Bound(), "no depth/stencil surface is bound");
+    // The depth base identifies the surface; a stencil-only surface is identified by its own base.
+    const auto key = target.HasDepth() ? target.depthAddress : target.stencilAddress;
+    const auto it = depthEntries.find(key);
+    if (it != depthEntries.end()) {
+        if (it->second->Matches(target)) {
+            depthLastUse[key] = ++depthClock;
+            return it->second;
+        }
+        depthEntries.erase(it);
+        depthLastUse.erase(key);
+    }
+    // The images hold the only copy of the depth data, so evicting one loses its contents (a later
+    // read is then rejected as never-cleared). Bound the cache by dropping the least recently used
+    // surface, never the one being requested and never the whole cache mid-frame. Draws and cached
+    // pipelines still referencing an evicted surface keep its image alive through their shared_ptr.
+    constexpr std::size_t capacity = 32;
+    for (;;) {
+        std::vector<DepthCacheUse> uses;
+        for (const auto& [entryKey, stamp] : depthLastUse) {
+            const auto& surface = *depthEntries.at(entryKey);
+            uses.push_back({entryKey, stamp, surface.DepthDefined() || surface.StencilDefined()});
+        }
+        const auto victim = SelectDepthEviction(uses, capacity, key);
+        if (!victim) break;
+        const auto& evicted = *depthEntries.at(*victim);
+        // Visible in the log so a later never-cleared rejection can be traced to this eviction.
+        if (evicted.DepthDefined() || evicted.StencilDefined()) {
+            APS5_LOG_OUT("AGC graphics: depth surface cache full (%zu); evicting a surface with cleared contents at guest base 0x%llx", capacity, static_cast<unsigned long long>(*victim));
+        }
+        depthEntries.erase(*victim);
+        depthLastUse.erase(*victim);
+    }
+    auto entry = std::make_shared<ResidentDepth>(context, target);
+    depthEntries.emplace(key, entry);
+    depthLastUse[key] = ++depthClock;
     return entry;
 }
 
