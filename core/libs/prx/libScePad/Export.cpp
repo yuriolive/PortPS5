@@ -1,7 +1,7 @@
 // libScePad guest exports: scePad* NIDs backed by Pad::PadManager.
 // Subsystem: input (docs/spec/input.md). Every export uses APS5_VABI, returns SCE
-// codes instead of throwing, and treats guest pointers as untrusted (null-checked
-// here; slot and handle checks live in PadManager). Output calls (vibration,
+// codes instead of throwing, and validates guest pointers before access; slot and
+// handle checks live in PadManager. Output calls (vibration,
 // light bar, trigger effects) only record the request; the VideoOut window thread
 // mirrors it onto the host controller.
 #include <cstddef>
@@ -11,6 +11,7 @@
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestMemoryValidation.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadOutputMapping.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -38,7 +39,7 @@ int APS5_VABI scePadClose_nid_postfix(int handle) noexcept {
 int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) noexcept {
     const int check = Pad::PadManager::Get().CheckOpenHandle(handle);
     if (check != PAD_OK) return check;
-    if (info == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (GuestMemoryValidation::CheckWritableObject(info) != GuestMemoryValidation::Status::Ok) return PAD_ERROR_INVALID_ARG;
     std::memset(info, 0, sizeof(*info));
     info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
     return PAD_OK;
@@ -55,7 +56,10 @@ int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClass
 int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* class_data) noexcept {
     const int check = Pad::PadManager::Get().CheckOpenHandle(handle);
     if (check != PAD_OK) return check;
-    if (data == nullptr || class_data == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (GuestMemoryValidation::CheckReadableObject(data) != GuestMemoryValidation::Status::Ok ||
+        GuestMemoryValidation::CheckWritableObject(class_data) != GuestMemoryValidation::Status::Ok) {
+        return PAD_ERROR_INVALID_ARG;
+    }
     std::memset(class_data, 0, sizeof(*class_data));
     class_data->deviceClass = PAD_DEVICE_CLASS_STANDARD;
     class_data->dataValid = data->connected;
@@ -68,6 +72,9 @@ int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDev
  * PAD_ERROR_INVALID_HANDLE for a bad handle.
  */
 int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformation* info) noexcept {
+    const int check = Pad::PadManager::Get().CheckOpenHandle(handle);
+    if (check != PAD_OK) return check;
+    if (GuestMemoryValidation::CheckWritableObject(info) != GuestMemoryValidation::Status::Ok) return PAD_ERROR_INVALID_ARG;
     return Pad::PadManager::Get().GetControllerInformation(handle, info);
 }
 
@@ -95,7 +102,7 @@ int APS5_VABI scePadGetHandle(int user_id, int type, int index) noexcept {
 int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) noexcept {
     const int check = Pad::PadManager::Get().CheckOpenHandle(handle);
     if (check != PAD_OK) return check;
-    if (info == nullptr) return PAD_ERROR_INVALID_ARG;
+    if (GuestMemoryValidation::CheckWritableObject(info) != GuestMemoryValidation::Status::Ok) return PAD_ERROR_INVALID_ARG;
     std::memset(info, 0, sizeof(*info));
     return PAD_OK;
 }
@@ -139,6 +146,7 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  * PAD_ERROR_INVALID_HANDLE or PAD_ERROR_NOT_INITIALIZED otherwise.
  */
 int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) noexcept {
+    if (GuestMemoryValidation::CheckWritableObject(data) != GuestMemoryValidation::Status::Ok) return PAD_ERROR_INVALID_ARG;
     return Pad::PadManager::Get().Read(handle, data, num);
 }
 
@@ -148,6 +156,7 @@ int APS5_VABI scePadRead_nid_postfix(int handle, PadData* data, int num) noexcep
  * PAD_ERROR_NOT_INITIALIZED.
  */
 int APS5_VABI scePadReadState(int handle, PadData* data) noexcept {
+    if (GuestMemoryValidation::CheckWritableObject(data) != GuestMemoryValidation::Status::Ok) return PAD_ERROR_INVALID_ARG;
     return Pad::PadManager::Get().ReadState(handle, data);
 }
 
@@ -183,6 +192,7 @@ int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable) noe
  * for null `param` and PAD_ERROR_INVALID_HANDLE for a bad handle.
  */
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param) noexcept {
+    if (GuestMemoryValidation::CheckReadableObject(param) != GuestMemoryValidation::Status::Ok) return PAD_ERROR_INVALID_ARG;
     return Pad::PadManager::Get().SetLightBar(handle, param);
 }
 
@@ -214,14 +224,18 @@ int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled) noexcept {
  * decoded (PadOutputMapping.hpp) and forwarded to the host DualSense by the
  * window thread. Returns PAD_ERROR_INVALID_HANDLE for a bad handle,
  * PAD_ERROR_INVALID_ARG for null `param`, mask bits above 1 or a mode above 6.
- * Invariant: the guest pointer is only null-checked, because libScePad has no
- * guest-memory range API yet; exactly kTriggerEffectParamSize bytes are read.
+ * GuestMemoryValidation checks that the complete input range is readable before
+ * the parser reads exactly kTriggerEffectParamSize bytes.
  */
 int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) noexcept {
     const int check = Pad::PadManager::Get().CheckOpenHandle(handle);
     if (check != PAD_OK) return check;
+    const auto* bytes = static_cast<const std::uint8_t*>(param);
+    if (GuestMemoryValidation::CheckReadable(bytes, Pad::kTriggerEffectParamSize) != GuestMemoryValidation::Status::Ok) {
+        return PAD_ERROR_INVALID_ARG;
+    }
     Pad::TriggerEffectUpdate update;
-    if (!Pad::ParseTriggerEffectParam(static_cast<const std::uint8_t*>(param), Pad::kTriggerEffectParamSize, update)) {
+    if (!Pad::ParseTriggerEffectParam(bytes, Pad::kTriggerEffectParamSize, update)) {
         return PAD_ERROR_INVALID_ARG;
     }
     return Pad::PadManager::Get().SetTriggerEffect(handle, update);
@@ -234,6 +248,7 @@ int APS5_VABI scePadSetTriggerEffect(int handle, const void* param) noexcept {
  * bad handle.
  */
 int APS5_VABI scePadSetVibration(int handle, const PadVibrationParam* param) noexcept {
+    if (GuestMemoryValidation::CheckReadableObject(param) != GuestMemoryValidation::Status::Ok) return PAD_ERROR_INVALID_ARG;
     return Pad::PadManager::Get().SetVibration(handle, param);
 }
 
