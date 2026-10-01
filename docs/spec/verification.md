@@ -27,7 +27,7 @@ Verification has three layers. Hosted CI has no GPU and never sees game data. Ga
 | **python-quality** | Astral toolchain gate for every Python file (`tools/`, `tests/tools/`, relinker self-tests): `ruff check` + `ruff format --check` and `pytest` with coverage over `tools/` (`fail_under = 85`, `pyproject.toml`). Runs on `ubuntu-latest` via pinned `uv` (`uv.lock` committed); versions pinned in `pyproject.toml` (`dependency-groups.dev`). CTest keeps running the same suites through stdlib `unittest` on Windows so hosted unit execution never depends on PyPI. |
 
 - **Status as of 2026-10-01:** every job above exists in `.github/workflows/`, including `driver-lavapipe` (PR #82, bean `portps5-ekx3`; the stale driver tests were repaired by PR #80). `tools/regress.py` (conversion layout, launch, results JSON writer, pass rule) landed in PR #76 (bean `portps5-3m3u`); the frame-check, checkpoint-replay and shader-corpus steps of section 2 and the upload are still open. The runtime telemetry core (section 4.3, PR #78) writes the section 4.1 log, but nothing calls its `Start` at process start-up yet, so `run` reports a missing log until that wiring lands (bean `portps5-w1re`).
-- [ ] `driver-lavapipe` passes on `main` (blocked on the stale driver test fixes in PR #80; tick when its first green run lands).
+- [x] `driver-lavapipe` passed on `main` (first green run 36899020026 at 0bb6edf1, after PR #80). It is red again at 1c65844a from a `RecorderTest.SubmitMakesDeviceWritesVisibleToTheHost` segfault, tracked as bean `portps5-3maf`.
 - **Rules:** no self-hosted runner on the public repository, and no game data, dumps or saves in any artifact.
 
 ## 2. Local regression (per build, maintainer GPU machine)
