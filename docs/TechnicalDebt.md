@@ -12,8 +12,7 @@
 ### Silent stubs
 
 Throughout the project, every function at every stage either **does exactly what it's supposed to or throws an exception / logs and aborts**. Everywhere... except:
-- [M2] [libSceSaveDataDialog.native](../core/libs/prx/libSceSaveDataDialog.native/Export.cpp)
-- [M1] [libSceCommonDialog](../core/libs/prx/libSceCommonDialog/Export.cpp)
+- Resolved in PR #46 (2026-09-30): [libSceSaveDataDialog.native](../core/libs/prx/libSceSaveDataDialog.native/Export.cpp) and [libSceCommonDialog](../core/libs/prx/libSceCommonDialog/Export.cpp) now return scripted, logged results (`dialog.open` events, `IsUsed` reflects an open dialog), so they are no longer silent stubs.
 - [M3] The shader recompiler [skips barycentric coordinates](../core/shader/recompiler/Recompiler.cpp) (is not even passed to SpirvTargetOptions).
 
 ### Unknown function info
@@ -31,7 +30,7 @@ Throughout the project, every function at every stage either **does exactly what
 
 ### Functional
 
-- [M2] There's no way to specify keyboard and mouse input mapping when using a gamepad. The [default mapping](../core/libs/prx/libScePad/include/InputMapping.hpp) is always used.
+- [M2] There's no way to specify keyboard and mouse input mapping when using a gamepad. The [default mapping](../core/libs/prx/libScePad/include/InputMapping.hpp) is always used. (bean `portps5-de24`)
 - [Post-1.0] [Shader recompilation](../core/shader/recompiler/Recompiler.cpp) currently occurs right before it is transferred to Vulkan with caching. AOT recompile at relink time is deferred to post-1.0 (disk pipeline cache satisfies 1.0 stutter bar).
 - [M6] The executable file that [relinker](../core/relinker/elfpatcher/src/windows/WindowsPeWriter.cpp) generates opens the console when launched.
 - [M6] [Relinker](../core/relinker/elfpatcher/src) doesn't add an icon to the generated executable.

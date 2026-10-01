@@ -1,12 +1,12 @@
 # PortPS5 — Spec: libc replacement library
 
-Status: draft v1 · 2026-09-30
+Status: draft v1 · 2026-09-30 · synced with `main` 2026-09-30
 
 ## Scope
 
 The exports of the replacement `libc.prx` that guest code calls directly: the mspace allocator (`sceLibcMspace*`), the application heap front-ends (`malloc` family, `operator new/delete`, `aligned_alloc`), strings and bounds-checked (`_s`) functions, narrow and wide formatting and scanning, stdio extras, and the process and thread lifecycle exports (`cxa_atexit`, `cxa_finalize`, `init_env`, thread-exit destructors).
 
-Not covered here: locale and iostream ABI data ([relinker.md](relinker.md) Open questions; PR 48), the guest arena and write tracking ([guest-memory.md](guest-memory.md)), pthread and sync ([threading.md](threading.md)), and the C++ exception runtime. Paths are relative to `core/libs/prx/libc/` unless stated. "AnyPS5 main" is `upstream/main` of the AnyPS5 fork source.
+Not covered here: locale and iostream ABI data ([relinker.md](relinker.md) Open questions; PR #48, merged: `src/LocaleSupport.cpp`, `core/libs/tests/LocaleNids.cpp`, `tests/libc/GuestLocaleTests.cpp`), the guest arena and write tracking ([guest-memory.md](guest-memory.md)), pthread and sync ([threading.md](threading.md)), and the C++ exception runtime. Paths are relative to `core/libs/prx/libc/` unless stated. "AnyPS5 main" is `upstream/main` of the AnyPS5 fork source.
 
 ## Current state
 
@@ -30,7 +30,7 @@ Port the AnyPS5 libc additions that are general mechanisms, adapting each to thi
 - Guest callbacks (exit handlers, thread-exit destructors) are stored and called as System V (`APS5_VABI`) functions; a plain function pointer passes the argument in the wrong register on Windows.
 - The guest data model is LP64; the Windows host is LLP64. scanf length modifiers `l`, `z`, `j`, `t` on integer conversions are rewritten to `ll` so a guest `long` receives 8 bytes.
 
-Not ported (see the PR for the per-commit reasoning): the `PreciseWait.hpp` timing helper (unused, belongs to the kernel sync lane), the removal of libc exports a particular title replaces with its own `libc.prx`, the C11 thread layer helpers (`_Throw_C_error`, `_Random_device`, `_Lockfilelock`), and the char locale facets that PR 48 covers.
+Not ported (see the PR for the per-commit reasoning): the `PreciseWait.hpp` timing helper (unused, belongs to the kernel sync lane), the removal of libc exports a particular title replaces with its own `libc.prx`, the C11 thread layer helpers (`_Throw_C_error`, `_Random_device`, `_Lockfilelock`), and the char locale facets that PR #48 (merged) covers.
 
 ## Target design
 
@@ -69,12 +69,11 @@ GoogleTest, label `unit`, no game data: `mspace_tests` (contract, overflow regre
 - [x] Exit handler registry with dso handles and guest calling convention.
 - [x] Wide formatting, wide stream output, scanf on all hosts.
 - [x] Bounds-checked strings, allocating strings, operator new/delete family.
-- [ ] `reallocalign` of an existing block (needs an allocator usable-size query).
+- [ ] `reallocalign` of an existing block (needs an allocator usable-size query; bean `portps5-b2ya`).
 - [x] Width/precision cap in the narrow Windows formatter (`WindowsFormatting.hpp`).
 
 ## Open questions
 
-- When the replacement table pointer itself is null (not just all-empty), should the application heap fall back to the guest heap? Only the all-empty table is handled today.
+- When the replacement table pointer itself is null (not just all-empty), should the application heap fall back to the guest heap? Only the all-empty table is handled today (bean `portps5-vs66`).
 - Sony's exact constraint-handler behaviour for the `_s` printf variants is not modelled; they follow host snprintf truncation.
-- The Windows host scanf accepts a short `%Nc` field (`sscanf("hello, world
-", "%8c%8c")` returns 2, C and FreeBSD return 1). Fixing it needs an own scanf engine; not done.
+- The Windows host scanf accepts a short `%Nc` field (`sscanf("hello, world\n", "%8c%8c")` returns 2, C and FreeBSD return 1). Fixing it needs an own scanf engine; not done (bean `portps5-rw2y`).
