@@ -181,7 +181,12 @@ def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha, 
     # runner's wall clock, which starts earlier and stops after the shutdown grace wait.
     # Skipped when the runtime wrote no heartbeats (older runtime). A title that never
     # presented is measured from run start (t_ms 0): there is no loading exemption.
-    last_frame = tel["last_t_ms"] if tel["last_t_ms"] is not None else 0.0
+    if tel["last_t_ms"] is not None:
+        last_frame = tel["last_t_ms"]
+    elif not tel["dts"]:
+        last_frame = 0.0  # never presented: measured from run start
+    else:
+        last_frame = None  # frames without t_ms: no common clock, skip the tail check
     seen = tel["last_seen_t_ms"]
     tail_softlock = int(
         killed_by_runner and seen is not None and seen - last_frame > rm.SOFTLOCK_MS

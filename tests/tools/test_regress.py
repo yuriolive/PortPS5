@@ -420,3 +420,13 @@ def test_report_reuses_the_persisted_runner_outcome(tmp_path):
     assert regress.report(args_for(inst))["crashes"] == 0
     (inst / regress.RUNNER_REL).unlink()
     assert regress.report(args_for(inst))["crashes"] == 1
+
+
+def test_frames_without_t_ms_skip_the_tail_check(tmp_path):
+    # Regression (review): frames lacking t_ms plus heartbeats have no common clock, so a
+    # killed run that kept presenting must not be measured from run start.
+    inst = make_install(
+        tmp_path, [HEADER, {"ev": "frame", "dt_ms": 16}, {"ev": "heartbeat", "t_ms": 90000}]
+    )
+    killed = {"killed": True, "exit_code": None, "wall_ms": 1.0}
+    assert regress.report(args_for(inst), killed)["softlocks"] == 0
