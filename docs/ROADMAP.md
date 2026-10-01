@@ -66,7 +66,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
   - [ ] `display.present_mode` and `display.resolution_scale` reach the driver: the swapchain is hard-coded to FIFO (bean `portps5-dtwf`).
 - [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`). The telemetry core, watchdog and mixer counter integration exist ([spec/verification.md](spec/verification.md) 4.3); the start-up, presenter and guest-progress call sites are not wired, so this stays open (bean `portps5-f9a3`).
 - [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI; merged into the `build_and_test` job by PR #38).
-- [ ] Hosted CI job `driver-lavapipe`: driver suites carry the `lavapipe` label but `ci.yml` has no such job (bean `portps5-ekx3`).
+- [x] Hosted CI job `driver-lavapipe`: `ci.yml` job `driver_lavapipe` runs `ctest --preset lavapipe` on Mesa lavapipe (bean `portps5-ekx3`).
 - [ ] Inventory each gate title's imports (NIDs, audio and video codecs, dialogs). One title of five is recorded; a repeatable tool (bean `portps5-zadg`) and the other four (bean `portps5-3eh1`) are open.
   - Dreaming Sarah (recorded 2026-09-29): 815 relocation refs / 484 unique NIDs, all 484/484 resolve at link time to built prx exports (6 libc locale/iostream data symbols resolve to stubs/host-backed placeholders); `libSceVideoOut` `Config::Loader` verbatim exports resolved. Detail in [spec/relinker.md](spec/relinker.md) Open questions.
 

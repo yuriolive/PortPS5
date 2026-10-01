@@ -1,3 +1,7 @@
+/*
+ * PM4 packet catalog, validation and execution tests, including guest-memory range resolution for
+ * WRITE_DATA/COPY_DATA/DMA_DATA. Runs against the driver DLL; no Vulkan device needed.
+ */
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/MemoryAccessScope.hpp"
@@ -251,7 +255,9 @@ void testMemorySynchronization() {
     };
     const AgcDriver::GuestMemory::MemoryAccessScope scope(&memory, resolve);
     execute(state, makePacket(0x37, {0x100, low(&memory.destination), high(&memory.destination), 17}));
-    check(memory.written && !memory.read && memory.destination == 17, "WRITE_DATA did not synchronize its destination");
+    check(memory.written, "WRITE_DATA did not resolve its destination for write access");
+    check(!memory.read, "WRITE_DATA resolved a source range it does not have");
+    check(memory.destination == 17, "WRITE_DATA did not store its payload");
     for (const auto opcode : {0x40u, 0x50u}) {
         memory = {};
         const auto packet = opcode == 0x40

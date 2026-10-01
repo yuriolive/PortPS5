@@ -303,6 +303,194 @@ jobs:
             Write-Host "::warning::no shipping binaries found to hash under build/ci"
           }
 
+  # ── Driver suites on software Vulkan (Mesa lavapipe) ─────────────────
+  # Runs the ctest label `lavapipe` (libSceAgcDriver suites, Recorder,
+  # HostImport) on a CPU Vulkan device, so hosted CI covers the driver
+  # without a GPU or game data. Windows (not Linux) because the driver and
+  # its tests load vulkan-1.dll through SDL and build only with the pinned
+  # MinGW-w64 toolchain. Suites that cannot find a device GTEST_SKIP
+  # themselves; the "Verify lavapipe" step fails loudly instead, so a
+  # broken install can never turn this job into an all-skipped green.
+  driver_lavapipe:
+    name: Driver on Mesa lavapipe (software Vulkan)
+    runs-on: windows-2022
+    # A hung installer once held this job for hours; bound the whole job.
+    timeout-minutes: 45
+    needs: changes
+    if: needs.changes.outputs.code_changed == 'true'
+    env:
+      # Pinned mesa-dist-win release (MSVC build; lavapipe is a plain DLL
+      # plus ICD manifest, so the MSVC runtime is irrelevant to MinGW code).
+      MESA_VERSION: "24.3.4"
+      VULKAN_RT_VERSION: "1.3.296.0"
+      # SHA-256 of the downloads, checked before anything is extracted. Taken from two
+      # independent downloads that matched (upstream publishes no checksums); bump together
+      # with the versions above. A mismatch fails the job before extraction, including for
+      # files restored from the actions cache.
+      VULKAN_RT_SHA256: e0429f91cf356fe99e381f7d22e568ac81945669f1be1772d933a0d189230452
+      MESA_SHA256: 7ebc711ad1896ac88ab21e142f1017f8ff035f0f342bdb72fbb5e2eb881ba363
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Setup MinGW + submodules + ccache env
+        uses: ./.github/actions/mingw-setup
+
+      - name: Restore ccache
+        # Restore only: build_and_test owns the cache entry, so this job
+        # reuses its warm objects without writing a second 1 GB entry.
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-ci-${{ hashFiles('cmake/toolchains/mingw-gcc15.cmake', 'cmake/toolchains/mingw-gcc15.sha256', 'CMakePresets.json', 'CMakeLists.txt') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-ci-
+            ccache-${{ runner.os }}-refs/heads/main-
+            ccache-${{ runner.os }}-
+
+      - name: Cache Vulkan runtime and Mesa downloads
+        # Keyed on the pinned versions only, so the ~100 MB downloads happen
+        # once per version bump instead of on every run.
+        id: cache-lvp
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\lvp-dl
+          key: lvp-dl-${{ env.MESA_VERSION }}-${{ env.VULKAN_RT_VERSION }}
+
+      - name: Install Vulkan loader and Mesa lavapipe
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          # Progress rendering makes Invoke-WebRequest very slow on big files.
+          $ProgressPreference = 'SilentlyContinue'
+          $dl = "$env:RUNNER_TEMP\lvp-dl"
+          New-Item -ItemType Directory -Path $dl -Force | Out-Null
+          # 1. Vulkan loader (vulkan-1.dll): the driver and the test fixtures
+          #    SDL_LoadObject it, so it must be on the system search path.
+          # The LunarG installer cannot be used on hosted runners: its /S mode
+          # never exits (killed after 300 s) and 7-Zip finds no vulkan-1.dll
+          # inside it. LunarG also publishes the loader as a plain zip
+          # (vulkan-runtime-components.zip); take the x64 build from that.
+          function Assert-Sha256([string]$path, [string]$expected) {
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "$(Split-Path $path -Leaf) SHA256: $actual"
+            if ($actual -ne $expected) { Remove-Item $path -Force; throw "SHA256 mismatch for $path (expected $expected, got $actual)" }
+          }
+          function Find-X64Loader([string]$dir) {
+            Get-ChildItem -Recurse -Path $dir -Filter 'vulkan-1.dll' -ErrorAction SilentlyContinue | Where-Object {
+              # Select by PE machine type (0x8664 = x64), not by folder name.
+              $b = [System.IO.File]::ReadAllBytes($_.FullName)
+              $pe = [BitConverter]::ToInt32($b, 0x3C)
+              [BitConverter]::ToUInt16($b, $pe + 4) -eq 0x8664
+            } | Select-Object -First 1
+          }
+          if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) {
+            $zip = "$dl\vulkan-runtime-components.zip"
+            if (-not (Test-Path $zip)) { Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_RT_VERSION/windows/vulkan-runtime-components.zip" -OutFile $zip }
+            Assert-Sha256 $zip $env:VULKAN_RT_SHA256
+            $rtDir = "$env:RUNNER_TEMP\vulkanrt"
+            Expand-Archive -Path $zip -DestinationPath $rtDir -Force
+            Write-Host "Unpacked files:"; Get-ChildItem -Recurse $rtDir | Select-Object -First 40 | ForEach-Object { Write-Host "  $($_.FullName)" }
+            $loader = Find-X64Loader $rtDir
+            if ($null -eq $loader) { throw "no x64 vulkan-1.dll found in vulkan-runtime-components.zip" }
+            Copy-Item $loader.FullName "$env:WINDIR\System32\vulkan-1.dll" -Force
+          }
+          # 2. Mesa lavapipe (CPU Vulkan ICD) from mesa-dist-win.
+          $archive = "$dl\mesa.7z"
+          if (-not (Test-Path $archive)) { Invoke-WebRequest -Uri "https://github.com/pal1000/mesa-dist-win/releases/download/$env:MESA_VERSION/mesa3d-$env:MESA_VERSION-release-msvc.7z" -OutFile $archive }
+          Assert-Sha256 $archive $env:MESA_SHA256
+          Write-Host "Extracting Mesa archive"
+          7z x $archive "-o$env:RUNNER_TEMP\mesa" -y | Out-Null
+          $icd = Get-ChildItem -Recurse -Path "$env:RUNNER_TEMP\mesa" -Filter 'lvp_icd.x86_64.json' | Select-Object -First 1
+          if ($null -eq $icd) { throw "lvp_icd.x86_64.json not found in the Mesa archive (must be the x64 ICD, never x86/arm64)" }
+          # Hosted Windows runners are elevated, and the Vulkan loader ignores
+          # VK_DRIVER_FILES in high-integrity processes, so register the ICD
+          # in the registry instead (DWORD 0 = enabled). The manifest's
+          # library_path is relative to its own directory.
+          $key = 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name $icd.FullName -PropertyType DWord -Value 0 -Force | Out-Null
+          "LVP_ICD_MANIFEST=$($icd.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure CMake (ci preset)
+        run: cmake --preset ci
+
+      - name: Build lavapipe test targets only (ci preset)
+        # Only the executables behind the `lavapipe` label (and their
+        # link dependencies), not the full tree: build_and_test already
+        # builds everything, so this job skips relinker, tools and every
+        # unrelated prx. Keep in sync with AGC_DRIVER_TESTS and the
+        # `LABELS lavapipe` gtest in libSceAgcDriver/CMakeLists.txt; a
+        # missing target fails the build loudly.
+        run: >-
+          cmake --build --preset ci --target
+          agc_driver_tests agc_driver_flip_tests agc_driver_graphics_tests
+          agc_driver_bda_device_tests agc_driver_pm4_tests agc_shader_memory_tests
+          agc_driver_recompiler_tests agc_recorder_tests
+
+      - name: Verify lavapipe is the visible device
+        shell: pwsh
+        run: |
+          # Fail loudly if the software device is missing: individual suites
+          # skip themselves without a device, which would hide the breakage.
+          if (-not (Test-Path "$env:WINDIR\System32\vulkan-1.dll")) { throw "vulkan-1.dll not installed" }
+          if (-not (Test-Path $env:LVP_ICD_MANIFEST)) { throw "lavapipe ICD manifest missing: $env:LVP_ICD_MANIFEST" }
+          if ((Get-ItemProperty 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers').PSObject.Properties.Name -notcontains $env:LVP_ICD_MANIFEST) { throw "lavapipe ICD not registered in HKLM Khronos Vulkan Drivers" }
+          Write-Host "ICD manifest: $env:LVP_ICD_MANIFEST"
+
+      - name: Run driver tests (ctest --preset lavapipe)
+        # Bounded parallelism of 4 comes from the preset (execution.jobs).
+        # --no-tests=error: an empty label selection must not pass.
+        shell: pwsh
+        run: |
+          # -V so GoogleTest's skip messages reach the log. ctest counts a
+          # GTEST_SKIP as a pass, so an ICD that fails to load (wrong arch,
+          # unresolved library_path, missing DLL) would otherwise go green
+          # with nothing executed. Fail if any suite reports no device.
+          ctest --preset lavapipe --no-tests=error -V 2>&1 | Tee-Object -FilePath lavapipe-ctest.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+          if (Select-String -Path lavapipe-ctest.log -Pattern 'no Vulkan device|cannot load the Vulkan loader|VK_EXT_external_memory_host unavailable' -Quiet) {
+            throw "lavapipe device not visible: driver suites skipped instead of running"
+          }
+
+      - name: Stack traces for crashed lavapipe tests
+        # Failure-only diagnostics. A crash (SEGFAULT) in a driver test prints nothing useful through
+        # ctest, and the crashes seen so far moved between tests from run to run. Re-run each test ctest
+        # recorded as failed under gdb (shipped with the pinned MinGW toolchain), repeated so an
+        # intermittent crash has a chance to reproduce, and print the backtrace. Never changes the
+        # job result: the ctest step has already failed.
+        if: failure()
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $gdb = Get-Command gdb -ErrorAction SilentlyContinue
+          $log = 'build/ci/Testing/Temporary/LastTestsFailed.log'
+          if ($null -eq $gdb) { Write-Host 'gdb not found on PATH; no stack traces'; exit 0 }
+          if (-not (Test-Path $log)) { Write-Host 'no LastTestsFailed.log; nothing to diagnose'; exit 0 }
+          foreach ($line in Get-Content $log) {
+            $name = ($line -split ':', 2)[1]
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            Write-Host "::group::gdb: $name"
+            # GoogleTest cases are discovered as `Suite.Test`; the legacy runners have no dot and are
+            # standalone executables named in the ctest log, which gdb cannot be pointed at from here.
+            if ($name -notmatch '\.') { Write-Host "skipping non-GoogleTest test $name"; Write-Host '::endgroup::'; continue }
+            # Several GoogleTest executables carry the lavapipe label; pick the one that lists this test.
+            $exe = $null
+            foreach ($candidate in 'agc_recorder_tests.exe', 'agc_driver_recompiler_tests.exe') {
+              $found = Get-ChildItem -Recurse -Path build/ci -Filter $candidate | Select-Object -First 1
+              if ($null -eq $found) { continue }
+              $listed = & $found.FullName "--gtest_filter=$name" '--gtest_list_tests' 2>&1 | Out-String
+              if ($listed -match '(?m)^\s+\S') { $exe = $found; break }
+            }
+            if ($null -eq $exe) { Write-Host "no known GoogleTest executable lists $name"; Write-Host '::endgroup::'; continue }
+            & gdb -batch -ex 'set pagination off' -ex run -ex 'bt full' -ex 'thread apply all bt' --args $exe.FullName "--gtest_filter=$name" '--gtest_repeat=150' 2>&1 | Select-Object -Last 120
+            Write-Host '::endgroup::'
+          }
+
+
   python_quality:
     name: Python quality (uv, ruff, pytest, coverage)
     runs-on: ubuntu-latest
