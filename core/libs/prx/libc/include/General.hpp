@@ -74,40 +74,82 @@ struct GuestPathResult {
     bool unmounted = false;
 };
 
+// The mount-table API below is a cross-prx host API: libkernel (AppMetadata, File/Open) calls it from
+// libkernel.prx. `nid_patcher libc` hashes undecorated C++ exports, so a mangled import such as
+// `_Z23ResolveGuestPathCheckedPKc` fails libkernel's load with GetLastError 127 and the ctest
+// `prx_cross_import_check` reports it (docs/spec/build-toolchain.md "cross-prx host APIs"). Each entry
+// point is therefore the verbatim `*_nid_no_patch` C symbol, and the unsuffixed spelling is an inline
+// forwarder so existing call sites and tests keep compiling unchanged (the Unsupported pattern above).
+
 /**
  * @brief Resolves a guest path and reports containment errors as codes.
  * @param path NUL-terminated guest path; null yields error 14.
  * @return GuestPathResult (see above). Thread-safe (shares the working-directory mutex).
+ * @note Verbatim cross-prx export.
  */
-GuestPathResult ResolveGuestPathChecked(const char* path);
+extern "C" GuestPathResult ResolveGuestPathChecked_nid_no_patch(const char* path);
+/**
+ * @brief Source-compatible spelling of ResolveGuestPathChecked_nid_no_patch.
+ * @param path See ResolveGuestPathChecked_nid_no_patch.
+ * @return See ResolveGuestPathChecked_nid_no_patch.
+ */
+inline GuestPathResult ResolveGuestPathChecked(const char* path) { return ResolveGuestPathChecked_nid_no_patch(path); }
 
 /**
  * @brief Mounts a host directory at a top-level guest name.
  * @param name Mount name without '/', '\\' or ':' (e.g. "savedata0").
  * @param hostDirectory Directory to expose; created if missing.
  * @return false on an invalid name or filesystem error.
+ * @note Verbatim cross-prx export. Thread-safe (shares the working-directory mutex).
  */
-bool MountGuestDirectory(const char* name, const std::filesystem::path& hostDirectory);
+extern "C" bool MountGuestDirectory_nid_no_patch(const char* name, const std::filesystem::path& hostDirectory);
+/**
+ * @brief Source-compatible spelling of MountGuestDirectory_nid_no_patch.
+ * @param name See MountGuestDirectory_nid_no_patch.
+ * @param hostDirectory See MountGuestDirectory_nid_no_patch.
+ * @return See MountGuestDirectory_nid_no_patch.
+ */
+inline bool MountGuestDirectory(const char* name, const std::filesystem::path& hostDirectory) { return MountGuestDirectory_nid_no_patch(name, hostDirectory); }
 
 /**
  * @brief Removes a mount created by MountGuestDirectory; unknown or null names are ignored.
  * @param name Mount name.
+ * @note Verbatim cross-prx export.
  */
-void UnmountGuestDirectory(const char* name);
+extern "C" void UnmountGuestDirectory_nid_no_patch(const char* name);
+/**
+ * @brief Source-compatible spelling of UnmountGuestDirectory_nid_no_patch.
+ * @param name See UnmountGuestDirectory_nid_no_patch.
+ */
+inline void UnmountGuestDirectory(const char* name) { UnmountGuestDirectory_nid_no_patch(name); }
 
 /**
  * @brief Default save root per docs/spec/save-data.md.
  * @return LocalAppData/PortPS5/saves (the Windows known folder), with XDG/HOME and ./savedata fallbacks on other hosts.
+ * @note Verbatim cross-prx export.
  */
-std::filesystem::path DefaultSaveDataRoot();
+extern "C" std::filesystem::path DefaultSaveDataRoot_nid_no_patch();
+/**
+ * @brief Source-compatible spelling of DefaultSaveDataRoot_nid_no_patch.
+ * @return See DefaultSaveDataRoot_nid_no_patch.
+ */
+inline std::filesystem::path DefaultSaveDataRoot() { return DefaultSaveDataRoot_nid_no_patch(); }
 
 /**
  * @brief Creates saveRoot/titleId/ and mounts it at /savedata0.
  * @param titleId Title id; it becomes a path component, so only [A-Za-z0-9_-] (<= 32 chars).
  * @param saveRoot Parent directory of the per-title containers.
  * @return false for an unsafe titleId or a filesystem error.
+ * @note Verbatim cross-prx export.
  */
-bool MountSaveData(const std::string& titleId, const std::filesystem::path& saveRoot);
+extern "C" bool MountSaveData_nid_no_patch(const std::string& titleId, const std::filesystem::path& saveRoot);
+/**
+ * @brief Source-compatible spelling of MountSaveData_nid_no_patch.
+ * @param titleId See MountSaveData_nid_no_patch.
+ * @param saveRoot See MountSaveData_nid_no_patch.
+ * @return See MountSaveData_nid_no_patch.
+ */
+inline bool MountSaveData(const std::string& titleId, const std::filesystem::path& saveRoot) { return MountSaveData_nid_no_patch(titleId, saveRoot); }
 
 #define APS5_INVALID_ARG_EX throw std::invalid_argument(std::string(__func__) + ": invalid argument")
 
