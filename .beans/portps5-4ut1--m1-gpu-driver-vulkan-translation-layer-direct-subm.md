@@ -7,7 +7,8 @@ priority: high
 tags:
     - beads:portps5-3
 created_at: 2026-09-30T22:53:49Z
-updated_at: 2026-10-01T18:00:19Z
+updated_at: 2026-10-01T18:33:23Z
+parent: portps5-7dk3
 ---
 
 ## Context

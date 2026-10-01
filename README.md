@@ -27,13 +27,13 @@ Upstream optimizes for title-by-title progress, including game-specific mechanis
 
 ## Product decisions
 
-- **No title-specific code in `core/`.** Every title runs the same code. Per-title behaviour lives only in `config/games/<titleId>.toml` under `[workarounds]`, where the key names the mechanism (never the game) and is registered in [docs/workarounds.md](docs/workarounds.md). The hosted `policy` CI job enforces both directions.
+- **No title-specific code in `core/`.** Every title runs the same code. Per-title behaviour lives only in `config/games/<titleId>.toml` under `[workarounds]`, where the key names the mechanism (never the game) and is registered in [docs/workarounds.md](docs/workarounds.md). The `policy` step of the hosted `build_and_test` CI job enforces both directions.
 - **No behaviour-changing environment variables.** The `APS5_*` switches are removed. Tracing, dumps and profiling survive only as a typed `[debug]` config section.
 - **General mechanisms over game-specific fixes.** A fix that happens to help one title first (e.g. a uniform-fill or linear-copy IR pattern, GPU-side resource resolution, general block-generation write tracking) is adopted; a branch on a title ID, executable hash or shader hash is not. If a title cannot progress without a hack, work stops and the root cause goes into the subsystem spec's Open questions.
 - **Honest errors.** Real POSIX/SCE conditions return codes. Only genuinely unsupported states abort, through the logging abort path. Nothing throws across the `APS5_VABI` boundary; every host function reachable from guest code is `APS5_VABI` (System V ABI).
 - **Concurrency without global locks.** Guest synchronization uses in-place futex words on `WaitOnAddress`, not heap `std::` mutexes and no process-global lock on hot paths.
 - **GPU work resolved on the GPU.** Indirect draws, buffer resolves at submit time, and write tracking run on GPU-side paths — never by reading records back on the CPU or satisfying a wait from an unexecuted label a capture depends on.
-- **Verification splits by machine.** Hosted CI (build, unit, policy, python-quality, recompiler-golden — full job list in [spec/verification.md](docs/spec/verification.md); the `driver-lavapipe` job is planned M1 work, not running yet) has no GPU and never needs game data. GPU runs are local-only on a maintainer machine with their own dumps, and their only published output is metrics/hashes/pass-fail results JSON.
+- **Verification splits by machine.** Hosted CI (`build_and_test` with its unit, recompiler-golden and `policy` steps, `driver-lavapipe` on Mesa lavapipe, python-quality — full job list in [spec/verification.md](docs/spec/verification.md)) has no GPU and never needs game data. GPU runs are local-only on a maintainer machine with their own dumps, and their only published output is metrics/hashes/pass-fail results JSON.
 
 ## Objectives — what 1.0 means
 
@@ -84,6 +84,8 @@ For complete rules, see [.agents/rules/legal-boundary.md](.agents/rules/legal-bo
 
 ## Documentation & Architecture
 
+- **[User Guide](docs/USER_GUIDE.md):** Build PortPS5, convert a decrypted dump, run a game, configure it, and troubleshoot.
+- **[Supported Games](docs/COMPATIBILITY.md):** Titles reported as working, with status and performance.
 - **[PRD (Product Requirements Document)](docs/PRD.md):** 1.0 product goals, gate titles, performance bar, and reference hardware tier.
 - **[Roadmap to 1.0](docs/ROADMAP.md):** Phased milestones (M0–M6) with measurable exit criteria.
 - **[Subsystem Specifications](docs/spec/README.md):** Technical specs for relinker, shader recompiler, GPU driver, memory, threading, audio, input, and verification.
@@ -96,7 +98,7 @@ For complete rules, see [.agents/rules/legal-boundary.md](.agents/rules/legal-bo
 
 - **OS:** Windows 10/11 (64-bit).
 - **Compiler:** MinGW-w64 GCC 15.2 (ucrt-posix-seh). MSVC is not supported because it lacks `sysv_abi` function attribute support.
-- **Build System:** CMake 3.20+ with CMakePresets.
+- **Build System:** CMake 3.25+ with CMakePresets (`CMakePresets.json` uses presets schema v6).
 - **Graphics API:** Vulkan 1.3 capable GPU and drivers.
 - **Dependencies:** SDL2 (windowing, audio, input), Vulkan SDK.
 
@@ -110,7 +112,7 @@ See [docs/spec/build-toolchain.md](docs/spec/build-toolchain.md) for details on 
 core/relinker/        ELF -> PE relinker, NID resolution, --to-intel
 core/libs/prx/<lib>/  Replacement system libraries (libc, libkernel, libSceAgcDriver, ...)
 core/shader/          RDNA2 -> SSA IR -> SPIR-V recompiler
-config/               global.toml and per-title overrides (config/games/<titleId>.toml)
+config/               global.toml; per-title overrides go in config/games/<titleId>.toml, created per title (none yet)
 docs/                 PRD, ROADMAP, subsystem specifications
 seeds/                Milestone work plans for agentic workflows
 .beans/               Task tracker (one markdown file per task; CLI `beans`, see AGENTS.md)

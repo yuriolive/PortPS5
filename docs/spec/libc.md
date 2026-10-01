@@ -1,12 +1,12 @@
 # PortPS5 — Spec: libc replacement library
 
-Status: draft v1 · 2026-09-30 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-30 · synced with `main` 2026-10-01
 
 ## Scope
 
 The exports of the replacement `libc.prx` that guest code calls directly: the mspace allocator (`sceLibcMspace*`), the application heap front-ends (`malloc` family, `operator new/delete`, `aligned_alloc`), strings and bounds-checked (`_s`) functions, narrow and wide formatting and scanning, stdio extras, and the process and thread lifecycle exports (`cxa_atexit`, `cxa_finalize`, `init_env`, thread-exit destructors).
 
-Not covered here: locale and iostream ABI data ([relinker.md](relinker.md) Open questions; PR #48, merged: `src/LocaleSupport.cpp`, `core/libs/tests/LocaleNids.cpp`, `tests/libc/GuestLocaleTests.cpp`), the guest arena and write tracking ([guest-memory.md](guest-memory.md)), pthread and sync ([threading.md](threading.md)), and the C++ exception runtime. Paths are relative to `core/libs/prx/libc/` unless stated. "AnyPS5 main" is `upstream/main` of the AnyPS5 fork source.
+Not covered here: locale and iostream ABI data ([relinker.md](relinker.md) Open questions; PR #48, merged: `src/LocaleSupport.cpp`, `core/libs/tests/LocaleNids.cpp`, `tests/libc/GuestLocaleTests.cpp`), the guest arena and write tracking ([guest-memory.md](guest-memory.md)), guest-pointer validation (`GuestMemoryValidation`, [guest-memory.md](guest-memory.md) "Validation API"), pthread and sync ([threading.md](threading.md)), and the C++ exception runtime. Paths are relative to `core/libs/prx/libc/` unless stated. "AnyPS5 main" is `upstream/main` of the AnyPS5 fork source.
 
 ## Current state
 
@@ -44,7 +44,7 @@ Not ported (see the PR for the per-commit reasoning): the `PreciseWait.hpp` timi
 
 ## Interfaces
 
-Every export is `extern "C"`, `APS5_VABI`, named `<name>_nid_postfix`, with a doc comment stating parameters and return/errno values (enforced by `tools/check_comments.py`). Cross-prx host API: `CxaFinalize_nid_no_patch(void*)` (declared in `include/General.hpp`).
+Every export is `extern "C"`, `APS5_VABI`, named `<name>_nid_postfix`, with a doc comment stating parameters and return/errno values (enforced by `tools/check_comments.py`). Cross-prx host API, all declared in `include/General.hpp:16-59` and imported by name from `libc.prx`: `CxaFinalize_nid_no_patch(void*)`; `Unsupported_nid_no_patch(const char*)` (exported verbatim since #68 so dependent prx load; `NotImplemented_nid_no_patch` aborts through `Unsupported`); `ResolvePath_nid_no_patch`, `AddPathAlias_nid_no_patch`, `RemovePathAlias_nid_no_patch` (guest path aliases); `RegisterCommonDialogActive_nid_no_patch`, `IsAnyCommonDialogActive_nid_no_patch` (common-dialog active flag); `SetSaveDataBaseDirOverride_nid_no_patch`, `GetSaveDataBaseDirOverride_nid_no_patch`. `tools/check_prx_imports.py` (ctest `prx_cross_import_check`) fails when a prx imports one of these under a name libc does not export.
 
 ## Failure modes
 

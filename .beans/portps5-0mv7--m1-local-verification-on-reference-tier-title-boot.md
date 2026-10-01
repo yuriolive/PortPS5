@@ -7,7 +7,8 @@ priority: normal
 tags:
     - beads:portps5-5
 created_at: 2026-09-30T22:53:49Z
-updated_at: 2026-10-01T17:59:13Z
+updated_at: 2026-10-01T18:33:23Z
+parent: portps5-7dk3
 ---
 
 

@@ -89,7 +89,7 @@ docs/                 PRD, ROADMAP, spec/
 
 ## Toolchain
 
-- C++ (C++20 today; moving to C++23 in Milestone 0) with CMake 3.20 or later.
+- C++ (C++20 today; moving to C++23 in Milestone 0) with CMake 3.25 or later (CMakePresets schema v6; the `cmake_minimum_required` bump is bean `portps5-vtlf`).
 - MinGW-w64 GCC 15.2 (winlibs, ucrt-posix-seh) is the only supported Windows compiler. MSVC cannot express `sysv_abi`, so don't propose it.
 - Vulkan backend, with SDL2 for windowing, audio and input.
 

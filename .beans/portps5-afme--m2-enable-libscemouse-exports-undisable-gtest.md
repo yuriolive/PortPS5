@@ -7,8 +7,10 @@ priority: low
 tags:
     - beads:portps5-10
 created_at: 2026-09-30T22:53:48Z
-updated_at: 2026-09-30T23:57:05Z
+updated_at: 2026-10-01T18:33:21Z
+parent: portps5-dbpx
 ---
+
 
 ## Context
 

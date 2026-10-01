@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Guest memory
 
-Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-10-01
 
 ## Scope
 
@@ -24,7 +24,9 @@ Everything that places, protects, describes and tracks guest-visible memory: the
 | Piece | State on `main` | Where |
 |---|---|---|
 | Extent allocator | Landed (PR #32): treap with subtree-max, no throws, 10^6-operation differential test against the reference linear first-fit. Referenced only by tests; no arena uses it. | `libc/include/GuestArenaExtent.hpp`, `libc/src/GuestArenaExtent.cpp`, `tests/memory/GuestArenaExtentTests.cpp` |
-| Direct memory and pools | Landed (PR #39): physical block tracking, pool exports, SCE error codes without host exceptions. | `libkernel/DirectMemory/MemoryPool.cpp`, `tests/memory/DirectMemoryPoolTests.cpp` |
+| Direct memory and pools | Landed (PR #39): physical block tracking, pool exports, SCE error codes without host exceptions. PR #84 adds `sceKernelDirectMemoryQuery`, `sceKernelAvailableDirectMemorySize` and the allocation/release overflow hardening (see "Mapping, unmap and direct-memory query semantics"). | `libkernel/DirectMemory/MemoryPool.cpp`, `libkernel/DirectMemory/Export.cpp`, `tests/memory/DirectMemoryPoolTests.cpp`, `tests/memory/DirectMemoryExportTests.cpp` |
+| Validation API | Landed (PR #83): `GuestMemoryValidation` range checks for PRX exports (see "Validation API"). | `libc/include/GuestMemoryValidation.hpp`, `libc/src/GuestMemoryValidation.cpp`, `tests/memory/GuestMemoryValidationTests.cpp` |
+| Mappings, unmap, `DirectMemoryQuery` | Landed (PR #84): address hints, `NO_OVERWRITE`, FreeBSD-style unmap over registered fragments, direct-memory query. | `libc/src/GuestAllocations.cpp`, `libkernel/DirectMemory/`, `tests/memory/MemoryMappingTests.cpp`, `tests/memory/GuestAllocationsUnmapTests.cpp` |
 | Write tracker | Landed (PR #40): `WriteWatchTracker` (64 KiB blocks, 64-bit global generations, 1 GiB shards), `PageStateTable`, explicit `PinToken`s, flush hook, `MarkWritten`. Referenced only by tests; the runtime still has `NullTracker` semantics. | `libc/include/WriteTracker.hpp`, `libc/src/WriteTracker.cpp`, `core/libs/tests/WriteTracker.cpp` |
 | Tracking tests | Landed (PR #52): `GuestMemoryTracking::Watch` behaviour. | `tests/memory/MemoryTrackerTests.cpp` |
 | Arena reservation, heap spans, registry interval map | Not landed. `GuestAllocations` is still the baseline `std::map` registry. | bean `portps5-421p` |
@@ -160,7 +162,7 @@ struct IWriteTracker {
 - **Registered ranges are authoritative.** `GuestAllocationsCover` walks the registry with a moving cursor, so a request may span several entries (an `mprotect` splits a mapping). A registered entry without the needed permission is `AccessDenied`; the host protection is not consulted, because the write tracker makes tracked pages read-only on the host while the guest still sees them as writable.
 - **Unregistered gaps use the host mapping.** Thread stacks, TLS and data of modules loaded after the main image are not in the registry, and a title legitimately passes stack buffers. Those runs are checked against the host (Win32 `VirtualQuery`: `MEM_COMMIT`, no `PAGE_GUARD`/`PAGE_NOACCESS`, protection class; Linux `/proc/self/maps`, used by the unit tests). A hole is `Unmapped`.
 - **Snapshot only.** A concurrent `munmap`/`mprotect` can invalidate the answer right after it returns. The check rejects bad pointers; it does not pin the range. Callers that must keep a range stable during a long operation need a pin (see the registry pins above).
-- **Consumers.** `libSceJpegEnc` and `libScePngDec` check every param struct, handle header, work memory, pixel buffer, output buffer and `info` struct, and return their `INVALID_ADDR`/`INVALID_PARAM`/`INVALID_HANDLE` codes. Output buffers are validated for the bytes actually written, not for the title's claimed capacity.
+- **Consumers.** `libSceJpegEnc` and `libScePngDec` check every param struct, handle header, work memory, pixel buffer, output buffer and `info` struct, and return their `INVALID_ADDR`/`INVALID_PARAM`/`INVALID_HANDLE` codes. Output buffers are validated for the bytes actually written, not for the title's claimed capacity. `libSceVideodec2` (PR #88, stopgap `core/libs/GuestRangeCheck.hpp`) and `libSceMsgDialog` (a local copy in `libSceMsgDialog/Export.cpp:119`) still use an interim `VirtualQuery` probe that ignores the registry (and only rejects null off Windows); both should migrate to `GuestMemoryValidation` (bean `portps5-t4yz`).
 
 ## Failure modes
 
@@ -178,12 +180,13 @@ struct IWriteTracker {
 
 ## Tests
 
-- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job):
+- **GoogleTest Unit Suites** (`ctest -L unit`, hosted `unit` job). Landed suites registered in `tests/CMakeLists.txt`: `guest_memory_validation_tests`, `kernel_error_value_tests`, `guest_allocations_unmap_tests`, `direct_memory_export_tests`, `memory_mapping_tests`, `direct_memory_pool_tests`, `memory_virtual_allocation_tests` (plus `guest_arena_extent_tests` and the tracker suites). Coverage targets:
   - Extent tree differential-tested against a reference linear first-fit, with identical addresses required. Hosted `unit` run: 3 seeds x 10^6 operations at a live-set cap of 1024 (a few seconds; the reference scan is O(live)). The full uncapped 10^6-operation run (`GuestArenaExtent.FuzzUncapped`, label `slow`, live set grows to ~22k, ~3 min) runs in the scheduled `nightly` workflow via `ctest --preset slow`.
   - Heap class boundaries, alignment invariants, and flexible memory pools.
   - Registry pin, wait and release, with the waiter observed to run with the lock released.
   - Generation bumps only on map, unmap, protect and decommit.
-  - `sceKernelVirtualQuery` exact and find-next cases.
+  - [x] `sceKernelDirectMemoryQuery` exact and find-next cases (`tests/memory/DirectMemoryExportTests.cpp`, PR #84).
+  - [ ] `sceKernelVirtualQuery` exact and find-next cases (bean `portps5-k7qd`).
   - Write-watch collect and unchanged cases, and `MarkWritten` versus CPU stamps.
   - Page-state table differential against `VirtualQuery`.
   - Alias detection moving both views to the section window.
@@ -218,3 +221,4 @@ struct IWriteTracker {
 4. Is a 64 KiB block granularity too coarse for per-job label slots? AnyPS5 main@75a8668 notes slots 0x20 apart (`GuestMemory.cpp:628-630`). Decide from profiles.
 5. Sync assessment (PR #28): upstream `GuestArena` (`libc/src/GuestArena.cpp`, `include/GuestArena.hpp`) was trial-ported and reverted. Verdict: a raw port cannot land — the O(n) first-fit scan (`GuestArena.cpp:43-55` on AnyPS5 main@75a8668) contradicts the extent-tree decision below, `throw std::runtime_error` sites break the no-throw rule (a guest `catch(...)` swallows host exceptions), the file is unwired, and there are no file headers. It returns with the M1 extent-tree port (adapted, return codes, headers); the extent-tree core landed in PR #32 and the wiring is open (bean `portps5-421p`). `HostThreadLocal.hpp` stays: it compiles and its GTest balance suite is green.
 6. Guest-memory range-validation API for PRX libraries: resolved by `GuestMemoryValidation` (see "Validation API"; bean `portps5-8l0d`). It uses the allocation registry plus a host-mapping fallback rather than the page-state table, because the table covers only tracked arena pages. Remaining: more PRX consumers (audio, net, file libraries) still read guest buffers raw; each needs its own pass and tests.
+7. Large pages: does backing the guest arena (and large GPU allocations) with 2 MiB pages reduce TLB pressure enough to matter? Windows needs `SeLockMemoryPrivilege` for `MEM_LARGE_PAGES`, so it can only ever be an opt-in. Measure in the M5 performance pass (bean `portps5-vj60`) before any design.

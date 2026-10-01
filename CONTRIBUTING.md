@@ -21,7 +21,7 @@ For complete rules, see [.agents/rules/legal-boundary.md](.agents/rules/legal-bo
 
 * **Platform:** Windows 10/11 (64-bit).
 * **Compiler:** MinGW-w64 GCC 15.2 (ucrt-posix-seh). MSVC is unsupported due to lacking System V ABI attributes (`sysv_abi`).
-* **Build System:** CMake 3.20+ with CMakePresets.
+* **Build System:** CMake 3.25+ with CMakePresets (presets schema v6 needs 3.25).
 * **Toolchain setup & build instructions:** See [docs/spec/build-toolchain.md](docs/spec/build-toolchain.md).
 
 ### Local Verification Before Submitting

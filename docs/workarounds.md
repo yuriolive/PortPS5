@@ -6,15 +6,17 @@ general mechanisms only.
 ## Rules (docs/spec/configuration.md)
 
 - A key names the toggled **mechanism** in engine-neutral words, never a game
-  (for example `copy_kernel_linear_match`). The `policy` CI job fails on title
-  names and title-ID patterns in key names.
+  (for example `copy_kernel_linear_match`). The `policy` step of the
+  `build_and_test` CI job fails on key names that are not snake_case or that
+  contain a title-ID pattern (`PPSA`/`CUSA` plus digits). It cannot detect
+  title names, so review enforces those.
 - Each entry below lists the key, its type and default (always the general
   behaviour), the mechanism, why no general fix exists yet, the title IDs and
   patch pins that set it, the tracking issue, and the removal condition.
-- Entries use one table row per key, `| \`key\` | type, default | mechanism and tracking |`,
-  because the `policy` job parses exactly that row shape. The registered keys
+- Entries use one table row per key, ``| `key` | type, default | mechanism and tracking |``,
+  because the `policy` step parses exactly that row shape. The registered keys
   (via `PORTPS5_WORKAROUND` in code) and this file must match in both
-  directions; the `policy` job enforces that.
+  directions; the `policy` step enforces that.
 - A key that no gate title uses at a milestone exit is deleted.
 
 ## Keys

@@ -125,3 +125,4 @@ As agreed in the decision table in [README.md](README.md#subsystem-specs) §Pipe
 2. Is warm-up before the first flip acceptable for titles with more than 10k pipelines, or should warm-up be ordered by first use and overlapped with boot?
 3. Could `VK_EXT_graphics_pipeline_library` or `VK_EXT_shader_module_identifier` shrink the cache and the warm-up time? Both are optional, and deferred until M5 data exists.
 4. What should the compaction policy be ("not hit in N runs")? It needs a run counter in `header.bin`.
+5. Pipeline-library fast-link (follows open question 3): on a cache miss after warm-up, link from cached pipeline libraries at once and build the optimized pipeline in the background (bean `portps5-c1oi`). No draw may be skipped while it compiles; when fast-link is unavailable the stall is counted as a P3 violation (PRD §4.5).

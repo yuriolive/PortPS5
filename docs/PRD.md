@@ -47,7 +47,7 @@ A title is replaced only by one of the same tier. For example, if a title's dump
 
 ### 4.2 Functional requirements
 
-Status as of 2026-09-30: a requirement is ticked only when a gate-title run proves it, so none is ticked yet. Code that moves each one is on `main` for F1 (relinker, `--to-intel`), F2 (per-title saves, crash safety, scripted dialogs), F3 (AudioOut2, ATRAC9), F5 (SDL controllers in `scePadRead`), F6 (config schema and validation, not yet wired at startup) and F8 (offline NP, trophies, dialogs). F4 has the recompiler saveexec fix and an offline AvPlayer state machine only. F7 (disk pipeline cache) and F9 (frame-time log, watchdog, structured logs) have no runtime code yet. The per-milestone detail and open items are in [ROADMAP.md](ROADMAP.md).
+Status as of 2026-09-30: a requirement is ticked only when a gate-title run proves it, so none is ticked yet. Code that moves each one is on `main` for F1 (relinker, `--to-intel`), F2 (per-title saves, crash safety, scripted dialogs), F3 (AudioOut2, ATRAC9), F5 (SDL controllers in `scePadRead`), F6 (config schema and validation; loaded and validated at startup before guest code since PR #71; still open: copying `config/` at conversion and wiring the display keys) and F8 (offline NP, trophies, dialogs). F4 has the recompiler saveexec fix and an offline AvPlayer state machine only. F7 (disk pipeline cache) and F9 (frame-time log, watchdog, structured logs) have no runtime code yet. The per-milestone detail and open items are in [ROADMAP.md](ROADMAP.md).
 
 | ID | Requirement |
 |---|---|
@@ -113,7 +113,7 @@ Rules:
 
 - Relink-time (ahead-of-time) shader compilation. The disk cache covers the stutter goal.
 - An array-of-bytes (AOB) patch engine for fps unlocks and delta-time patches.
-- Upscaling and resolution targets: FSR1/CAS, DLSS or FSR2+ via PSSR/TAA intercept, 4K, 60/120 fps. The §4.5 invariants keep these reachable without a rewrite.
+- Upscaling, frame generation and HDR output: FSR1/CAS, DLSS/FSR2+/XeSS via a PSSR/TAA intercept, frame generation, HDR. These are planned for 2.0 (§10, V7). 4K and 60/120 fps targets stay post-2.0. The §4.5 invariants keep all of them reachable without a rewrite.
 - Other platforms and front ends: Linux release builds (planned for 2.0, §10), macOS, a GUI launcher. In 1.0, new code goes through the host platform layer ([spec/host-platform.md](spec/host-platform.md)) so Linux is a new backend, not a rewrite.
 - DualSense haptics and adaptive triggers.
 - Titles beyond the gate set. The compatibility list will track them, but they do not gate 1.0.
@@ -179,6 +179,7 @@ Each title is pinned at dump time, as in §4.1. A title nobody can dump yet stay
 | V4 | - [ ] Ray tracing: guest acceleration structures and ray queries run on Vulkan ray tracing. Skipping RT work is not a pass. |
 | V5 | - [ ] Modern geometry: primitive (NGG) and mesh shader stages translate. |
 | V6 | - [ ] Async compute on a separate host queue, and bounded CPU/GPU frame overlap (invariant P6). |
+| V7 | - [ ] PC enhancement layer, opt-in per title in TOML and never part of a pass measurement: spatial upscaling (FSR1/CAS) and HDR output (guest HDR mode to an HDR10/scRGB swapchain) as general mechanisms; temporal upscaling (FSR2+, and DLSS/XeSS if their licences allow) and frame generation fed by a general mechanism that finds the depth, motion-vector and jitter inputs, enabled by documented `[enhancement]` keys that name the mechanism, not the game. Frame generation is presentation only: it never changes guest simulation, input or timing. |
 
 ### 10.3 2.0 reference tier
 
@@ -186,7 +187,7 @@ The 1.0 tier (§4.4) is not expected to carry an open-world AAA title at 30 fps,
 
 ### 10.4 2.0 non-goals
 
-60/120 fps targets, upscalers and frame generation, and the AI-driven optimization ideas stay out of 2.0. A future profile-guided optimization would be a locally derived cache like the pipeline cache, never per-title code.
+60/120 fps targets, 4K targets and the AI-assisted optimization ideas stay out of 2.0 (§11). Enhancements (V7) are opt-in and never part of a pass measurement: every gate is measured with them off. A future profile-guided optimization would be a locally derived cache like the pipeline cache, never per-title code.
 
 ### 10.5 2.0 risks
 
@@ -196,3 +197,34 @@ The 1.0 tier (§4.4) is not expected to carry an open-world AAA title at 30 fps,
 | V-R2 | Guest `fs`-segment TLS conflicts with glibc on Linux. | Spike before M7 (bean `portps5-u16x`, [spec/host-platform.md](spec/host-platform.md) open question 1). |
 | V-R3 | The guest BVH layout can't be translated to Vulkan acceleration structures efficiently. | Spike against the public RDNA2 BVH layout in Mesa RADV (MIT) before M9 (bean `portps5-mdu8`). |
 | V-R4 | Decompression formats are proprietary. | Use only implementations with a GPL-2.0-compatible licence, or the title's own software path; record the licence before adopting (§6, R1). |
+| V-R5 | DLSS and XeSS ship under proprietary SDK licences, which conflict with GPL-2.0-only linking. FSR (MIT) does not. | Licence spike before any work (bean `portps5-f4bl`). Options: FSR only; a separately distributed plugin loaded at run time, if that boundary holds legally; or no DLSS/XeSS. |
+| V-R6 | Temporal inputs (depth, motion vectors, jitter) can't be identified without title knowledge. | Spike on the GPU IR (bean `portps5-8ov1`): a general recogniser with per-title TOML confirmation keys. If no general mechanism exists, ship spatial upscaling and HDR only. |
+
+## 11. Beyond 2.0: v3 candidates and permanent exclusions
+
+Status: draft, 2026-10-01. Nothing here is scheduled. A v3 candidate becomes work only through a later PRD revision. Each row says why it is out of 1.0 and 2.0, and what keeps it reachable.
+
+**Local-only principle.** The repo, CI and issues hold mechanisms only: code, schemas and synthetic tests. Everything derived from a title is produced and stays on the user's machine: pipeline caches, profiles, autotuning results, optimization caches and patch files. Only metrics and hashes leave it (§6, results JSON).
+
+| Item | Status | Why it is out now | What keeps it reachable |
+|---|---|---|---|
+| 60/120/240 Hz and 4K targets | v3 candidate | Needs the headroom that 2.0 has to show first. | PRD §4.5 invariants, frame pacing, the M12 flip-rate override. |
+| Flip-rate override (forced present rate per title) | **2.0, M12, experimental** | Many titles tie simulation to frame count, so a forced rate can break timing. Off by default; results with it on never count toward a pass; users test locally. | `[enhancement] flip_rate_override`, which names the mechanism, not the game. |
+| Delta-time and AOB patch engine (frame-rate unlocks) | v3 candidate | The engine is a general mechanism and could ship, but each patch needs per-title reverse engineering that the core can't verify. Patch files are written and kept locally by users, like every other title-derived artifact. | A loader for user-supplied local patch files, with the engine in core and no patches in the repo. |
+| AI-assisted optimization (an "adaptive optimizer") | v3 research | Needs the telemetry dataset and the deterministic pipeline of 1.0 and 2.0 first; the gains are unproven. | Telemetry, perf scenes, the pipeline cache and the GPU IR. Guardrails below. |
+| Relink-time (ahead-of-time) shader compilation | v3 candidate | The disk cache covers the stutter goal (F7). | Pipeline-cache keys and `RecompilerVersion`. |
+| PS5 Pro modes (PSSR, Pro rendering paths) | v3 candidate | The gates are base-PS5 modes. | Capability table, M12 temporal-upscale inputs. |
+| DualSense haptics and adaptive triggers | v3 candidate (unless the input work already covers them) | Not needed to play the gates. | SDL/HIDAPI input layer ([spec/input.md](spec/input.md)). |
+| GUI launcher | v3 candidate | The CLI meets F1. | None needed. |
+| macOS and ARM hosts | out | Guest code is x86-64 and runs natively. ARM hosts would need CPU translation, which PortPS5 doesn't do. Intel macOS lacks native Vulkan. | n/a |
+| CPU emulation or a CPU translator | out, by design | Guest code runs natively (§1). The relinker rewrites statically only. | n/a |
+| A model (LLM or other) in the execution path | out | Results would not be deterministic or reproducible. | n/a |
+| Online play and PSN services | out | Offline behaviour only (F8, §6). | n/a |
+
+**Guardrails for the AI-assisted optimization research (v3):**
+
+- Order of work: (1) **deterministic autotuning**. Benchmark the recompiler's existing shader variants per GPU on the user's machine and record the fastest. It is the hardware-as-oracle idea, and it needs no model. (2) **Profile-guided relinker layout**: hot/cold splitting and code layout of guest code from local profiles, in the style of BOLT, verified by the same CFG the relinker already builds. (3) Only then, **model-proposed transformations**: pass ordering, specialization or inlining candidates.
+- A model may only *propose*. The deterministic compiler verifies every proposal, the regress compare benchmarks it, and the change is kept or rejected. A proposal that cannot be verified is dropped.
+- A model never decides memory mappings, synchronization or atomic semantics, ABI behaviour, exception handling, instruction correctness or Vulkan barriers.
+- Output is a **locally derived cache**, like the pipeline cache: produced on the user's machine from their own runs, keyed and invalidated by the build, never committed and never uploaded. It is not per-title code, and it never changes behaviour, only speed. A run with the cache removed must produce the same results.
+- Profiles come from behaviour coverage (perf scenes, save checkpoints, recorded input), not from completing a title.
