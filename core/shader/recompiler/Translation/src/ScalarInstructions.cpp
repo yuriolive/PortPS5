@@ -63,6 +63,16 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SAndSaveexecB32:
         sSaveexec(inst, IrOpcode::BitwiseAnd32, false, false, false);
         return true;
+    case RdnaOpcode::SOrSaveexecB32:
+        sSaveexec(inst, IrOpcode::BitwiseOr32, false, false, false);
+        return true;
+    case RdnaOpcode::SXorSaveexecB32:
+        sSaveexec(inst, IrOpcode::BitwiseXor32, false, false, false);
+        return true;
+    case RdnaOpcode::SAndn2SaveexecB32:
+        // EXEC = S0 & ~EXEC (the "2" operand is EXEC).
+        sSaveexec(inst, IrOpcode::BitwiseAnd32, true, false, false);
+        return true;
     case RdnaOpcode::SAndn1SaveexecB32:
         sSaveexec(inst, IrOpcode::BitwiseAnd32, false, true, false);
         return true;
@@ -240,6 +250,10 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         }
         return true;
     }
+    case RdnaOpcode::SBcnt0I32B64:
+        return sBcnt0I32B64(inst);
+    case RdnaOpcode::SFf0I32B64:
+        return sFf1I32B64(inst, true);
     case RdnaOpcode::SBcnt1I32B32:
         return simpleInteger(inst, IrOpcode::BitCount32, IrType::U32, false, false, true);
     case RdnaOpcode::SBcnt1I32B64:
@@ -269,7 +283,7 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SXnorB32:
         return composedIntegerBinary(inst, IrOpcode::BitwiseXor32, false, true, true);
     case RdnaOpcode::SFf1I32B64:
-        return sFf1I32B64(inst);
+        return sFf1I32B64(inst, false);
     case RdnaOpcode::SFlbitI32B32:
         return vFfbh32(inst, false);
     case RdnaOpcode::SFlbitI32B64:
