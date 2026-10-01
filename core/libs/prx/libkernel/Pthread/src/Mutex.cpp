@@ -272,9 +272,18 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) noexc
 int APS5_VABI scePthreadMutexattrSetprotocol(PthreadMutexattr* attr, int protocol) noexcept {
     if (!attr || !*attr)
         return kSceEinval;
-    // Only PROTOCOL_NONE (0); inheritance/protection are unsupported but the
-    // call itself is meaningful, so EINVAL (not Unsupported).
-    return (protocol == 0) ? kSceOk : kSceEinval;
+    // PRIO_NONE (0), PRIO_INHERIT (1) and PRIO_PROTECT (2) are all accepted.
+    // Guest priorities are recorded but never applied to host scheduling, so
+    // there is no waiter priority to lend (INHERIT) and no ceiling to raise the
+    // owner to (PROTECT): such a mutex locks, unlocks and reports errors exactly
+    // like a PRIO_NONE one, and rejecting it would stop a title at its first
+    // mutex. AnyPS5 70bbd700 accepted INHERIT only and kept throwing for
+    // PROTECT; FreeBSD libthr and shadPS4 accept the whole 0..2 range, so this
+    // follows them. Anything outside that range is EINVAL (a return code,
+    // never a throw or Unsupported abort).
+    constexpr int kPrioNone = 0;
+    constexpr int kPrioProtect = 2;
+    return (protocol >= kPrioNone && protocol <= kPrioProtect) ? kSceOk : kSceEinval;
 }
 
 /**

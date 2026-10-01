@@ -32,11 +32,11 @@ namespace PortPS5::Testing {
 
 // Common PS5 / SCE error codes
 inline constexpr int32_t SCE_OK = 0;
-inline constexpr int32_t SCE_KERNEL_ERROR_EBADF     = -2147418090;
-inline constexpr int32_t SCE_KERNEL_ERROR_EFAULT    = -2147418103;
-inline constexpr int32_t SCE_KERNEL_ERROR_EINVAL    = -2147418107;
-inline constexpr int32_t SCE_KERNEL_ERROR_ENOENT    = -2147418095;
-inline constexpr int32_t SCE_KERNEL_ERROR_ETIMEDOUT = -2147418077;
+inline constexpr int32_t SCE_KERNEL_ERROR_EBADF     = static_cast<int32_t>(0x80020009);
+inline constexpr int32_t SCE_KERNEL_ERROR_EFAULT    = static_cast<int32_t>(0x8002000E);
+inline constexpr int32_t SCE_KERNEL_ERROR_EINVAL    = static_cast<int32_t>(0x80020016);
+inline constexpr int32_t SCE_KERNEL_ERROR_ENOENT    = static_cast<int32_t>(0x80020002);
+inline constexpr int32_t SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int32_t>(0x8002003C);
 inline constexpr int32_t SCE_KERNEL_ERROR_EBUSY     = static_cast<int32_t>(0x80020010);
 inline constexpr int32_t SCE_KERNEL_ERROR_EAGAIN    = static_cast<int32_t>(0x80020023);
 inline constexpr int32_t SCE_KERNEL_ERROR_EDEADLK   = static_cast<int32_t>(0x8002000B);

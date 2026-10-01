@@ -470,9 +470,11 @@ uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
  * @return Status or error code.
  */
 unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
- (void)seconds;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    // Shares sceKernelUsleep's SleepNanos (high-resolution timer, chunked for
+    // very long sleeps). Returns the unslept seconds; nothing interrupts a
+    // host sleep, so that is always 0. (AnyPS5 c6d098d4.)
+    SleepNanos(static_cast<std::uint64_t>(seconds) * 1000000000ULL);
+    return 0;
 }
 
 }

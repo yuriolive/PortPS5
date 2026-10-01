@@ -85,6 +85,13 @@ struct PthreadPrivate {
     // after join (joinable) or on exit (detached). It is the owner field in
     // every futex word and the value scePthreadGetthreadid returns.
     std::uint32_t guestTid = 0;
+    // True for the lazily created handle of a host thread that never went
+    // through scePthreadCreate (the guest main thread, driver workers). Such a
+    // handle is detached (join/detach fail with EINVAL), lives in
+    // HostThreadLocal (FLS) storage freed at host-thread exit (see
+    // scePthreadSelf), and is never reference-counted or
+    // CloseHandle'd; its tid belongs to GuestTid's per-thread cleanup.
+    bool adopted = false;
     // Recorded, never applied (see above).
     std::atomic<std::uint64_t> affinityMask = 0;
     std::atomic<int> schedPriority = 700;
