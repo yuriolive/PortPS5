@@ -456,6 +456,34 @@ jobs:
             throw "lavapipe device not visible: driver suites skipped instead of running"
           }
 
+      - name: Stack traces for crashed lavapipe tests
+        # Failure-only diagnostics. A crash (SEGFAULT) in a driver test prints nothing useful through
+        # ctest, and the crashes seen so far moved between tests from run to run. Re-run each test ctest
+        # recorded as failed under gdb (shipped with the pinned MinGW toolchain), repeated so an
+        # intermittent crash has a chance to reproduce, and print the backtrace. Never changes the
+        # job result: the ctest step has already failed.
+        if: failure()
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $gdb = Get-Command gdb -ErrorAction SilentlyContinue
+          $log = 'build/ci/Testing/Temporary/LastTestsFailed.log'
+          if ($null -eq $gdb) { Write-Host 'gdb not found on PATH; no stack traces'; exit 0 }
+          if (-not (Test-Path $log)) { Write-Host 'no LastTestsFailed.log; nothing to diagnose'; exit 0 }
+          foreach ($line in Get-Content $log) {
+            $name = ($line -split ':', 2)[1]
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            Write-Host "::group::gdb: $name"
+            # GoogleTest cases are discovered as `Suite.Test`; the legacy runners have no dot and are
+            # standalone executables named in the ctest log, which gdb cannot be pointed at from here.
+            if ($name -notmatch '\.') { Write-Host "skipping non-GoogleTest test $name"; Write-Host '::endgroup::'; continue }
+            $exe = Get-ChildItem -Recurse -Path build/ci -Filter 'agc_recorder_tests.exe' | Select-Object -First 1
+            if ($null -eq $exe) { Write-Host 'agc_recorder_tests.exe not found'; Write-Host '::endgroup::'; continue }
+            & gdb -batch -ex 'set pagination off' -ex run -ex 'bt full' -ex 'thread apply all bt' --args $exe.FullName "--gtest_filter=$name" '--gtest_repeat=150' 2>&1 | Select-Object -Last 120
+            Write-Host '::endgroup::'
+          }
+
+
   python_quality:
     name: Python quality (uv, ruff, pytest, coverage)
     runs-on: ubuntu-latest
