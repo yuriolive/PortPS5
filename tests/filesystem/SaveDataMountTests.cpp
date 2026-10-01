@@ -19,6 +19,10 @@
 #include <fstream>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 // POSIX-named exports (Stdio.cpp) under test; not in a public header. APS5_VABI is
 // mandatory: the definitions use the System V ABI and a mismatched declaration would
 // corrupt argument registers on Windows.
@@ -264,6 +268,19 @@ TEST_F(SaveDataMountTest, SymlinkOutOfContainerIsDenied) {
     std::filesystem::create_directory_symlink(outside, Container() / "link", ec);
 #endif
     if (ec) GTEST_SKIP() << "cannot create directory symlink: " << ec.message();
+    // Unlink before TearDown. remove_all() over a link that leaves the tree hung the hosted
+    // runner (ctest ran 30+ min with no output); removing the link itself never follows it.
+    struct LinkRemover {
+        std::filesystem::path link;
+        ~LinkRemover() {
+#ifdef _WIN32
+            RemoveDirectoryW(link.c_str());  // deletes the junction, not its target
+#else
+            std::error_code ignored;
+            std::filesystem::remove(link, ignored);
+#endif
+        }
+    } linkRemover{Container() / "link"};
     EXPECT_EQ(sceKernelOpen("/savedata0/link/leak.bin", SCE_KERNEL_O_CREAT | SCE_KERNEL_O_WRONLY, 0666), Sce(EACCES));
     EXPECT_EQ(sceKernelMkdir("/savedata0/link/sub", 0777), Sce(EACCES));
     EXPECT_FALSE(std::filesystem::exists(outside / "leak.bin"));
