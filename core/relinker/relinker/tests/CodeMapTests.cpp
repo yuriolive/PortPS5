@@ -1,3 +1,7 @@
+// Legacy runner for the CodeMap and its consumers: jump-table desync, the
+// converter's use of Starts/BranchTargets/Unproven and the syscall scan.
+// Subsystem: relinker analysis tests. Synthetic bytes only; new tests are
+// GoogleTest (see Amd64OnlyShortSiteTests for the converter policy).
 #include <relinker/analysis/CodeMap.hpp>
 #include <relinker/analysis/CodeInstructionCollector.hpp>
 #include <relinker/analysis/SyscallScanner.hpp>
@@ -129,7 +133,10 @@ Domain::CodeMap manualMap(Domain::VirtualAddress base, const std::vector<Domain:
 }
 
 void registerFormResidual() {
-    // 66 0F 79 CA is EXTRQ register form: relink succeeds, site is Residual.
+    // 66 0F 79 CA is the 4-byte EXTRQ register form. It is followed by RET, which
+    // cannot move into a stub, so the site cannot reach the 5 bytes a jump needs:
+    // relink still succeeds and the site is a Residual (logged, left for the
+    // runtime trap). Extendable sites are covered by Amd64OnlyShortSiteTests.
     Bytes file(0x300, 0xCC);
     const Bytes site = {0x66, 0x0F, 0x79, 0xCA, 0xC3};
     std::copy(site.begin(), site.end(), file.begin() + 0x200);

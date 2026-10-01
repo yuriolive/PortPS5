@@ -1,3 +1,8 @@
+// Legacy runner for the --to-intel converter: decoder, matcher, lowering golden
+// bodies, converter classification and the Linux stub placement. Subsystem:
+// relinker codegen. Synthetic bytes only; Linux-only blocks execute stubs and
+// are compiled out elsewhere. New tests are GoogleTest (Sse4aRegisterFormTests,
+// Amd64OnlyShortSiteTests); this runner keeps its original ctest entry.
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <codegen/CodegenException.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
@@ -141,7 +146,9 @@ void matcherSubstitutions() {
     const auto monitorx = match({0x0F, 0x01, 0xFA});
     require(monitorx && monitorx->Lowering == Codegen::Amd64OnlyLowering::Unsupported && monitorx->InstructionName == "MONITORX", "MONITORX was not reported as unsupported");
     const auto registerForm = match({0x66, 0x0F, 0x79, 0xCA});
-    require(registerForm && registerForm->Lowering == Codegen::Amd64OnlyLowering::Residual, "EXTRQ register form was not left as residual");
+    require(registerForm && registerForm->Lowering == Codegen::Amd64OnlyLowering::Trampoline && registerForm->InstructionName == "EXTRQ register form", "EXTRQ register form was not lowered through a stub");
+    const auto insertqRegisterForm = match({0xF2, 0x0F, 0x79, 0xCA});
+    require(insertqRegisterForm && insertqRegisterForm->Lowering == Codegen::Amd64OnlyLowering::Trampoline && insertqRegisterForm->InstructionName == "INSERTQ register form", "INSERTQ register form was not lowered through a stub");
     require(!match({0x66, 0x0F, 0x2B, 0x07}) && !match({0x0F, 0x2B, 0x07}) && !match({0x48, 0x8B, 0x05, 0, 0, 0, 0}), "Ordinary instruction was matched");
     const auto stub = match(kInsertqHighSite);
     require(stub && stub->Lowering == Codegen::Amd64OnlyLowering::Trampoline && stub->StubBody == kInsertqHighBody && stub->ReturnBranchOffset == 15 && stub->InstructionName == "INSERTQ", "INSERTQ was not lowered through a stub");
@@ -185,7 +192,10 @@ void goldenBodies() {
     const auto generic = lowering.LowerOutOfLine(Codegen::Sse4aOperands{true, false, 9, 4, 5, 3});
     require(generic.Bytes[0] == 0x48 && generic.Bytes.size() % 16 == 0 && generic.ReturnBranchOffset < generic.Bytes.size(), "Generic INSERTQ body does not start with the red-zone skip");
     (void)highRegisters;
-    requireFailure([&] { (void)lowering.LowerOutOfLine(Codegen::Sse4aOperands{true, true, 1, 2, 0, 0}); }, "Register form was lowered out of line");
+    for (const bool insertq : {false, true}) {
+        const auto registerBody = lowering.LowerOutOfLine(Codegen::Sse4aOperands{insertq, true, 1, 2, 0, 0});
+        require(registerBody.Bytes[0] == 0x48 && registerBody.Bytes.size() % 16 == 0 && registerBody.ReturnBranchOffset < registerBody.Bytes.size(), "Register form body does not start with the red-zone skip");
+    }
 }
 
 Bytes segmentFixture() {
