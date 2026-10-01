@@ -21,6 +21,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <thread>
 
@@ -40,6 +41,7 @@ int APS5_VABI scePadResetOrientation(int handle) noexcept;
 int APS5_VABI scePadGetTriggerEffectState(int handle, PadTriggerEffectStateInformation* info) noexcept;
 int APS5_VABI scePadDeviceClassGetExtendedInformation(int handle, PadDeviceClassExtendedInformation* info) noexcept;
 int APS5_VABI scePadDeviceClassParseData(int handle, const PadData* data, PadDeviceClassData* classData) noexcept;
+int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformation* info) noexcept;
 }
 
 namespace {
@@ -419,6 +421,27 @@ TEST_F(PadOutputTest, GetTriggerEffectStateWritesEightBytesAndKeepsCookie) {
 // Invariant: with a pad open, handle 0 is never a valid scePadReadState handle
 // (PortPS5 handles are slot + 1) while the real handle reads fine. Port of
 // sharpemu ReadState_RejectsHandleZeroOnceAPadIsOpen (GPL-2.0-or-later).
+// Invariant: every export that dereferences a guest pointer rejects an unmapped (non-null) pointer
+// with PAD_ERROR_INVALID_ARG instead of faulting the host (review finding on #81; the earlier code
+// only null-checked). Precondition: slot 1 is open (fixture). Address 0x1000 is below any mapping
+// on the host and in the guest arena. A valid stack object must still succeed.
+TEST_F(PadOutputTest, UnmappedGuestPointersAreRejected) {
+    const auto bad = static_cast<std::uintptr_t>(0x1000);
+    auto* data = reinterpret_cast<PadData*>(bad);
+    EXPECT_EQ(scePadReadState(1, data), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadSetLightBar(1, reinterpret_cast<const PadLightBarParam*>(bad)), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadSetVibration(1, reinterpret_cast<const PadVibrationParam*>(bad)), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadSetTriggerEffect(1, reinterpret_cast<const void*>(bad)), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadGetTriggerEffectState(1, reinterpret_cast<PadTriggerEffectStateInformation*>(bad)), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadGetControllerInformation(1, reinterpret_cast<PadControllerInformation*>(bad)), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadDeviceClassGetExtendedInformation(1, reinterpret_cast<PadDeviceClassExtendedInformation*>(bad)), PAD_ERROR_INVALID_ARG);
+    PadData good{};
+    PadDeviceClassData classData{};
+    EXPECT_EQ(scePadDeviceClassParseData(1, data, &classData), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadDeviceClassParseData(1, &good, reinterpret_cast<PadDeviceClassData*>(bad)), PAD_ERROR_INVALID_ARG);
+    EXPECT_EQ(scePadReadState(1, &good), PAD_OK);
+}
+
 TEST_F(PadOutputTest, ReadStateRejectsHandleZeroOnceAPadIsOpen) {
     PadData data{};
     EXPECT_EQ(scePadReadState(0, &data), PAD_ERROR_INVALID_HANDLE);
