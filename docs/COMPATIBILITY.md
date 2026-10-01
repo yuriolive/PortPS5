@@ -17,7 +17,7 @@ Hardware is described by tier, not by model ([PRD §4.4](PRD.md)): the **referen
 
 | Title | Status | Performance | Tested on |
 |---|---|---|---|
-| Dreaming Sarah | Working, playable | 60 fps | Reference tier |
+| Dreaming Sarah | Playable | 60 fps | Reference tier |
 
 ## Not listed
 
