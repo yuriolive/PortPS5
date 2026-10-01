@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BytesEqual.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <cstring>
@@ -31,7 +32,8 @@ void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
         if (region.begin <= snapshot.address && snapshot.address + snapshot.bytes.size() <= region.end) {
             const auto offset = static_cast<std::size_t>(snapshot.address - region.begin);
             const auto* source = region.writable ? reinterpret_cast<const std::byte*>(snapshot.address) : region.snapshot.data() + offset;
-            Require(std::memcmp(source, snapshot.bytes.data(), snapshot.bytes.size()) == 0, "guest snapshot differs from registered memory");
+            // Per-draw consistency check of a snapshot against already-registered memory; BytesEqual is memcmp==0 at SSE2 speed.
+            Require(BytesEqual(source, snapshot.bytes.data(), snapshot.bytes.size()), "guest snapshot differs from registered memory");
             return;
         }
     }
@@ -50,7 +52,7 @@ void GuestBufferMemory::Upload(bool addressable) {
             if (!region.writable) {
                 const auto offset = static_cast<std::size_t>(region.begin - previous.begin);
                 const auto overlap = static_cast<std::size_t>(std::min(previous.end, region.end) - region.begin);
-                Require(std::memcmp(previous.snapshot.data() + offset, region.snapshot.data(), overlap) == 0, "inconsistent overlapping guest snapshots");
+                Require(BytesEqual(previous.snapshot.data() + offset, region.snapshot.data(), overlap), "inconsistent overlapping guest snapshots");
                 if (region.end > previous.end) previous.snapshot.insert(previous.snapshot.end(), region.snapshot.begin() + overlap, region.snapshot.end());
             }
             previous.end = std::max(previous.end, region.end);
