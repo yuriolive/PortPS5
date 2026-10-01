@@ -6,8 +6,8 @@
 #
 # Relationship to ci.yml:
 #   This is a separate, lightweight job.  It does not build the project and
-#   does not need the MinGW toolchain.  It installs Doxygen via Chocolatey
-#   (pre-installed on windows-2022 runners), runs 'doxygen docs/Doxyfile',
+#   does not need the MinGW toolchain.  It installs the official Doxygen
+#   Windows x64 release zip (checksum-verified), runs 'doxygen docs/Doxyfile',
 #   and fails if Doxygen emits any WARNING (WARN_AS_ERROR = FAIL_ON_WARNINGS in Doxyfile).
 #
 # On failure:
@@ -15,8 +15,9 @@
 #   'doxygen-warnings' so contributors can download and triage without
 #   re-running the job locally.
 #
-# Doxygen version pinned via 'choco install' to keep the gate deterministic.
-# Update the --version flag here and in the choco install step together.
+# Doxygen version and SHA-256 are pinned in the env block below to keep the
+# gate deterministic.  To bump: take the new version, zip name and checksum
+# from https://www.doxygen.nl/download.html and change the two env vars.
 
 name: Doxygen API Documentation Gate
 
@@ -30,6 +31,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  # Official release from doxygen.nl (checksum copied from its download page).
+  DOXYGEN_VERSION: "1.18.0"
+  DOXYGEN_SHA256: "e84f54cfd49ef06b0b16536056dbec0c496323de28abcce53a4269463de35eaf"
+
 jobs:
   doxygen_doc_gate:
     name: Doxygen API Doc Gate
@@ -41,21 +47,51 @@ jobs:
         with:
           submodules: false
 
-      # windows-2022 runners ship with Chocolatey.  Pinning the version keeps
-      # the gate deterministic: a Doxygen version bump is a deliberate change.
-      - name: Install Doxygen 1.13.2
+      # The zip is cached by version+checksum so a doxygen.nl outage only
+      # matters on a cold cache.  The Chocolatey package was dropped: it
+      # fetches the installer from SourceForge, which intermittently 404s.
+      - name: Cache Doxygen zip
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\doxygen.zip
+          key: doxygen-${{ env.DOXYGEN_VERSION }}-${{ env.DOXYGEN_SHA256 }}
+
+      - name: Install Doxygen ${{ env.DOXYGEN_VERSION }}
         shell: pwsh
         run: |
-          choco install doxygen.install --version=1.13.2 --yes --no-progress
-          # Add Doxygen's default install directory to PATH for this job.
-          $doxygenBin = "C:\Program Files\doxygen\bin"
-          if (Test-Path $doxygenBin) {
-            "$doxygenBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $zip = Join-Path $env:RUNNER_TEMP "doxygen.zip"
+          $url = "https://www.doxygen.nl/files/doxygen-$env:DOXYGEN_VERSION.windows.x64.bin.zip"
+          # Verify before use: a cache hit or a download must match the pin.
+          function Test-Zip {
+            (Test-Path $zip) -and ((Get-FileHash $zip -Algorithm SHA256).Hash -ieq $env:DOXYGEN_SHA256)
           }
+          for ($i = 1; -not (Test-Zip) -and $i -le 5; $i++) {
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+            } catch {
+              Write-Host "Download attempt $i failed: $_"
+            }
+            if (-not (Test-Zip) -and $i -lt 5) { Start-Sleep -Seconds (5 * $i) }
+          }
+          if (-not (Test-Zip)) {
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+            Write-Host "::error::Doxygen zip missing or SHA-256 mismatch (expected $env:DOXYGEN_SHA256)."
+            exit 1
+          }
+          $dir = Join-Path $env:RUNNER_TEMP "doxygen"
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Verify Doxygen
         shell: pwsh
-        run: doxygen --version
+        run: |
+          $v = (doxygen --version)
+          Write-Host "doxygen $v"
+          if (-not $v.StartsWith($env:DOXYGEN_VERSION)) {
+            Write-Host "::error::Expected Doxygen $env:DOXYGEN_VERSION, got $v."
+            exit 1
+          }
 
       # Ensure the output directory exists before running, so the WARN_LOGFILE
       # path (build/doxygen_warnings.log) is always writable.
