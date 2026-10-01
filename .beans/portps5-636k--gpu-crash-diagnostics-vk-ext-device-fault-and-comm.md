@@ -23,7 +23,8 @@ A device loss names the guest packet, draw index and pipeline that was executing
 
 ## Acceptance Criteria
 
-- [ ] `debug.gpu.breadcrumbs` writes a marker per draw and dispatch into a host-visible buffer when the extension exists; off by default, since markers cost GPU time
+- [ ] AMD path: with VK_AMD_buffer_marker, `debug.gpu.breadcrumbs` writes a marker per draw and dispatch into a host-visible buffer (vkCmdWriteBufferMarkerAMD); off by default, since markers cost GPU time
+- [ ] NV path: with VK_NV_device_diagnostic_checkpoints, it inserts checkpoints (vkCmdSetCheckpointNV) and reads them back after the loss with vkGetQueueCheckpointDataNV; no buffer
 - [ ] On device loss: VK_EXT_device_fault info (when supported) plus the last completed marker mapped back to the PM4 packet and draw index, written to the log before the abort
 - [ ] lavapipe test: marker writes and the mapping from marker to packet on a synthetic stream
 - [ ] gpu-driver.md Failure modes row updated

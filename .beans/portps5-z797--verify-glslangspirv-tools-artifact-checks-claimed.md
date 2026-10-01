@@ -12,7 +12,7 @@ parent: portps5-s1kj
 
 ## Context
 
-The policy step checks only glslang: it runs `nm -D` on `build/ci/core/libs/libs/libSceAgcDriver.prx` and fails on glslang symbols (ci.yml:171-180). It has no SPIRV-Tools check, and when the prx is absent it skips the check without failing or warning. build-toolchain.md was corrected to describe this. Blocked by: none.
+The policy step checks only glslang: it runs `nm -D` on `build/ci/core/libs/libs/libSceAgcDriver.prx` and fails on glslang symbols (ci.yml:171-180). It has no SPIRV-Tools check, and when the prx is absent it skips the check without failing or warning. build-toolchain.md still describes a SPIRV-Tools report: Target design (Recompiler dependencies) as the plan, and the Failure modes row as if it ran; that row is now marked planned. Blocked by: none.
 
 ## Higher Goal
 

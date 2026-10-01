@@ -154,7 +154,7 @@ Tests are progressively consolidated from standalone single-function executables
 | `nid_patcher` duplicate export | Build fails (`NidResolver.cpp:28-35`). It is never downgraded to a warning. |
 | Plain `cmake --build` without `libs` | Fixed by the build presets. The CI build step runs the preset, not raw CMake. |
 | Missing runtime DLLs at launch | Prevented by the copy step. The loader prints `Failed to load module` with `GetLastError` (relinker stub). |
-| SPIRV-Tools in a release artifact | The `policy` step reports it for the R1 record. Release defaults to OFF pending PRD R1. |
+| SPIRV-Tools in a release artifact | Planned: the `policy` step reports it for the R1 record (bean `portps5-z797`); today no check exists. Release defaults to OFF pending PRD R1. |
 | glslang in a release artifact | The `policy` step fails. |
 | A dependency without a recorded pin | Review rejects it; every new dependency goes in the pin table above. |
 | Python absent with tests enabled | Configure error (today: silently skipped, `core/relinker/CMakeLists.txt:92`). |
@@ -184,6 +184,7 @@ Hosted CI (`.github/workflows/ci.yml`) runs these as steps of the `build_and_tes
 - [x] **M1:** `golden` label and job (`recompiler-golden`), the `agc_shader_replay` port from AnyPS5 main (merged PR #5) (adapted: no env switches, return codes, `--golden`/`--dump-corpus` modes).
 - [x] **M2:** `tools/regress.py` runner (bean `portps5-3m3u`). It is a Python script run by hand and covered by pytest in the `python-quality` job. It is not a ctest target and not a build target, so it adds no `local`-labelled test; the `local` label stays reserved for GPU or game-data tests. The checkbox covers the build-toolchain deliverable only; the runner's checkpoint, frame-check and upload steps stay open under ROADMAP M2.
 - [ ] **M2:** SDL pin check, with `SDL_JOYSTICK` and `SDL_HIDAPI` enabled (the options are already ON in `CMakeLists.txt:55,57` since PR #20; the pin carries the HIDAPI PS5 driver and a unit test guards the build option, bean `portps5-j7ds`; run on a real DualSense is bean `portps5-ds7h`).
+- [ ] **M2:** sanitizer presets that link with MinGW GCC: `ubsan-trap` (`-fsanitize=undefined -fsanitize-trap=all`) replaces `asan`, and its `unit` label runs locally (bean `portps5-hmw8`).
 - [ ] **M5:** llvm-mingw clang spike (`-gcodeview`, lld PDBs), adopted only if the DWARF unwinder validates.
 - [ ] **M6:** release preset used for the release commit, with the R1 status recorded.
 

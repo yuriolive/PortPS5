@@ -18,13 +18,13 @@ Blocked by: portps5-yhj7.
 
 ## Higher Goal
 
-Every crash leaves one local report that names the module and function of each frame.
+Every crash leaves one local report that classifies every frame and names the function wherever symbols exist (module+offset otherwise).
 
 ## Acceptance Criteria
 
 - [ ] The relinker writes `<exe>.map` with guest function ranges
 - [ ] The crash handler writes `<install>/logs/crash-<t>.txt`: exception, registers, a stack walk with each address classified (guest image, prx, host) and module+offset, the last N ring-buffer records, and a minidump
-- [ ] `tools/symbolize.py` resolves module+offset to names offline from the map and prx DWARF
+- [ ] `tools/symbolize.py` resolves module+offset to names offline: guest frames from the relinker map, prx frames from prx DWARF (dev/RelWithDebInfo builds) or the prx export table, host frames (game.exe stub, MinGW runtime DLLs) from their DWARF when built with `-g`, else their PE export table; Windows system DLLs stay module+offset
 - [ ] Unit tests: map writer, address classification, ring-buffer wrap
 
 ## Out of Scope
