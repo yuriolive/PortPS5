@@ -1,12 +1,13 @@
 ---
 # portps5-xl4k
 title: 'CI: Fix Doxygen 1.13.2 install (SourceForge 404)'
-status: todo
+status: scrapped
 type: bug
 priority: high
 created_at: 2026-09-30T23:50:10Z
-updated_at: 2026-09-30T23:50:10Z
+updated_at: 2026-10-01T00:39:51Z
 ---
+
 
 ## Context
 
@@ -18,14 +19,14 @@ A deterministic, pinned Doxygen install that does not depend on a dead mirror; r
 
 ## Acceptance Criteria
 
-- [ ] Install step fetches the pinned Doxygen from an official release with a verified checksum, or pins a choco version whose source still resolves
-- [ ] Gate passes on main with the Doxyfile unchanged
-- [ ] Comment in doxygen.yml and docs/spec/build-toolchain.md doxygen-doc-gate entry name the new source and version
+- [x] Install step fetches the pinned Doxygen from an official release with a verified checksum, or pins a choco version whose source still resolves
+- [x] Gate passes on main with the Doxyfile unchanged
+- [x] Comment in doxygen.yml and docs/spec/build-toolchain.md doxygen-doc-gate entry name the new source and version
 
 ## Out of Scope
 
 Re-enabling WARN_IF_UNDOCUMENTED or WARN_NO_PARAMDOC.
 
-## Summary of Changes
+## Reasons for Scrapping
 
-TBD
+Duplicate of portps5-maub, fixed by PR #69 (official Doxygen release with a pinned checksum, `.github/workflows/doxygen.yml`), merged before this PR.
