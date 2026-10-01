@@ -131,8 +131,8 @@ TEST(DirectMemoryExport, AvailableSizeIsTheLargestFreeRun) {
     sceKernelReleaseDirectMemory(taken, PS5_PAGE_SIZE);
 }
 
-// Invariant: a fully allocated window reports size 0 successfully (nothing
-// available) instead of an error and without touching the output pair.
+// Invariant: a fully allocated window reports size 0 at offset 0 successfully
+// (nothing available) instead of an error.
 TEST(DirectMemoryExport, AvailableSizeOfFullWindowIsZero) {
     const int64_t block = Allocate(2, 3);
     ASSERT_GE(block, 0);
@@ -140,6 +140,7 @@ TEST(DirectMemoryExport, AvailableSizeOfFullWindowIsZero) {
     size_t size = 99;
     ASSERT_EQ(sceKernelAvailableDirectMemorySize(block, block + static_cast<int64_t>(2 * PS5_PAGE_SIZE), 0, &start, &size), 0);
     EXPECT_EQ(size, 0u);
+    EXPECT_EQ(start, 0);
     sceKernelReleaseDirectMemory(block, 2 * PS5_PAGE_SIZE);
 }
 
