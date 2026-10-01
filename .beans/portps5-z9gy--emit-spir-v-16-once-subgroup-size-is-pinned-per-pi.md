@@ -19,7 +19,7 @@ Emit one SPIR-V version (1.6) for every stage and use the core Vulkan 1.3 subgro
 ## Acceptance Criteria
 
 - [ ] `subgroupSizeControl` and `computeFullSubgroups` features are enabled at device creation. `target.subgroupSize` is checked against the device's min/max range, and each stage that needs a pinned size is checked against `VkPhysicalDeviceSubgroupSizeControlProperties::requiredSubgroupSizeStages`; a stage outside that mask is rejected with a logged error, not left unpinned.
-- [ ] Every pipeline path (compute, graphics, mesh, tessellation, detile, colour transfer) chains `VkPipelineShaderStageRequiredSubgroupSizeCreateInfo` set to `target.subgroupSize` for each stage in `requiredSubgroupSizeStages`; compute also sets `REQUIRE_FULL_SUBGROUPS`.
+- [ ] Every pipeline path (compute, graphics, mesh, tessellation, detile, colour transfer) chains `VkPipelineShaderStageRequiredSubgroupSizeCreateInfo` set to `target.subgroupSize` for each stage in `requiredSubgroupSizeStages`. Compute also sets `REQUIRE_FULL_SUBGROUPS`, but only when `local_size_x` is a multiple of `target.subgroupSize` (Vulkan requires it); for any other workgroup size the pipeline omits the flag or is rejected with a logged error.
 - [ ] `VulkanDevice::Target()` returns SPIR-V 1.6.
 - [ ] Golden and driver tests use SPIR-V 1.6 fixtures; GPU/lavapipe run recorded.
 
