@@ -438,3 +438,21 @@ def test_malformed_runner_outcome_is_a_clean_error(tmp_path):
         "--patch", "1", "--name", "S", "--commit", "c", "--gpu-vendor", "amd",
         "--driver-version", "1", "--bench-cpu", "1", "--bench-gpu", "1"]  # fmt: skip
     assert regress.main(cli) == 1
+
+
+def test_negative_frame_interval_is_a_clean_line_error(tmp_path):
+    # Regression (review): a negative dt_ms used to lower duration_s silently.
+    log = tmp_path / "t.jsonl"
+    write_log(log, [HEADER, {"ev": "frame", "dt_ms": -5}])
+    with pytest.raises(regress.RegressError, match="line 2"):
+        regress.parse_telemetry(log)
+    write_log(log, [HEADER, {"ev": "frame", "dt_ms": 0}])
+    assert regress.parse_telemetry(log)["dts"] == [0.0]  # zero stays valid
+
+
+def test_empty_runner_override_is_respected(tmp_path):
+    # Regression (review): an explicit empty override must not fall back to the sidecar.
+    inst = make_install(tmp_path, [HEADER, {"ev": "run.end"}])
+    (inst / regress.RUNNER_REL).write_text(json.dumps({"killed": True, "exit_code": None}))
+    with pytest.raises(KeyError):
+        regress.report(args_for(inst), {})
