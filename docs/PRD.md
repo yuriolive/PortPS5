@@ -1,6 +1,6 @@
 # PortPS5 — Product Requirements Document (1.0)
 
-Status: draft v1 · 2026-09-27 · Owner: PortPS5 maintainer
+Status: draft v1 · 2026-09-27 (§4.5 added 2026-10-01) · Owner: PortPS5 maintainer
 
 ## 1. Summary
 
@@ -86,6 +86,25 @@ The bar is measured on a generic **upper mid-tier** desktop:
 
 To keep the tier fixed over time, it is anchored by benchmark floors: CPU Cinebench R23 multi-core ≥ 18,000, and GPU 3DMark Time Spy graphics score ≥ 18,000. A machine that meets both floors qualifies. The local test script records both scores and derives `host_tier` from them instead of trusting a self-declared value. No specific personal machine is part of the specification.
 
+### 4.5 Performance architecture invariants
+
+The 1.0 bar stays at 30 fps (§4.3), and 60/120 fps stays a non-goal (§5). A design that rules out 60 fps on the reference tier is still rejected, because removing it after 1.0 would mean rewriting a subsystem. In steady state (after `warmup.end`, outside loading) the runtime holds these invariants:
+
+| ID | Invariant | Owner spec |
+|---|---|---|
+| P1 | No CPU wait on GPU completion and no GPU→CPU readback inside a frame, unless the guest asked for it (a label wait, a query read, or CPU access to a GPU-written range). | [gpu-driver.md](spec/gpu-driver.md) |
+| P2 | No Vulkan object creation (image, buffer, memory, descriptor pool, pipeline) per draw or per dispatch. Caches and pools reuse them. | [gpu-driver.md](spec/gpu-driver.md), [pipeline-cache.md](spec/pipeline-cache.md) |
+| P3 | No shader or pipeline compilation on the submit thread after warm-up. With a warm cache this is F7. | [pipeline-cache.md](spec/pipeline-cache.md) |
+| P4 | No process-global lock on a hot path. Uncontended guest synchronization stays in user mode. | [threading.md](spec/threading.md) |
+| P5 | Per-draw CPU cost does not grow with guest resource size. Unchanged guest memory is not compared or copied in full when the write tracker can prove it unchanged. | [gpu-driver.md](spec/gpu-driver.md), [guest-memory.md](spec/guest-memory.md) |
+| P6 | CPU recording of frame N+1 can overlap GPU execution of frame N, with an explicit, bounded number of frames in flight. | [gpu-driver.md](spec/gpu-driver.md) |
+
+Rules:
+
+- Telemetry counts violations of P1, P2, P3 and P5 ([spec/verification.md](spec/verification.md) §4.4). The counts appear in the results JSON but are not part of the 1.0 pass rule.
+- A known violation has a bean and a line in its owner spec's Current state. The M5 performance pass removes or justifies each one.
+- A speed-up never comes from skipping work ([.agents/rules/no-title-hacks.md](../.agents/rules/no-title-hacks.md)). A performance claim needs a before/after measurement with the same build flags and run protocol.
+
 ## 5. Scope
 
 **In 1.0:** F1–F9, Windows only, the five gate titles.
@@ -94,8 +113,8 @@ To keep the tier fixed over time, it is anchored by benchmark floors: CPU Cinebe
 
 - Relink-time (ahead-of-time) shader compilation. The disk cache covers the stutter goal.
 - An array-of-bytes (AOB) patch engine for fps unlocks and delta-time patches.
-- Upscaling and resolution targets: FSR1/CAS, DLSS or FSR2+ via PSSR/TAA intercept, 4K, 60/120 fps.
-- Other platforms and front ends: Linux and macOS release builds, a GUI launcher.
+- Upscaling and resolution targets: FSR1/CAS, DLSS or FSR2+ via PSSR/TAA intercept, 4K, 60/120 fps. The §4.5 invariants keep these reachable without a rewrite.
+- Other platforms and front ends: Linux release builds (planned for 2.0, §10), macOS, a GUI launcher. In 1.0, new code goes through the host platform layer ([spec/host-platform.md](spec/host-platform.md)) so Linux is a new backend, not a rewrite.
 - DualSense haptics and adaptive triggers.
 - Titles beyond the gate set. The compatibility list will track them, but they do not gate 1.0.
 - Tracking upstream AnyPS5. This is revisited after Milestone 3.
@@ -130,3 +149,50 @@ To keep the tier fixed over time, it is anchored by benchmark floors: CPU Cinebe
 - [spec/README.md](spec/README.md): subsystem index and decisions, with one spec file per subsystem.
 - [spec/verification.md](spec/verification.md): CI, local regression, full-run protocol and results schema.
 - [ROADMAP.md](ROADMAP.md): milestones, exit criteria and traceability.
+
+## 10. 2.0 goals (draft)
+
+Status: draft, 2026-10-01. Nothing here changes the 1.0 scope above. 2.0 work starts after 1.0 ships (ROADMAP Part II), except the v1 seams and spikes that ROADMAP Part I lists.
+
+**Objective.** An open-world AAA tier: GTA VI completes start-to-credits at an average of at least 30 fps and a 1% low of at least 20 fps, at 1920×1080 or higher with a warm pipeline cache, on the 2.0 reference tier, on Windows and native Linux. The definitions in §4.3 apply unchanged.
+
+### 10.1 Gate titles (2.0)
+
+Each title is pinned at dump time, as in §4.1. A title nobody can dump yet stays unpinned and doesn't block the milestones before its own.
+
+| # | Title | What it proves | Title ID | Region | Patch |
+|---|---|---|---|---|---|
+| 6 | Horizon Forbidden West | Open-world streaming and residency without mandatory ray tracing | TBD | TBD | TBD |
+| 7 | Ratchet & Clank: Rift Apart | Fast I/O and decompression, ray tracing in its RT modes | TBD | TBD | TBD |
+| 8 | Marvel's Spider-Man 2 | Open world with ray tracing always on, traversal streaming | TBD | TBD | TBD |
+| 9 | Grand Theft Auto VI | The 2.0 objective | TBD (not released as of 2026-10-01) | TBD | TBD |
+
+**GTA VI pin risk.** New titles often require console firmware newer than any that users can currently dump from. GTA VI may stay undumpable long after release. Gates 6–8 carry the 2.0 mechanisms meanwhile, and gate 9 is pinned when a user-owned dump exists. No 2.0 code may depend on GTA VI-specific knowledge before then, or after ([spec/README.md](spec/README.md) global policy and [.agents/rules/no-title-hacks.md](../.agents/rules/no-title-hacks.md)).
+
+### 10.2 Functional requirements (2.0)
+
+| ID | Requirement |
+|---|---|
+| V1 | - [ ] Native Linux: the CLI converts on Linux, and the runtime runs the 1.0 gate titles and the 2.0 gate titles on Linux, with the same pass rules. |
+| V2 | - [ ] Streaming and residency: guest memory beyond host VRAM is handled by a budgeted residency manager, with no stall over 1 s (§4.3) caused by eviction. |
+| V3 | - [ ] Decompression: the titles' hardware-decompression requests are served off the guest thread. |
+| V4 | - [ ] Ray tracing: guest acceleration structures and ray queries run on Vulkan ray tracing. Skipping RT work is not a pass. |
+| V5 | - [ ] Modern geometry: primitive (NGG) and mesh shader stages translate. |
+| V6 | - [ ] Async compute on a separate host queue, and bounded CPU/GPU frame overlap (invariant P6). |
+
+### 10.3 2.0 reference tier
+
+The 1.0 tier (§4.4) is not expected to carry an open-world AAA title at 30 fps, because translation adds overhead the console doesn't have. The 2.0 tier is anchored by benchmark floors the same way as §4.4, with ray-tracing support required. The floor values are set from the 1.0 M5 performance-pass data, not guessed (ROADMAP M7). No specific personal machine is part of the specification.
+
+### 10.4 2.0 non-goals
+
+60/120 fps targets, upscalers and frame generation, and the AI-driven optimization ideas stay out of 2.0. A future profile-guided optimization would be a locally derived cache like the pipeline cache, never per-title code.
+
+### 10.5 2.0 risks
+
+| ID | Risk | Mitigation |
+|---|---|---|
+| V-R1 | GTA VI can't be dumped for a long time. | Gates 6–8 carry the mechanisms; gate 9 waits for its pin. |
+| V-R2 | Guest `fs`-segment TLS conflicts with glibc on Linux. | Spike before M7 (bean `portps5-u16x`, [spec/host-platform.md](spec/host-platform.md) open question 1). |
+| V-R3 | The guest BVH layout can't be translated to Vulkan acceleration structures efficiently. | Spike against the public RDNA2 BVH layout in Mesa RADV (MIT) before M9 (bean `portps5-mdu8`). |
+| V-R4 | Decompression formats are proprietary. | Use only implementations with a GPL-2.0-compatible licence, or the title's own software path; record the licence before adopting (§6, R1). |

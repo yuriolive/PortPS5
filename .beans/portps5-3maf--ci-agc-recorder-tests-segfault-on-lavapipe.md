@@ -5,13 +5,15 @@ status: todo
 type: bug
 priority: critical
 created_at: 2026-10-01T19:00:00Z
-updated_at: 2026-10-01T19:05:56Z
+updated_at: 2026-10-01T19:26:15Z
+parent: portps5-4ut1
 ---
+
 
 
 ## Context
 
-The `driver_lavapipe` job fails on `main` at 1c65844a (run 36905103154): `RecorderTest.SubmitMakesDeviceWritesVisibleToTheHost` (agc_recorder_tests) dies with SEGFAULT after `[ RUN ]` and before `[ OK ]`; the run at 07b76f75 passed and the gdb rerun with `--gtest_repeat=150` passed. Run 36899104678 hit the same signature on three other tests of the same executable (`HostImportTest.UntrackedOrReadOnlyPagesFallBackToStaging`, `RecorderTest.SyncThroughIgnoresUnwrittenRanges`, `RecorderTest.SyncFromInsideACompletionDoesNotWaitForLaterBatches`), so the crash is not specific to one test body.
+The `driver_lavapipe` job fails on `main` at 1c65844a (run 36905103154): `RecorderTest.SubmitMakesDeviceWritesVisibleToTheHost` (agc_recorder_tests) dies with SEGFAULT after `[ RUN ]` and before `[ OK ]`; the run at 07b76f75 passed and the gdb rerun with `--gtest_repeat=150` passed. Run 36899104678 hit the same signature on three other tests of the same executable (`HostImportTest.UntrackedOrReadOnlyPagesFallBackToStaging`, `RecorderTest.SyncThroughIgnoresUnwrittenRanges`, `RecorderTest.SyncFromInsideACompletionDoesNotWaitForLaterBatches`), so the crash is not specific to one test body. Blocked by: none.
 
 ## Higher Goal
 

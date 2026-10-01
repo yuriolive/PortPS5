@@ -5,8 +5,9 @@ status: todo
 type: feature
 priority: high
 created_at: 2026-09-30T23:53:10Z
-updated_at: 2026-09-30T23:53:10Z
+updated_at: 2026-10-01T18:13:00Z
 ---
+
 
 ## Context
 
@@ -19,6 +20,7 @@ PRD F7: with a warm cache telemetry logs 0 shader compilations and 0 pipeline cr
 ## Acceptance Criteria
 
 - [ ] SourceKey/VariantKey as defined in pipeline-cache.md
+- [ ] EnvKey also hashes the enabled Vulkan features and extensions, so adding v2 stages (ray tracing, mesh) never needs a cache format break
 - [ ] All five cache files with warm-up and telemetry counters
 - [ ] Lavapipe and golden tests for key stability and corruption handling
 - [ ] pipeline-cache.md M2 row and ROADMAP M2 item ticked

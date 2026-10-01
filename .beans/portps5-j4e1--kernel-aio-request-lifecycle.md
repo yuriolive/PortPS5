@@ -5,8 +5,12 @@ status: todo
 type: task
 priority: low
 created_at: 2026-09-30T23:50:57Z
-updated_at: 2026-09-30T23:50:57Z
+updated_at: 2026-10-01T18:14:35Z
+parent: portps5-epoi
+blocked_by:
+    - portps5-37j0
 ---
+
 
 ## Context
 

@@ -1,10 +1,12 @@
-# PortPS5 — Roadmap to 1.0
+# PortPS5 — Roadmap (Part I: 1.0, Part II: 2.0)
 
 Status: draft v1 · 2026-09-27 · checkboxes synced with `main` on 2026-09-30
 
 Status as of 2026-10-01: M0 is done except the upstream-baseline check, a local-only run (bean `portps5-sigm`). M1 work proceeded ahead of that check; the rule that a milestone starts after the previous exit criteria pass is not waived, so the baseline must be recorded before M1 can exit. M1 has landed most ports (recompiler, relinker, threading, libc, image codecs, offline services, golden corpus, Recorder and HostImport building blocks, write tracker building blocks, the telemetry core and watchdog, the `tools/regress.py` runner) but not the runtime wiring (Recorder in the submit path, arena and heap on the extent allocator, config at startup, telemetry call sites). M2 has landed save data fidelity, SDL controllers in `scePadRead`, depth/stencil state decode, the host depth/stencil surface and the single audio mixer. Landed 2026-09-30 to 2026-10-01: Vulkan 1.3 driver floor (PR #62), `driver-lavapipe` CI job (PR #82), telemetry core (PR #78), regress runner (PR #76), resident render-target image pool (PR #74), SSE4a lowering of register forms (PR #73), guest-pointer validation (PR #83), direct-memory exports (PR #84), MsgDialog, PlayGo and AudioOut2 ports (PRs #85, #86, #87), per-title `/savedata0` mount (PR #53), verbatim libc `Unsupported` export with the cross-prx import check (PR #68), AVC decode through a pinned LGPL FFmpeg (PR #88). In flight and **not** landed: per-draw texture cost (PRs #71, #75, #77) and DualSense output (PR #81). Every unticked item below names a bean (`.beans/`) or an open PR where one exists; epics `portps5-4ut1` (GPU driver), `portps5-w3s8` (guest memory) and `portps5-r8mh` (runtime wiring and telemetry) group the M1 beans. M3 and later items get beans when their milestone seed is written.
 
 This roadmap is phased, with no calendar dates. Capacity is a solo maintainer plus AI agents, part-time. Each milestone has measurable exit criteria and unlocks gate titles in order of risk. A milestone starts only when the previous one's exit criteria pass. Each milestone becomes its own `ooo seed`.
+
+# Part I: 1.0
 
 ## Milestone 0: Fork foundation
 
@@ -105,7 +107,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 
 **Scope**
 - [ ] Driver:
-  - split into CommandProcessor, Recorder, Buffer/Texture/Pipeline caches, Rasterizer and Presenter;
+  - split into CommandProcessor, Recorder, Buffer/Texture/Pipeline caches, Rasterizer and Presenter, recording into a GPU IR with explicit resource states and a queue tag (bean `portps5-hkwd`; [spec/gpu-driver.md](spec/gpu-driver.md) Decision);
   - a GPU-side path for the `DRAW_INDIRECT` family (AnyPS5 `main@75a8668` takes `vkCmdDraw[Indexed]Indirect[Count]` only when the record fold, shader path, draw index and memory state allow it, and otherwise reads records on the CPU: `Draw.hpp:43`, `Draw.cpp:823-830`);
   - general block-generation write tracking for GPU-written surfaces, replacing the interim adjacent block-generation advance from M1–M2. Tomb Raider and Bugsnax FMV depend on it;
   - redesign capture ordering: resolve buffers on the GPU, resolve images at submit time, and never satisfy a wait from an unexecuted label while a capture depends on it.
@@ -162,6 +164,81 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [ ] Hosted CI and local regression are green.
 - [ ] The release notes are published.
 
+## Performance track (cross-cutting, M2–M5)
+
+The track keeps the steady-state invariants of [PRD §4.5](PRD.md) true while the milestones land. It runs alongside M2–M5 and gates nothing by itself; the milestone exit criteria still do. Every step measures first: before/after numbers with the same build flags and the same run protocol. Epic bean `portps5-7fqk`.
+
+**P0: Measure** (M2)
+- [x] Frame-time log, stalls, warm-up and pipeline-creation counts (PRs #76, #78).
+- [ ] Telemetry call sites wired: start-up, presenter, guest progress (bean `portps5-w1re`).
+- [ ] Results JSON frame-time percentiles (p50, p90, p99) and `tools/regress.py compare` against a stored baseline (bean `portps5-rrll`).
+- [ ] Per-frame breakdown: CPU record and submit, GPU time from Vulkan timestamp queries, CPU wait on GPU, present wait (bean `portps5-hfiw`).
+- [ ] Violation counters for invariants P1, P2, P3 and P5 (bean `portps5-aifo`).
+
+**P1: Per-draw CPU cost** (M2–M3, invariants P2 and P5)
+- [x] Pooled images for resident render-target sampling (PR #74, bean `portps5-r7qk` step 1).
+- [x] Frame-timing report only when `debug.profile` has `gpu` (PR #71).
+- [ ] SSE2 compare of cached textures (PR #75) and the write-tracker skip of unchanged textures (PR #77; it takes effect once bean `portps5-421p` wires the tracker). The P5 violation itself is bean `portps5-2k6d`.
+- [ ] Resident render-target baseline, then decide step 2 (bean `portps5-r7qk`).
+
+**P2: GPU-side resolution** (M3, invariants P1 and P6). The work is the M3 driver scope: the Recorder in the submit path (bean `portps5-tiod`), the GPU path for the indirect family, block-generation tracking and the capture-ordering redesign. The M3 module split records into a GPU IR with explicit resource states ([spec/gpu-driver.md](spec/gpu-driver.md) Decision), so barrier optimization, multithreaded recording and frame overlap can come later without a rewrite.
+- [ ] M3 exit adds: in the Tomb Raider regression result, the P1 and P2 counters are 0 in steady state, or each nonzero counter has a bean.
+
+**P3: Performance pass** (M5). This is the existing M5 item. Every remaining invariant violation is removed or justified in its owner spec, and these open questions are decided with data: the async-compute queue and HTILE/DCC ([spec/gpu-driver.md](spec/gpu-driver.md) 2–3), multithreaded PM4 recording (gpu-driver 11), pipeline libraries ([spec/pipeline-cache.md](spec/pipeline-cache.md) 3), and host core placement ([spec/threading.md](spec/threading.md) 9).
+
+60/120 fps targets, upscalers and frame-rate unlocks stay post-1.0 (PRD §5).
+
+### Parallel lanes
+
+A lane can start when its blockers are done. Lanes in the same row can run in parallel. The beans record the same edges (`blocked_by`), so `beans list --ready` shows what can start now.
+
+| Lane | Beans | Blocked by |
+|---|---|---|
+| Config at startup | `portps5-c06p` | none |
+| Results compare | `portps5-rrll` | none |
+| Tracker wiring | `portps5-421p` | none |
+| Recorder in submit path | `portps5-tiod` | none |
+| Telemetry call sites | `portps5-w1re` | `portps5-c06p` |
+| Display keys | `portps5-dtwf` | `portps5-c06p` |
+| Frame breakdown | `portps5-hfiw` | `portps5-w1re`, `portps5-tiod` |
+| Violation counters | `portps5-aifo` | `portps5-w1re` |
+| Resident RT step 2 | `portps5-r7qk` | `portps5-w1re` (baseline needs telemetry) |
+| P5 texture revalidation | `portps5-2k6d` | `portps5-421p` |
+
+## v2 seams in v1 (cross-cutting, M2–M5)
+
+Design for 2.0, implement for 1.0. A seam moves into v1 only when v1 code uses it, it is cheap now, and the 2.0 milestone that plugs into it is named. Nothing here adds a 2.0 feature to 1.0. Epic bean `portps5-epoi`.
+
+| Seam | v1 implements | 2.0 plugs in | Milestone | Bean |
+|---|---|---|---|---|
+| Host platform layer `core/host/` and a Win32 allowlist that only shrinks | Win32 backend for futex, clock, virtual memory; contract tests | Linux backend (M7) | M2–M3 | `portps5-37j0` |
+| Proton smoke test | best effort, never blocks a PR | Linux validation (M7) | M2 | `portps5-qfac` |
+| GPU IR with resource states and a queue tag | one queue, single-threaded recording | async compute, multithreaded recording, RT passes (M9–M10) | M3 | `portps5-hkwd` |
+| Residency interface on the driver caches | no budget pressure, simple LRU | VRAM oversubscription manager (M8) | M3 | `portps5-hps3` |
+| Guest memory registry: physical allocation with N views | 1 view, plus a synthetic 2-view test | aliasing at full size (M5), streaming (M8) | M3 | `portps5-gkef` |
+| One device capability table | subgroup size, descriptor model | ray tracing, mesh shaders (M9) | M3 | `portps5-l77s` |
+| Recompiler decodes RT and NGG/mesh ops into IR | `Unsupported()` with a log | RT and mesh lowering (M9) | M4 | `portps5-jehk` |
+| Pipeline cache `EnvKey` hashes enabled features | current stages | new stages without a format break | M2 | `portps5-8gdr` |
+| Positional file I/O and a request queue | `sceKernelAio*` | streaming and decompression pipeline (M8) | M3 | `portps5-j4e1` |
+
+Two spikes de-risk 2.0 and can run any time, in parallel with everything: guest TLS on Linux (`portps5-u16x`) and the guest RT BVH layout against Mesa RADV (`portps5-mdu8`).
+
+### Parallel lanes (seams)
+
+| Lane | Bean | Blocked by |
+|---|---|---|
+| Host platform layer | `portps5-37j0` | none |
+| Proton smoke test | `portps5-qfac` | none |
+| Capability table | `portps5-l77s` | none |
+| RT and NGG decode | `portps5-jehk` | none |
+| TLS spike | `portps5-u16x` | none |
+| BVH spike | `portps5-mdu8` | none |
+| Registry N views | `portps5-gkef` | `portps5-421p` |
+| GPU IR split | `portps5-hkwd` | `portps5-tiod` |
+| Residency interface | `portps5-hps3` | `portps5-hkwd` |
+| Direct-memory aliasing (M5) | `portps5-r2ns` | `portps5-gkef` |
+| Positional file I/O and Aio | `portps5-j4e1` | `portps5-37j0` |
+
 ## Traceability
 
 | 1.0 goal (PRD) | Delivered in | Verified by |
@@ -176,6 +253,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 | F8 offline PSN/trophies | M1 | Full runs never blocked |
 | F9 telemetry | M1 | Results JSON present for every run |
 | Performance bar (§4.3) | M1 (sync), M2 (depth/stencil), M3 (driver), M4 (subgroups), M5 (perf pass) | Results JSON fps stats |
+| Performance invariants (§4.5) | Performance track P0–P3 (M2–M5) | Results JSON violation counters, before/after measurements |
 | Ecosystem test suites (GTest, Kyty, SharpEMU, FreeBSD, Mesa, Wine) | M0 (framework), M1 (core runtime), M2 (sandbox/input/audio), M3 (caches/structurizer), M4 (fibers/jobs) | CI `unit`, `recompiler-golden`, `driver-lavapipe` |
 | Gate 1: Dreaming Sarah | M2 | Full run |
 | Gate 2: TMNT: Shredder's Revenge | M2 | Full run |
@@ -185,3 +263,74 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 | No title-specific code | M1 (policy), all milestones | `policy` CI job |
 | Hosted CI without GPU; local results | M0, M1, M2 | Verification spec |
 | R1 licence risk documented | PRD §7, M6 release notes | Doc review |
+
+# Part II: 2.0 (draft)
+
+2.0 objective and gates: [PRD §10](PRD.md). Part II starts after M6. Before that only the Part I seams and the two spikes run. Each milestone becomes its own `ooo seed`, and its beans are created then, with `blocked_by` links. A milestone starts only when the previous one's exit criteria pass. The exceptions are M8 and M9, which may run in parallel once M7 exits: they touch different subsystems (memory/I-O vs. GPU features) and have different gate titles.
+
+```
+M6 (1.0) ─▶ M7 platform + tier ─┬─▶ M8 streaming (gate 6) ─┬─▶ M10 scale (gate 8) ─▶ M11 GTA VI (gate 9)
+                                └─▶ M9 RT + geometry (gate 7) ┘
+```
+
+## Milestone 7: Native Linux and the 2.0 tier
+
+**Scope**
+- [ ] Linux backend for every host platform service ([spec/host-platform.md](spec/host-platform.md)), relinker ELF output built and tested in CI, and a hosted Linux build running the same `ctest` suites.
+- [ ] Guest TLS on Linux per the spike result (`portps5-u16x`).
+- [ ] The 2.0 reference tier: benchmark floors set from the 1.0 M5 performance-pass data, with ray tracing required (PRD §10.3).
+- [ ] Pin every 2.0 gate title that can be dumped (PRD §10.1).
+
+**Exit criteria**
+- [ ] The five 1.0 gate titles pass their regression on Linux with the 1.0 pass rules.
+- [ ] The Win32 allowlist outside `core/host/` is empty.
+
+## Milestone 8: Streaming and residency (gate 6, Horizon Forbidden West)
+
+**Scope**
+- [ ] Residency manager behind the driver-cache interface (`portps5-hps3`): a VRAM budget from `VK_EXT_memory_budget`, eviction and re-upload, no eviction inside a frame's working set.
+- [ ] Hardware-decompression requests served off the guest thread on the positional I/O queue (PRD V3, licence recorded per V-R4).
+- [ ] Guest memory beyond host VRAM at full open-world size, with write tracking and aliasing (M5 mechanisms at scale).
+
+**Exit criteria**
+- [ ] Horizon Forbidden West passes the full-run protocol on the 2.0 tier, with 0 stalls caused by eviction.
+
+## Milestone 9: Ray tracing and modern geometry (gate 7, Ratchet & Clank: Rift Apart)
+
+**Scope**
+- [ ] Guest acceleration-structure builds and ray queries on Vulkan ray tracing, designed from the BVH spike (`portps5-mdu8`).
+- [ ] Primitive (NGG) and mesh shader stages in the recompiler and driver, on the IR ops from `portps5-jehk`.
+- [ ] Async compute on a separate host queue through the GPU IR queue tag (gpu-driver open question 3).
+
+**Exit criteria**
+- [ ] Ratchet & Clank: Rift Apart passes the full-run protocol on the 2.0 tier in one of its RT modes. Skipping RT work is a fail.
+
+## Milestone 10: Open-world scale (gate 8, Marvel's Spider-Man 2)
+
+**Scope**
+- [ ] Multithreaded recording and bounded CPU/GPU frame overlap (invariant P6, gpu-driver open question 11), decided from frame-breakdown data.
+- [ ] Every remaining PRD §4.5 violation on gates 6–8 removed or justified.
+
+**Exit criteria**
+- [ ] Marvel's Spider-Man 2 passes the full-run protocol on the 2.0 tier.
+
+## Milestone 11: 2.0 release (gate 9, Grand Theft Auto VI)
+
+**Scope**
+- [ ] Pin GTA VI once a user-owned dump exists (PRD V-R1); inventory its imports.
+- [ ] Release full runs of gates 6–9 on Windows and Linux.
+
+**Exit criteria**
+- [ ] GTA VI passes the full-run protocol on the 2.0 tier at ≥ 30 fps average and ≥ 20 fps 1% low, with title-specific behaviour only in its documented TOML.
+- [ ] Gates 6–8 still pass, on both platforms.
+## Traceability (2.0)
+
+| 2.0 goal (PRD §10) | Delivered in | Seam from Part I |
+|---|---|---|
+| V1 native Linux | M7 | `portps5-37j0`, `portps5-u16x` |
+| V2 streaming and residency | M8 | `portps5-hps3`, `portps5-gkef` |
+| V3 decompression | M8 | `portps5-j4e1` |
+| V4 ray tracing | M9 | `portps5-l77s`, `portps5-jehk`, `portps5-mdu8` |
+| V5 modern geometry | M9 | `portps5-jehk` |
+| V6 async compute, frame overlap | M9, M10 | `portps5-hkwd`, performance track |
+| Gate 9 GTA VI at 30 fps | M11 | all of the above |
