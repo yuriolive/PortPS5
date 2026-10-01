@@ -72,6 +72,8 @@ def event_value(ev, rec):
         return int(rec.get("warmup_ms", 0))
     if ev == "run.end":
         return int(rec.get("capture_split", 0)), int(rec.get("write_faults", 0))
+    if ev == "heartbeat":
+        return float(rec["t_ms"])
     return None
 
 
@@ -96,6 +98,7 @@ def parse_telemetry(path):
         "audio_device": "none",
         "ended": False,
         "last_t_ms": None,
+        "last_seen_t_ms": None,
         "capture_split": 0,
         "write_faults": 0,
     }
@@ -126,6 +129,9 @@ def parse_telemetry(path):
                 t["dts"].append(val[0])
                 if val[1] is not None:
                     t["last_t_ms"] = val[1]
+            elif ev == "heartbeat":
+                seen = t["last_seen_t_ms"]
+                t["last_seen_t_ms"] = val if seen is None else max(seen, val)
             elif ev == "softlock":
                 t["softlocks"] += 1
             elif ev == "crash":
@@ -155,9 +161,9 @@ def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha, 
     ``killed_by_runner`` marks a run the runner ended at its time limit (not a
     crash). Any other end without ``run.end`` or with a non-zero exit code is
     counted as one crash on top of the in-process crash events. ``wall_ms`` is
-    the launch-to-kill time; for a killed run, a silence from the last present
-    to the kill above 30 s is one more softlock, since no later ``frame``
-    record exists to carry that gap.
+    the launch-to-kill time (recorded, not used for judging). For a killed run,
+    more than 30 s between the last present and the runtime's last heartbeat is
+    one more softlock, since no later ``frame`` record exists to carry that gap.
     """
     stats = rm.frame_stats(tel["dts"])
     crashes = tel["crashes"]
@@ -170,10 +176,15 @@ def build_results(args, tel, cfg, checks, killed_by_runner, exit_code, log_sha, 
         and (not tel["ended"] or exit_code not in (0, None))
     ):
         crashes += 1
-    # Without t_ms (older runtimes) fall back to the sum of intervals as the last present time.
-    last_t = tel["last_t_ms"] if tel["last_t_ms"] is not None else sum(tel["dts"])
+    # Tail hang: compare two timestamps on the runtime's own clock (the last present
+    # and the last heartbeat the runtime wrote before it was killed), never the
+    # runner's wall clock, which starts earlier and stops after the shutdown grace wait.
+    # Skipped when the runtime wrote no heartbeats (older runtime). A title that never
+    # presented is measured from run start (t_ms 0): there is no loading exemption.
+    last_frame = tel["last_t_ms"] if tel["last_t_ms"] is not None else 0.0
+    seen = tel["last_seen_t_ms"]
     tail_softlock = int(
-        killed_by_runner and wall_ms is not None and wall_ms - last_t > rm.SOFTLOCK_MS
+        killed_by_runner and seen is not None and seen - last_frame > rm.SOFTLOCK_MS
     )
     av_max = round(max(tel["av_offsets"], default=0.0), 1)
     duration = stats["presented_s"]
