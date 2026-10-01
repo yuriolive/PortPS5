@@ -35,6 +35,7 @@ private:
 
     const RdnaOperand& sourceAt(const RdnaInstruction& inst, std::uint32_t index);
     RdnaOperand destinationOperand(const RdnaInstruction& inst);
+    RdnaOperand accumulatorOperand(const RdnaInstruction& inst);
     RdnaOperand offsetOperand(const RdnaOperand& operand, std::uint32_t offset);
     RdnaOperand scalarDestinationOperand(const RdnaOperand& operand, std::uint32_t offset);
     RdnaOperand plainOperand(const RdnaOperand& operand);
@@ -166,7 +167,8 @@ private:
     bool vAndOrB32(const RdnaInstruction& inst);
     bool vOr3B32(const RdnaInstruction& inst);
     bool vXor3B32(const RdnaInstruction& inst);
-    bool sFf1I32B64(const RdnaInstruction& inst);
+    bool sFf1I32B64(const RdnaInstruction& inst, bool findZero);
+    bool sBcnt0I32B64(const RdnaInstruction& inst);
     bool vFfbh32(const RdnaInstruction& inst, bool sign);
     bool sFlbitI32B64(const RdnaInstruction& inst);
     bool integer24(const RdnaInstruction& inst, bool sign, bool addend);

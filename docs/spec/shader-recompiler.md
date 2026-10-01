@@ -81,9 +81,43 @@ emitted IR against an independent C++ statement of the ISA pseudo-code. No game 
 | `d9ac21c` s_getpc_b64 absolute address | SKIP | Already in tree (`5d6c2881`, `SGetpcB64AddsShaderBaseToNextPc`). Its AGC driver test is outside this lane. |
 | `8cef034` compiler thread-local storage | PORT ADAPTED | The recompiler's `thread_local` objects with destructors (`getSource` key vector, and the vertex/pixel/compute input-info scratch in `ShaderInputInfoBuilder`; `ShaderVertexInputInfo` is not trivially destructible) move to `HostThreadLocal`. The upstream `CacheKey.hpp` / `SrtDescriptorEvaluation.cpp` sites do not exist here. The hazard (a TLS-exit destructor on a guest-hosting thread) cannot be provoked on hosted CI, so the test is a per-thread-isolation regression guard. |
 | `5a257be` S_CBRANCH_CDBG* | PORT | Never taken on a retail wave; emits no IR and does not split the CFG, so a debugger stub placed past `s_endpgm` stays unreachable (SharpEmu `Gen5ShaderDecoderBoundaryTests` expectation). |
-| `8e66145` MIMG UNORM / `_a` aliases / LOD clamp / VOP3 carry-in / MRT export format | PORT ADAPTED (two parts) | Ported: UNORM accepted on non-sampling MIMG ops (the ISA requires it on stores and atomics), and VOP3 `v_add/sub/subrev_co_ci_u32` carry/borrow-in from the src2 SGPR pair. Deferred: `_a` sample aliases (not verifiable from the public ISA), LOD clamp (needs `shaderResourceMinLod` plumbing), MRT export component masks. |
+| `8e66145` MIMG UNORM / `_a` aliases / LOD clamp / VOP3 carry-in / MRT export format | PORT ADAPTED (two parts) | Ported: UNORM accepted on non-sampling MIMG ops (the ISA requires it on stores and atomics), and VOP3 `v_add/sub/subrev_co_ci_u32` carry/borrow-in from the src2 SGPR pair. Deferred: `_a` sample aliases (not verifiable from the public ISA), LOD clamp (needs `shaderResourceMinLod` plumbing), MRT export component masks (the MRT masks were ported in [lane E2](#upstream-ports-lane-e2)). |
 | `bb60336` disk-cache keys | SKIP | `ShaderDiskCache` does not exist in this tree (pipeline cache is M2). |
 | `5693c77` BDA lookup not inlined | PORT | `get_bda_pointer` carries the `DontInline` function control. |
+
+### Upstream ports, lane E2
+
+Second batch of recompiler ports from AnyPS5 `main` (PortPS5 branch `feat/port-shader-batch2`). Same method as lane E:
+each candidate is reviewed against the public RDNA2 ISA and our design, and every ported change has a synthetic,
+hand-assembled test in `recompiler_ported_instruction_tests` that is proven to fail without the fix (mutation check).
+The harness gained a wave-wide VGPR file with an independent DPP model, a SPIR-V word-stream inspector and
+`TryTranslate`/`CompileOrFail` wrappers (an exception escaping a TEST body ends the whole binary in this target).
+
+| Upstream | Decision | Notes |
+|---|---|---|
+| `d76ecfa` DPP row/bank masks gate the VGPR write | PORT (real bug on main) | `destinationOperand` was never called, so `DppUpdateU32` was dead and every DPP write ignored `row_mask`, `bank_mask` and `bound_ctrl`. `TranslateInstruction` now gives the destination its source's DPP fields; mac/fmac/dot2c read the accumulator through `accumulatorOperand` (no DPP). Upstream's test (`agc_dpp_write_tests`) only looked for an IR opcode; ours checks every lane's result against the ISA over several controls, masks and `bound_ctrl`. |
+| `8e66145` MRT export component masks, SNORM16 | PORT | `SPI_SHADER_COL_FORMAT` 32_R/32_GR/32_AR export only R / R,G / R,A of a 32-bit export (rest read 0, alpha 1) and a compressed export with format 6 is `UnpackSnorm2x16` (it took the half-float path). |
+| `8e66145` `_a` sample aliases | SKIP | The `_a` forms are not in the public RDNA2 ISA; the claim that they keep the plain address layout rests on one other emulator. Not ported until it can be checked against hardware docs. |
+| `8e66145` `_cl` LOD clamp | DEFER | Needs the device's `shaderResourceMinLod` listed in `SpirvTarget::supportedCapabilities` (AGC driver). Today `_cl` forms are rejected loudly by the decoder, which stays correct. Follow-up: driver hook, then decoder + `MinLod` image operand. |
+| FP64 operand with a literal | N/A (documented) | The tree has no 64-bit float opcode (no `*F64` in `RdnaOpcode`), so nothing consumes `readU32Pair` as a double. Contract recorded in Open questions 8: a future f64 consumer must take the literal as the high dword. |
+| `s_bcnt0_i32_b64`, `s_ff0_i32_b64`, `s_or/xor/andn2_saveexec_b32` | PORT | SOP1 0x0e, 0x12, 0x3d, 0x3e, 0x3f. bcnt0 sets SCC = (D != 0); ff0 leaves SCC; the saveexec forms share `sSaveexec` (source read before the old EXEC is written, per-lane EXEC bit). |
+| `28b09d4` GLC/DLC buffer accesses are coherent | PORT ADAPTED | Decoder reads DLC (MUBUF/MTBUF word 0 bit 15); a buffer load or store with GLC or DLC is `MemoryInfo::coherent`, its guest buffers are decorated `Coherent` and its accesses `Volatile`. Atomics are excluded (GLC only returns the pre-op value). The BDA half of upstream (`BdaAccessMask`) depends on the GPU-descriptor path that is deferred below. FLAT GLC/DLC is not mapped yet (Open questions 10). |
+| `6a73ec4` selection whose arm continues | PORT | Inside a loop, an arm that reaches the post-dominator only past the continue/merge block leaves the selection by continuing; the merge is the other arm's target. Test: the smallest CFG that used to exhaust the split budget (hand-built blocks, no shader). |
+| `cd158c6` BDA fault in a continue target | PORT ADAPTED | Reproduced on main: a loop whose body is the continue target and loads through BDA failed pre-optimization `spirv-val` ("continue construct ... not structurally post dominated"). `SpirvEmitterState::bdaStopsInvocations` (our tree has no wave-LDS flag of that name) is cleared while a continue target is emitted; there the read is guarded so an unmapped or overflowed address reads zero instead of dereferencing a null pointer (upstream relies on its own per-byte guard). The optimizer-pass interaction found while testing is Open questions 11. |
+| `21cb5676` buffer access through GPU-computed V#s | DEFER | Needs the BDA ABI to carry a written-page set behind the fault record and the host to mark those pages GPU-written (`BdaAbi.hpp` plus `libSceAgcDriver/Graphics/*`). A recompiler-only port would write into memory the driver does not allocate. Follow-up for the AGC driver owner. |
+| `74454ee` scalar buffer loads through a GPU-selected V# | DEFER | Builds on `21cb5676` (`MemoryInfo::gpuDescriptor` does not exist here). |
+| `3d3f7122` V# at address 0 accesses nothing, `029dcdac` null V# accesses nothing | DEFER | Driver-side descriptor handling (`Graphics/src/ShaderResources.cpp`, `Draw.cpp`); out of lane, and `3d3f7122` also builds on the deferred GPU-descriptor path. |
+| `000d0bf` retire threads past a partial thread-dimension dispatch | DEFER | The mechanism is general (RDNA2 `USE_THREAD_DIMENSIONS` launches a partial last workgroup), but it only works with the dispatch size from the PM4 packet, which is read in `Execution/src/Driver.cpp`, and with a serializer version bump and a shader-data layout change. The recompiler half would be dead code without the driver half. Follow-up: one PR across both. |
+| `c1692bf` D32 depth plane read as a 32-bit integer | DEFER | Depends on `DepthSurface.cpp` and the depth/stencil work (PR #55 area). |
+| `9bb9416` `image_bvh_intersect_ray` node test, `976fa82` ray tracing miss fallback | SKIP | Ray tracing appears nowhere in the PRD or ROADMAP scope and `9bb9416` is a large port of AMD's GPURT software fallback through another emulator. `976fa82` is behaviour-changing through the `APS5_RAYTRACING` environment variable, which is rejected (`no-title-hacks.md`). Today `0xe6` is not decoded and fails loudly at translation, which is the right behaviour. |
+| `cf202b3` SRT handle-invariance guard | SKIP | Not reproducible: `IrValue::HasImmediate` is true only for constants and `Resolve` follows identities only, so a phi that merges a constant with a per-invocation value never reports an immediate. The first pass already requires `RuntimeValidator`. |
+| `cf202b3` BVH ray-query stub | SKIP | Returns an invented "miss" encoding (`0xFFFFFFFF`) and hides an unimplemented opcode; unsupported states abort loudly here. |
+| `cf202b3` rect-list interpolant truncation, SPIR-V 1.5 ceiling | SKIP | Silently dropping interpolants to make a draw succeed is the "skip work that fails" pattern (`no-title-hacks.md`); the SPIR-V version ceiling belongs to the Vulkan 1.3 floor work (#62). |
+| `87911b3` atomic-zero rewrite | SKIP (unchanged) | Still title-tuned; see Open questions 9. |
+| `4ea1209` f16 follow-ups | none remaining | Ported in lane E. |
+
+Reviewed, not ported, outside this task's list: `33f91099` (NGG to mesh shader translation: new feature, needs mesh pipeline support in the driver),
+`bbf430e2` (16-bit depth integer reads, depth/stencil lane), `cf721a27`/`bb60336a` (shader disk cache, M2), `f98b28d0` and `3dec6ced` (AGC driver).
 
 ## Decision
 
@@ -218,6 +252,10 @@ emitted IR against an independent C++ statement of the ISA pseudo-code. No game 
     64-bit saveexec family and aliased-source/per-lane-EXEC ordering, S_CLAUSE and debug branches, SDWA on bfrev/ffbh,
     64-bit constant widening, f16 inline constants and op_sel, VOP3 carry-in, MIMG UNORM, BDA lookup `DontInline`,
     IR value flag equality.
+  - [x] Lane E2 ports (`recompiler_ported_instruction_tests`): DPP row/bank/bound_ctrl write gating per lane against an independent ISA
+    model, mac accumulator not DPP-moved, `s_or/xor/andn2_saveexec_b32`, `s_bcnt0/ff0_i32_b64`, GLC/DLC coherent buffer stores
+    (Coherent decoration and Volatile access, DLC bit decode), MRT 32_R/32_GR/32_AR export masks and SNORM16/UNORM16/FP16
+    unpack selection, structurizer termination on a selection whose arm continues, and BDA access in a loop continue target.
   - [x] Stage gate: `SharedMemoryBarrierInserter` inserts barriers only for compute, mesh, and
     tessellation-control stages (Workgroup execution scope is invalid elsewhere), covered by
     `Wave64VertexStageSkipsBarrierInsertion` and `TessellationControlStageInsertsBarrier`.
@@ -290,9 +328,27 @@ A post-1.0 path pre-warms the disk cache from a recorded `.req` corpus.
    of a divergently-controlled loop is likewise deferred to M3 (it needs loop-latch uniformity analysis).
 8. Lane E follow-ups not ported: 64-bit *floating-point* operands with a literal constant take the literal as the
    high dword of the double (low dword zero) on hardware, while `readU32Pair` zero-extends it (correct for integer
-   operands only); it needs the consuming opcode's type (bean `portps5-51d6`). `s_bcnt0_i32_b64`, `s_ff0_i32_b64` and the `_b32` forms of
-   `s_or/xor/andn2_saveexec` are still undecoded (bean `portps5-uqu5`). Upstream's `_a` sample aliases, `_cl` LOD clamp and MRT export
-   component masks (`8e66145`) need ISA verification and device-feature plumbing first.
+   operands only). No 64-bit float opcode exists in the tree yet, so nothing is wrong today; the first f64 consumer
+   must read its literal as the high dword (it needs the consuming opcode's type; bean `portps5-51d6`). Upstream's `_a` sample aliases
+   (`8e66145`) need ISA verification, and the `_cl` LOD clamp needs the device's `shaderResourceMinLod` in
+   `SpirvTarget::supportedCapabilities` (AGC driver). Lane E2 ported the rest of that commit and the previously
+   undecoded scalar ops.
 9. Upstream's buffer-atomic zero-identity rewrite (`87911b3`: add/sub/or/xor of 0 become an atomic load or nothing)
    was tuned to one title's access pattern and is data-dependent at run time; it stays out until a general
    justification (mechanism, measurements and a memory-ordering argument) exists.
+10. FLAT/GLOBAL loads carry GLC/DLC too (`flat_load_dword ... glc`); only MUBUF/MTBUF accesses are mapped to coherent
+    storage-buffer accesses so far. The BDA path would need `Volatile` on its physical-storage loads.
+11. Loop continue targets and SPIRV-Tools: when the single guest block of a loop is the continue target and contains a
+    selection (any bounds-checked buffer access or guest-memory read under EXEC), the module passes `spirv-val` before
+    optimization but the optimizer's `merge-blocks` pass produces a module that fails validation ("continue construct ...
+    not structurally post dominated by the back-edge block"). Reproduced with a plain `buffer_store_dword` in a counting
+    loop, so it predates and is independent of the BDA fix above. Release builds (no SPIRV-Tools) are unaffected. A fix is an
+    emitter change (a dedicated empty continue block after the guest latch) or an optimizer pass-list change; either needs
+    the golden corpus to carry a loop case first.
+12. Deferred upstream items that need an AGC driver hook, listed in the lane E2 table: GPU-computed V# access
+    (`21cb5676`, `74454ee9`, `3d3f7122`, `029dcdac`), partial thread-dimension dispatch (`000d0bf4`), the `shaderResourceMinLod`
+    capability for `_cl` samples, and the D32-bits-as-integer texture read (`c1692bf9`).
+13. DPP with `bound_ctrl = 0` and a source lane that is in range but disabled by EXEC: the backend writes the lane with a zero
+    source (`EmitDppWriteCondition` ignores the source lane's EXEC), while the ISA may treat a disabled source lane like an
+    invalid one. The lane E2 tests keep all lanes active, so the case is not pinned either way; confirm against the ISA before
+    relying on it.

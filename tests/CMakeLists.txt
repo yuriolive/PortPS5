@@ -92,6 +92,58 @@ portps5_add_gtest(guest_memory_validation_tests
         unit
 )
 
+# Literal SCE error values exposed by DirectMemory.hpp (header-only, runs on any host)
+portps5_add_gtest(kernel_error_value_tests
+    SOURCES
+        kernel/KernelErrorValuesTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# GuestAllocations::Mutation::Unmap: ranges spanning several allocations (FreeBSD munmap semantics)
+portps5_add_gtest(guest_allocations_unmap_tests
+    SOURCES
+        memory/GuestAllocationsUnmapTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Guest-visible direct-memory exports: query, available size, argument hardening
+portps5_add_gtest(direct_memory_export_tests
+    SOURCES
+        memory/DirectMemoryExportTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+# Mapping placement (hint, NO_OVERWRITE) and munmap spanning, end to end through the exports
+portps5_add_gtest(memory_mapping_tests
+    SOURCES
+        memory/MemoryMappingTests.cpp
+    LIBRARIES
+        libkernel
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Direct memory physical pool and SceKernelMemoryPool API verification
 portps5_add_gtest(direct_memory_pool_tests
     SOURCES

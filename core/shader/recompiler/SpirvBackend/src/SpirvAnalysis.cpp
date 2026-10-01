@@ -1,3 +1,6 @@
+// core/shader/recompiler/SpirvBackend/src/SpirvAnalysis.cpp
+// Scans the IR program for the SPIR-V capabilities, extensions and decorations it requires (subgroup, int64
+// atomics, coherent buffers, ...). Pure function of the program; thread-safe.
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include <stdexcept>
 
@@ -31,6 +34,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     throw std::runtime_error("buffer operation has invalid memory metadata");
                 }
                 const auto& memory = program.Resources().memoryInfo.at(memoryIndex);
+                requirements.coherentBuffers = requirements.coherentBuffers || memory.coherent;
                 if (memory.kind == ResourceKind::Buffer) {
                     if (memory.resource >= program.Info().buffers.size()) {
                         throw std::runtime_error("buffer operation has invalid resource metadata");

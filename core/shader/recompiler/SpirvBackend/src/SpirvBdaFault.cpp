@@ -1,3 +1,6 @@
+// core/shader/recompiler/SpirvBackend/src/SpirvBdaFault.cpp
+// Emits the BDA fault record (the ABI in BdaAbi.hpp) and the invocation stop that follows a failed guest-memory
+// lookup. Single-threaded emission.
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
@@ -61,6 +64,7 @@ void ReturnBdaFailureIf(SpirvEmitterState& state, std::uint32_t condition, std::
 }
 
 void StopBdaInvocationIf(SpirvEmitterState& state, std::uint32_t condition) {
+    if (!state.bdaStopsInvocations) return;
     const auto failed = state.module.AllocateId();
     const auto next = state.module.AllocateId();
     state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
