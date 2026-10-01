@@ -1,6 +1,6 @@
 ---
 # portps5-2k6d
-title: 'Perf P5: full guest-texture compare on every TextureCache lookup'
+title: 'Perf P5: full guest-texture compare on every TextureCache hit of a guest-memory entry'
 status: todo
 type: task
 priority: normal
@@ -13,7 +13,7 @@ blocked_by:
 
 ## Context
 
-PRD §4.5 invariant P5: `TextureCache::Get` compares the whole guest texture on every lookup, hits included (docs/spec/gpu-driver.md Current state). PR #75 makes the compare cheaper (SSE2 `BytesEqual`). PR #77 skips it when `IWriteTracker::Collect` proves no change. Both PRs carry their slice plan in bean `portps5-pdc1`, which reaches `main` with #75. This bean tracks the invariant violation itself until it is gone. Blocked by: portps5-421p (the #77 shortcut takes effect only once the runtime instantiates the write tracker).
+PRD §4.5 invariant P5: `TextureCache::Get` compares the whole guest texture (`memcmp` over the snapshot) on every hit of a guest-memory entry; entries sourced from a resident render target match by generation and skip the compare (`Graphics/src/TextureCache.cpp`) (docs/spec/gpu-driver.md Current state). PR #75 makes the compare cheaper (SSE2 `BytesEqual`). PR #77 skips it when `IWriteTracker::Collect` proves no change. Both PRs carry their slice plan in bean `portps5-pdc1`, which reaches `main` with #75. This bean tracks the invariant violation itself until it is gone. Blocked by: portps5-421p (the #77 shortcut takes effect only once the runtime instantiates the write tracker).
 
 ## Higher Goal
 

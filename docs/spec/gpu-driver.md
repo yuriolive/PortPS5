@@ -68,7 +68,7 @@ In cases (c) and (d) a pointer word is read before it has been written. The SRT 
 **Known performance-invariant violations (PRD §4.5).** Each one has a bean, and the M5 performance pass removes or justifies it:
 
 - P1: each read of a resident render target runs `DrawQueue::Flush()` plus an extra submit (`Graphics/src/RenderTexture.cpp`; bean `portps5-r7qk`, step 1 pooled images in PR #74).
-- P5: `TextureCache::Get` compares the whole guest texture on every lookup, hits included (bean `portps5-2k6d`; the slice plan is bean `portps5-pdc1`, which reaches `main` with PR #75; PR #75 speeds up the compare and PR #77 skips it when the write tracker proves no change).
+- P5: `TextureCache::Get` compares the whole guest texture (`memcmp` over the snapshot) on every hit of a guest-memory entry; entries sourced from a resident render target match by generation and skip the compare (`Graphics/src/TextureCache.cpp`) (bean `portps5-2k6d`; the slice plan is bean `portps5-pdc1`, which reaches `main` with PR #75; PR #75 speeds up the compare and PR #77 skips it when the write tracker proves no change).
 
 ### Upstream Recorder delta since `8a69fefe`
 
