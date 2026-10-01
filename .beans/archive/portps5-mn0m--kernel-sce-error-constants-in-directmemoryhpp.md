@@ -1,11 +1,11 @@
 ---
 # portps5-mn0m
 title: 'Kernel: fix SCE error constants in DirectMemory.hpp'
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2026-09-30T23:51:15Z
-updated_at: 2026-10-01T00:21:11Z
+updated_at: 2026-10-01T03:30:00Z
 ---
 
 ## Context
@@ -18,10 +18,10 @@ One shared, correct set of SCE kernel error codes, so titles that compare agains
 
 ## Acceptance Criteria
 
-- [ ] `DirectMemory.hpp` and `MemoryPool` use `KernelErrors.hpp` and the local statics are removed
-- [ ] `tests/memory/*` expectations updated together with the header, with the correct `0x80020000 | errno` values
-- [ ] Any exported call that returned the wrong code is covered by a GoogleTest that fails on the old value
-- [ ] threading.md Open question 6 closed
+- [x] `DirectMemory.hpp` and `MemoryPool` use `KernelErrors.hpp` and the local statics are removed
+- [x] `tests/memory/*` expectations updated together with the header, with the correct `0x80020000 | errno` values
+- [x] Any exported call that returned the wrong code is covered by a GoogleTest that fails on the old value
+- [x] threading.md Open question 6 closed
 
 ## Out of Scope
 
@@ -29,4 +29,6 @@ Behaviour changes to any error path other than the numeric value.
 
 ## Summary of Changes
 
-TBD
+- `DirectMemory.hpp` includes `KernelErrors.hpp`; the private `0x8001xxxx` statics are gone (`MemoryPool` uses the same header).
+- `tests/kernel/KernelErrorValuesTests.cpp` pins the literal `0x80020000 | errno` values (fails with the old header: reports -2147418107); `tests/memory/VirtualMemoryAllocationTests.cpp` checks `sceKernelAllocateDirectMemory` returns `0x80020016` end to end. The existing `::SCE_KERNEL_ERROR_*` comparisons in `tests/memory` follow the header, so they needed no edit.
+- threading.md Open question 6 marked resolved.

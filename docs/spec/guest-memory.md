@@ -118,9 +118,27 @@ struct IWriteTracker {
 
 **Page-state table.** The registry, which knows every protection, writes 1 byte per 4 KiB page under its exclusive lock. The driver reads the table lock-free with relaxed atomics. `VirtualQuery` and the generation re-check race disappear from the hot path. Lookups are for arena and image pages only; any other address is "not guest memory".
 
-### Unmap semantics
+### Mapping, unmap and direct-memory query semantics
 
-`sceKernelMunmap` follows FreeBSD `munmap`: a range may span several registered mappings and unregistered gaps. `GuestAllocations::Mutation::Unmap` walks the registered fragments that overlap the request (not the allocation extents, so a hole left by an earlier partial unmap is skipped), checks every piece for releasability and pins before the first host unmap, then reports each piece to the callback as `(piece, pieceBytes, allocationBase, last)` and commits it to the registry. If the host unmap of a later piece fails, earlier pieces are already gone from both sides. A request with no registered byte still fails with `SCE_KERNEL_ERROR_EINVAL` (this tree's existing contract; whether the console returns success for an entirely unmapped range is unverified on hardware). Upstream AnyPS5 `962fc34e` derived pieces from the allocation extent and failed on holes and on requests that end inside an allocation; that part was not ported.
+- **Address hint.** Without `MAP_FIXED` a non-null address is only a hint, as on FreeBSD: it is used when the range is free, aligned and the host accepts it, otherwise the mapping is placed anywhere. (FreeBSD searches upwards from the hint; placing it anywhere is a simplification.) A misaligned hint is ignored, not rejected. Only `MAP_FIXED` must find the range free in the registry.
+- **`NO_OVERWRITE` (0x80).** Accepted with `MAP_FIXED` and never replaces an existing mapping. Replacing an existing mapping is not supported, so a fixed mapping without the flag behaves the same way. Unknown flag bits are still `SCE_KERNEL_ERROR_EINVAL`.
+- **Unmap.** `sceKernelMunmap` follows FreeBSD `munmap`: a range may span several registered mappings and unregistered gaps. `GuestAllocations::Mutation::Unmap` walks the registered fragments that overlap the request (not the allocation extents, so a hole left by an earlier partial unmap is skipped), checks every piece for releasability and pins before the first host unmap, then reports each piece to the callback as `(piece, pieceBytes, allocationBase, last)` and commits it to the registry. If the host unmap of a later piece fails, earlier pieces are already gone from both sides. A request with no registered byte still fails with `SCE_KERNEL_ERROR_EINVAL` (this tree's existing contract; whether the console returns success for an entirely unmapped range is unverified on hardware).
+- **`sceKernelDirectMemoryQuery`.** Reports the allocated run containing the offset with the memory type it was allocated with; adjacent blocks of the same type are merged into one run, and `SCE_KERNEL_DMQ_FIND_NEXT` (1) skips free memory to the next run. Free memory and offsets past the aperture answer `SCE_KERNEL_ERROR_EACCES`. Cross-checked against shadPS4 `MemoryManager::DirectMemoryQuery` (GPL-2.0-or-later, behaviour only); not verified on hardware.
+- **`sceKernelAvailableDirectMemorySize`.** Reports the largest contiguous free run inside the search window (aligned start, size), `0` at offset `0` when nothing is free. Upstream AnyPS5 `cfe9a458` reported the run after the first free page, which can understate or overstate what one allocation can return.
+- **Hardening found while porting.** `DirectMemoryAlloc` computed `cur + len` without an overflow check, so a length near 2^64 wrapped and drove the page-bitmap scan out of bounds; `sceKernelReleaseDirectMemory` had no upper bound and marked pages past the bitmap. Both now range-check with headroom comparisons, require a power-of-two alignment, and return `SCE_KERNEL_ERROR_EINVAL`/`EAGAIN`.
+- **Error codes.** `DirectMemory.hpp` includes the shared `KernelErrors.hpp` (`0x80020000 | errno`); it used to carry private `0x8001xxxx` values.
+
+### Upstream mapping commits (AnyPS5, reviewed for this port)
+
+| Commit | Decision | Reason |
+|---|---|---|
+| `962fc34e` unmap spanning mappings | PORT ADAPTED | Derives pieces from allocation extents and fails on holes and on requests that end inside an allocation; rewritten over registered fragments. |
+| `9754937a` hinted / no-overwrite mappings | PORT ADAPTED | Linux-only `/proc/self/maps` scan and throws replaced by the advisory-hint rule above. |
+| `9754937a` `usleep` | PORT | One-line alias of `sceKernelUsleep`. |
+| `9754937a` virtual range names | DEFER | `sceKernelVirtualQuery` is still a one-page stub here, and the name pointer needs the validation API; bean `portps5-k7qd`. |
+| `cfe9a458` pool querying | PORT ADAPTED | Block tracking was already in this tree; wired the query, type and available-size exports, with shadPS4-checked semantics. The module-loader part is out of scope. |
+| `abb9c852`, `b7eaabbc`, `03465e76`, `f7c53a44`, `5e08eb4c` shared direct-memory views | DEFER (M5) | Windows placeholder/`MapViewOfFile3` machinery on top of upstream `GuestArena`, which this tree does not have; throws across the ABI, an `APS5_NO_WRITE_WATCH` switch, per-16-KiB-page syscalls, and a transient `PAGE_EXECUTE_READWRITE`. Aliasing is an M5 item with Open question 1 unanswered; bean `portps5-r2ns`. |
+| `d8c7c0cc` Linux userfaultfd write tracking | DEFER | A Linux backend for upstream's AGC driver (edits the driver, four `APS5_*` env switches, title-specific motivation). `WriteWatchTracker` here is Win32-only and unwired; bean `portps5-u5fe`. |
 
 ## Interfaces
 
@@ -184,7 +202,7 @@ struct IWriteTracker {
 
 1. Do any gate titles map one physical direct range twice? The M1 import inventory plus the alias counter will answer this. If none do, the section window stays dormant.
 2. Can a `MEM_WRITE_WATCH` reservation coexist with placeholder splitting? This is unverified, and it decides where the alias window lives.
-3. Does any title rely on `sceKernelDirectMemoryQuery` returning real extents? AnyPS5 main@75a8668 returns the recorded block from its pool `_ranges` map and a single page only for unrecorded offsets (`Export.cpp:136-153`, `MemoryPool.cpp:46-54`).
+3. Does any title rely on `sceKernelDirectMemoryQuery` returning real extents? The export now answers from the recorded blocks (see "Mapping, unmap and direct-memory query semantics"); which titles depend on it, and whether the console returns `EACCES` for free memory, remain unverified on hardware.
 4. Is a 64 KiB block granularity too coarse for per-job label slots? AnyPS5 main@75a8668 notes slots 0x20 apart (`GuestMemory.cpp:628-630`). Decide from profiles.
 5. Sync assessment (PR #28): upstream `GuestArena` (`libc/src/GuestArena.cpp`, `include/GuestArena.hpp`) was trial-ported and reverted. Verdict: a raw port cannot land — the O(n) first-fit scan (`GuestArena.cpp:43-55` on AnyPS5 main@75a8668) contradicts the extent-tree decision below, `throw std::runtime_error` sites break the no-throw rule (a guest `catch(...)` swallows host exceptions), the file is unwired, and there are no file headers. It returns with the M1 extent-tree port (adapted, return codes, headers); the extent-tree core landed in PR #32 and the wiring is open (bean `portps5-421p`). `HostThreadLocal.hpp` stays: it compiles and its GTest balance suite is green.
 6. Guest-memory range-validation API for PRX libraries: none is exported yet, so codec exports cannot check a guest range against the arena (bean `portps5-8l0d`). The page-state table from PR #40 is the data source.
