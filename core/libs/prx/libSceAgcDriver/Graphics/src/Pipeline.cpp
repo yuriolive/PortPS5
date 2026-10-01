@@ -9,8 +9,22 @@
 
 namespace AgcDriver::Graphics {
 
-Pipeline::Pipeline(const Context& context, const State& state, const RenderTarget* target, const ShaderResources& resources, std::span<const CompiledShader> shaders) : context(context), _modules(shaders.size()) {
+Pipeline::Pipeline(const Context& context, const State& state, const RenderTarget* target, const ResidentDepth* depth, const DepthLoadOps& depthLoad, const ShaderResources& resources, std::span<const CompiledShader> shaders) : context(context), _modules(shaders.size()) {
     Require((target != nullptr) == state.hasColorTarget, "render target does not match decoded color state");
+    Require((depth != nullptr) == state.depthTarget.Bound(), "depth surface does not match decoded depth state");
+    hasColorAttachment = state.hasColorTarget;
+    hasDepthAttachment = depth != nullptr;
+    // Reconciled with the bound surface: an absent or cleared aspect neither tests nor writes.
+    // Built before any Vulkan object exists so a rejection (depth bounds without the device
+    // feature) throws cleanly.
+    auto depthStencil = ToVulkan(state.depthStencil, state.depthTarget, context.depthBounds);
+    if (depthStencil.depthBoundsTestEnable) {
+        Require(context.depthRangeUnrestricted || (depthStencil.minDepthBounds >= 0 && depthStencil.maxDepthBounds <= 1), "depth bounds outside [0, 1] require VK_EXT_depth_range_unrestricted");
+    }
+    if (depth) {
+        Require(depth->Description().extent.width >= state.renderExtent.width && depth->Description().extent.height >= state.renderExtent.height, "depth surface is smaller than the render extent");
+        Require(depth->Matches(state.depthTarget), "depth surface does not match the decoded surface identity");
+    }
     Require(state.renderExtent.width != 0 && state.renderExtent.height != 0 && state.renderExtent.width <= context.limits.maxFramebufferWidth && state.renderExtent.height <= context.limits.maxFramebufferHeight, "framebuffer extent exceeds device limits");
     Require(state.hasColorTarget || (context.limits.framebufferNoAttachmentsSampleCounts & VK_SAMPLE_COUNT_1_BIT) != 0, "device does not support single-sample rendering without attachments");
     ValidateShaders(shaders, state, context.subgroup, context.fragmentShaderBarycentric);
@@ -67,21 +81,39 @@ Pipeline::Pipeline(const Context& context, const State& state, const RenderTarge
         color.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         color.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         VkAttachmentReference reference{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        // Depth/stencil attachment follows the optional colour attachment. Every draw is its own
+        // render pass, so the layout never leaves DEPTH_STENCIL_ATTACHMENT_OPTIMAL (ResidentDepth
+        // performs the first transition and the inter-draw barriers) and storeOp is always STORE.
+        VkAttachmentDescription depthAttachment{};
+        VkAttachmentReference depthReference{state.hasColorTarget ? 1u : 0u, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+        if (depth) {
+            depthAttachment.format = depth->Format();
+            depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+            depthAttachment.loadOp = depthLoad.depth;
+            depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            depthAttachment.stencilLoadOp = depthLoad.stencil;
+            depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+            depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        }
+        const VkAttachmentDescription attachments[2] = {state.hasColorTarget ? color : depthAttachment, depthAttachment};
         VkSubpassDescription subpass{};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = state.hasColorTarget ? 1 : 0;
         subpass.pColorAttachments = state.hasColorTarget ? &reference : nullptr;
+        subpass.pDepthStencilAttachment = depth ? &depthReference : nullptr;
+        const auto attachmentCount = (state.hasColorTarget ? 1u : 0u) + (depth ? 1u : 0u);
         VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-        passInfo.attachmentCount = state.hasColorTarget ? 1 : 0;
-        passInfo.pAttachments = state.hasColorTarget ? &color : nullptr;
+        passInfo.attachmentCount = attachmentCount;
+        passInfo.pAttachments = attachments;
         passInfo.subpassCount = 1;
         passInfo.pSubpasses = &subpass;
         Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &passInfo, nullptr, &renderPass), "vkCreateRenderPass");
-        const auto view = target ? target->View() : VK_NULL_HANDLE;
+        const VkImageView views[2] = {state.hasColorTarget ? target->View() : (depth ? depth->View() : VK_NULL_HANDLE), depth ? depth->View() : VK_NULL_HANDLE};
         VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
         framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = state.hasColorTarget ? 1 : 0;
-        framebufferInfo.pAttachments = state.hasColorTarget ? &view : nullptr;
+        framebufferInfo.attachmentCount = attachmentCount;
+        framebufferInfo.pAttachments = views;
         framebufferInfo.width = state.renderExtent.width;
         framebufferInfo.height = state.renderExtent.height;
         framebufferInfo.layers = 1;
@@ -113,10 +145,6 @@ Pipeline::Pipeline(const Context& context, const State& state, const RenderTarge
         blend.attachmentCount = state.hasColorTarget ? 1 : 0;
         blend.pAttachments = state.hasColorTarget ? &state.blend : nullptr;
         std::copy(state.blendConstants.begin(), state.blendConstants.end(), blend.blendConstants);
-        // The render pass has no depth attachment, so Vulkan ignores this state. Depth bounds are
-        // still cleared: the depthBounds feature is not enabled and its VUID requires VK_FALSE.
-        auto depthStencil = ToVulkan(state.depthStencil);
-        depthStencil.depthBoundsTestEnable = VK_FALSE;
         VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         pipelineInfo.stageCount = static_cast<std::uint32_t>(stages.size());
         pipelineInfo.pStages = stages.data();
@@ -159,11 +187,17 @@ VkPipelineLayout Pipeline::Layout() const {
     return layout;
 }
 
-void Pipeline::Begin(VkCommandBuffer commands, VkExtent2D extent) const {
+void Pipeline::Begin(VkCommandBuffer commands, VkExtent2D extent, const DepthTarget& depthTarget) const {
     VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     begin.renderPass = renderPass;
     begin.framebuffer = framebuffer;
     begin.renderArea = {{0, 0}, extent};
+    // One clear value per attachment, indexed by attachment number. The colour attachment is
+    // always LOAD, so its slot is unused; the depth/stencil slot only matters for CLEAR aspects.
+    VkClearValue clears[2]{};
+    clears[hasColorAttachment ? 1 : 0].depthStencil = {depthTarget.clearDepthValue, depthTarget.clearStencilValue};
+    begin.clearValueCount = (hasColorAttachment ? 1u : 0u) + (hasDepthAttachment ? 1u : 0u);
+    begin.pClearValues = clears;
     context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
     context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 }

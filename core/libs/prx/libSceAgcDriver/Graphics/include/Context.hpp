@@ -76,6 +76,8 @@ struct Context {
     bool externalMemoryHost = false;
     // VkPhysicalDeviceExternalMemoryHostPropertiesEXT::minImportedHostPointerAlignment (0 when unknown).
     VkDeviceSize hostImportAlignment = 0;
+    // VkPhysicalDeviceFeatures::depthBounds was enabled at device creation (depth-bounds test).
+    bool depthBounds = false;
 
     template<typename TFunction>
     TFunction Function(const char* name) const {

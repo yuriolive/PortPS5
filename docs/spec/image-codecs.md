@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Image codecs
 
-Status: draft v1 · 2026-09-30
+Status: draft v1 · 2026-09-30 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -81,13 +81,13 @@ All tests are GoogleTest through `portps5_add_gtest`, run in hosted CI (no GPU),
 ## Milestones
 
 - [x] M1: shared JPEG/PNG codec layer, `libSceJpegEnc`, `libScePngDec` ([ROADMAP](../ROADMAP.md) Milestone 1).
-- [ ] `libScePngEnc` on `Decoder::Png::Encode` (shared encoder exists; the library wrapper is not ported).
+- [ ] `libScePngEnc` on `Decoder::Png::Encode` (shared encoder exists; the library wrapper is not ported; bean `portps5-k0r8`).
 - [ ] 16-bit PNG output, MJPEG and restart-interval JPEG encoding, if a gate title needs them.
 
 ## Open questions
 
-- **Guest pointer validation.** No guest-memory range-validation API is exported to PRXs. These libraries validate null, alignment and size arithmetic but read guest buffers with raw pointers, like the rest of the tree. Replace with the guest-memory API when it lands ([guest-memory.md](guest-memory.md)).
-- **`scePngDecCreate` `max_image_width`** is stored but never enforced against the image width; the real library's behaviour is unverified.
+- **Guest pointer validation.** No guest-memory range-validation API is exported to PRXs. These libraries validate null, alignment and size arithmetic but read guest buffers with raw pointers, like the rest of the tree. Replace with the guest-memory API when it lands ([guest-memory.md](guest-memory.md); bean `portps5-8l0d`).
+- **`scePngDecCreate` `max_image_width`** is stored but never enforced against the image width; the real library's behaviour is unverified (bean `portps5-jvsq`).
 - **`scePngDecDecode` return value** (`width<<16|height`, or `0` when a dimension exceeds 32767) is ported from AnyPS5 and not independently verified.
 - **`sceJpegEncEncode`**: the `compression_ratio` to stb quality mapping is a linear approximation; `output_info->height` echoes the input height; a negative `restart_interval` is treated as no restart. None is verified against hardware.
 - **Grayscale JPEG** (`Y8` input) is emitted as a 3-component stream because stb has no 1-component mode.

@@ -1,6 +1,6 @@
 # PortPS5 — Technical Specification
 
-Status: draft v2 · 2026-09-27
+Status: draft v2 · 2026-09-27 · synced with `main` 2026-09-30
 
 This folder holds the technical specification for PortPS5 1.0, one file per subsystem. Product goals and the 1.0 bar live in [../PRD.md](../PRD.md), and milestones in [../ROADMAP.md](../ROADMAP.md).
 

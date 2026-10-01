@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Threading and synchronization
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -23,6 +23,8 @@ Paths are relative to `core/libs/prx/`. "main@e06dbff" is the pre-merge AnyPS5 m
 | Fibers | Stubs. | An asm context switch in `libSceFiber/Export.cpp:98` (second stub at 188). Fibers migrate between threads (32-34,73-74). |
 | Time | — | `NtSetTimerResolution` is set to 0.5 ms at load, with power throttling disabled (`libkernel/Time/Time.cpp:71-89`). `SleepUntil` waits on a high-resolution timer and then spins `YieldProcessor` for the last 0.5 ms (`TimedWait.cpp:231-242`). `APS5_TIME_SCALE` rescales the guest clocks (`Time.cpp:39-45`). |
 | Errors | `NotImplemented_nid_no_patch` throws `std::runtime_error` (`libc/src/General.cpp:86-88`), and the shared unwinder lets a guest `catch(...)` swallow host exceptions. | Same (`General.cpp:155-157`). |
+
+**Status as of 2026-09-30 (PortPS5 `main`).** The M1 futex rewrite is in (PRs #19, #41, #43): mutex, condition variable, rwlock and `_umtx_op` on `WaitOnAddress` words with compact tids, return codes instead of throws, and the `SyncOnAddress`, `PthreadMutex`, `PthreadCond` and `EventQueueLifetime` suites under `tests/kernel/`. PR #61 (merged) added the futex-based pthread semaphore lifecycle, barriers, once, `sceKernelSleep`, `sigprocmask`, priority-protocol mutex attributes, adopted `scePthreadSelf` handles and `sceKernelDeleteSema`. Not landed: event flags, semaphores and fibers on the shared primitive (M4). Known libkernel gaps recorded as beans: POSIX `sem_*` stubs (`Posix/Sem.cpp`, bean `portps5-vfk7`), the `sceKernelAio*` request lifecycle (open question 7, bean `portps5-j4e1`), wrong `DirectMemory.hpp` error constants (open question 6, bean `portps5-mn0m`), 64-bit `sceKernelLseek` (bean `portps5-65h0`), FIFO order for equal-priority semaphore waiters (open question 3, bean `portps5-ra5d`).
 
 ## Decision
 

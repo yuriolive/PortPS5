@@ -1,6 +1,6 @@
 # PortPS5 — Spec: Save data
 
-Status: draft v1 · 2026-09-27
+Status: draft v1 · 2026-09-27 · synced with `main` 2026-09-30
 
 ## Scope
 
@@ -125,7 +125,7 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 | Milestone | Work |
 |---|---|
 | M1 | - [x] Offline NP, trophies, user service and system dialogs non-blocking at boot for all five titles. NP, dialog and trophy import inventory. `MsgDialog` stops throwing. |
-| M2 | - [ ] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration. Round-trip in `tools/regress`. Dreaming Sarah and TMNT pass. |
+| M2 | - [ ] Per-title storage, crash safety, param and icon fidelity, scripted save dialogs, `_sd` migration:<br>- [x] per-title layout, snapshot crash safety, atomic blob swaps with quota, param and icon round trip, scripted dialogs, one-time `_sd` copy (PR #46, `tests/savedata/SaveDataFidelityTests.cpp`);<br>- [ ] guest `/savedata0` file I/O mount: not on `main`, PR #53 in flight (bean `portps5-10fr`);<br>- [ ] round-trip in `tools/regress` (bean `portps5-3m3u`);<br>- [ ] Dreaming Sarah and TMNT pass (bean `portps5-kmb6` for the first). |
 | M3 | - [ ] Tomb Raider save/load (the PRD gate for save/load), including the multi-slot list dialog. |
 | M4–M5 | - [ ] Bugsnax and Demon's Souls saves, including any backup events or memory-blob paths they use. |
 | M6 | - [ ] The user guide documents the save location and migration. |
@@ -134,4 +134,5 @@ On top of that, this spec takes the offline NP decision: signed out, determinist
 
 - Multi-user saves: add a `<userId>` level before 1.0 or after? Not gated.
 - Should trophy metadata be parsed from the dump for display only, or skipped entirely?
-- Do any gate titles call `TransferringMount` or backup restore? This is answered by the M1 inventory.
+- Do any gate titles call `TransferringMount` or backup restore? This is answered by the M1 inventory (bean `portps5-3eh1`). It currently aborts through `Unsupported()` (PR #46).
+- `/savedata0` and guest file calls: on `main` no path maps `/savedata0` to host storage, and `sceKernelOpen/Read/Write/Lseek/...` still throw on ordinary errors. PR #53 (open, not landed) adds the mount and SCE error returns (bean `portps5-10fr`). `sceKernelLseek` also truncates 64-bit offsets (bean `portps5-65h0`).
