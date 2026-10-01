@@ -1,3 +1,9 @@
+// PortPS5 libkernel BSD socket exports (stubs).
+//
+// Subsystem: libkernel Socket. None of these is implemented here: each is a
+// System V ABI (APS5_VABI) export that aborts through NotImplemented when a
+// guest calls it (docs/spec/ has no socket milestone before M5). The offline
+// network stack lives in libSceNet, not in this file.
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -5,6 +11,7 @@
 
 extern "C" {
 
+/** accept: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 int APS5_VABI accept_nid_postfix(int s, void* addr, uint32_t* addrlen) {
  (void)s;
  (void)addr;
@@ -14,6 +21,7 @@ int APS5_VABI accept_nid_postfix(int s, void* addr, uint32_t* addrlen) {
 }
 
 
+/** connect: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 int APS5_VABI connect_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  (void)s;
  (void)addr;
@@ -22,6 +30,7 @@ int APS5_VABI connect_nid_postfix(int s, const void* addr, uint32_t addrlen) {
  return 0;
 }
 
+/** listen: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 int APS5_VABI listen_nid_postfix(int s, int backlog) {
  (void)s;
  (void)backlog;
@@ -33,6 +42,7 @@ int APS5_VABI listen_nid_postfix(int s, int backlog) {
 
 
 
+/** send: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 int64_t APS5_VABI send_nid_postfix(int s, const void* buf, uint64_t len, int flags) {
  (void)s;
  (void)buf;
@@ -43,6 +53,7 @@ int64_t APS5_VABI send_nid_postfix(int s, const void* buf, uint64_t len, int fla
 }
 
 
+/** recv: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 int64_t APS5_VABI recv_nid_postfix(int s, void* buf, uint64_t len, int flags) {
  (void)s;
  (void)buf;
@@ -53,6 +64,7 @@ int64_t APS5_VABI recv_nid_postfix(int s, void* buf, uint64_t len, int flags) {
 }
 
 
+/** inet_ntop: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 const char* APS5_VABI inet_ntop_nid_postfix(int af, const void* src, char* dst, uint32_t size) {
  (void)af;
  (void)src;
@@ -62,6 +74,7 @@ const char* APS5_VABI inet_ntop_nid_postfix(int af, const void* src, char* dst, 
  return nullptr;
 }
 
+/** inet_pton: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 int APS5_VABI inet_pton_nid_postfix(int af, const char* src, void* dst) {
  (void)af;
  (void)src;
@@ -70,20 +83,13 @@ int APS5_VABI inet_pton_nid_postfix(int af, const char* src, void* dst) {
  return 0;
 }
 
+/** select: not implemented; aborts via NotImplemented_nid_no_patch, so it never returns a value. */
 int APS5_VABI select_nid_postfix(int nfds, void* readfds, void* writefds, void* exceptfds, const void* timeout) {
  (void)nfds;
  (void)readfds;
  (void)writefds;
  (void)exceptfds;
  (void)timeout;
- NotImplemented_nid_no_patch(__func__);
- return 0;
-}
-
-int APS5_VABI sigprocmask_nid_postfix(int how, const void* set, void* oset) {
- (void)how;
- (void)set;
- (void)oset;
  NotImplemented_nid_no_patch(__func__);
  return 0;
 }

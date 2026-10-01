@@ -52,9 +52,9 @@ int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex) noexcept;
 
 namespace {
 
-// PortPS5 returns FreeBSD-style kernel codes (see PortPS5::Testing); upstream
-// AnyPS5 expects 0x8002xxxx SCE codes for the same faults. This suite follows
-// the repo: the constants below alias the TestHarness values.
+// SCE kernel errors are 0x80020000 | FreeBSD errno (KernelErrors.hpp). The
+// equeue used to return an unrelated 0x8001xxxx range; the literal-value test
+// below pins the real console values so the two families cannot drift again.
 constexpr int SCE_OK = ::PortPS5::Testing::SCE_OK;
 constexpr int SCE_KERNEL_ERROR_ENOENT = ::PortPS5::Testing::SCE_KERNEL_ERROR_ENOENT;
 constexpr int SCE_KERNEL_ERROR_EBADF = ::PortPS5::Testing::SCE_KERNEL_ERROR_EBADF;
@@ -83,6 +83,25 @@ TEST(KernelErrors, EqueueWaitAndDeleteContract) {
     EXPECT_EQ(sceKernelDeleteEqueue(eq), SCE_KERNEL_ERROR_EBADF);
     EXPECT_EQ(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout), SCE_KERNEL_ERROR_EBADF);
     EXPECT_EQ(sceKernelCreateEqueue(nullptr, "errors"), SCE_KERNEL_ERROR_EINVAL);
+}
+
+// Regression for AnyPS5 97cae145: equeue errors must be the literal SCE
+// codes (0x80020000 | errno), not the old 0x8001xxxx range. A guest that
+// compares sceKernelWaitEqueue against SCE_KERNEL_ERROR_ETIMEDOUT
+// (0x8002003C) depends on the exact number, so this test uses literals, not
+// the shared constants.
+TEST(KernelErrors, EqueueReturnsLiteralSceCodes) {
+    KernelEqueue eq = 0;
+    ASSERT_EQ(sceKernelCreateEqueue(&eq, "literal"), SCE_OK);
+    KernelEvent event{};
+    int count = -1;
+    const KernelUseconds timeout = 1000;
+    EXPECT_EQ(static_cast<std::uint32_t>(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout)), 0x8002003Cu);
+    EXPECT_EQ(static_cast<std::uint32_t>(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout)), 0x8002000Eu);
+    EXPECT_EQ(static_cast<std::uint32_t>(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout)), 0x80020016u);
+    EXPECT_EQ(static_cast<std::uint32_t>(sceKernelDeleteUserEvent(eq, 7)), 0x80020002u);
+    ASSERT_EQ(sceKernelDeleteEqueue(eq), SCE_OK);
+    EXPECT_EQ(static_cast<std::uint32_t>(sceKernelDeleteEqueue(eq)), 0x80020009u);
 }
 
 // Verifies error-check mutex semantics: a second lock by the owner fails with
