@@ -92,6 +92,9 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     const auto newline = addString("\n");
     const auto searched = addString("Searched libraries:\n");
     const auto indent = addString("  ");
+    const auto libcName = addString("libc.prx");
+    const auto configStartupName = addString("PortPS5_Config_Startup_nid_no_patch");
+    const auto configStartupMissing = addString("FAIL: missing configuration startup export; update libc.prx\n");
     const auto enteringElf = addString("Transferring control to ELF entry point\n");
     std::vector<std::uint32_t> resolvedPaths;
     for (std::size_t index = 0; index < libraries.size(); ++index)
@@ -331,6 +334,29 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
         }
         guestStartup.WriteImport(code, imports[index], handles);
     }
+
+    // Run config after PRX static registrations, before guest initializers or flips.
+    // libc may be a transitive Windows dependency, absent from DT_NEEDED.
+    code.Rip({0x48, 0x8d, 0x0d}, libcName);
+    call("GetModuleHandleA");
+    code.Emit({0x48, 0x85, 0xc0});
+    const auto noRuntime = code.Branch({0x0f, 0x84});
+    code.Emit({0x48, 0x89, 0xc1});
+    code.Rip({0x48, 0x8d, 0x15}, configStartupName);
+    call("GetProcAddress");
+    code.Emit({0x48, 0x85, 0xc0});
+    const auto foundConfigStartup = code.Branch({0x0f, 0x85});
+    writeString(configStartupMissing, true);
+    raise(1);
+    code.PatchBranch(foundConfigStartup, code.GetRva());
+    // Native Windows ABI: RCX holds the full executable path; AL is bool.
+    code.Rip({0x48, 0x8d, 0x0d}, programPath);
+    code.Emit({0xff, 0xd0, 0x84, 0xc0});
+    const auto initializedConfig = code.Branch({0x0f, 0x85});
+    raise(1); // The runtime already printed the configuration diagnostic.
+    code.PatchBranch(initializedConfig, code.GetRva());
+    // Bare synthetic ELFs without libc have no config consumers.
+    code.PatchBranch(noRuntime, code.GetRva());
 
     guestStartup.Initialize(code, guestModules, handles);
     writeString(enteringElf);
