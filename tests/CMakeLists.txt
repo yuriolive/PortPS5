@@ -90,6 +90,19 @@ portps5_add_gtest(memory_tracker_tests
         unit
 )
 
+# GuestAllocations::Mutation::Unmap: ranges spanning several allocations (FreeBSD munmap semantics)
+portps5_add_gtest(guest_allocations_unmap_tests
+    SOURCES
+        memory/GuestAllocationsUnmapTests.cpp
+    LIBRARIES
+        libc
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
 # Direct memory physical pool and SceKernelMemoryPool API verification
 portps5_add_gtest(direct_memory_pool_tests
     SOURCES

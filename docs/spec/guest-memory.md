@@ -118,6 +118,10 @@ struct IWriteTracker {
 
 **Page-state table.** The registry, which knows every protection, writes 1 byte per 4 KiB page under its exclusive lock. The driver reads the table lock-free with relaxed atomics. `VirtualQuery` and the generation re-check race disappear from the hot path. Lookups are for arena and image pages only; any other address is "not guest memory".
 
+### Unmap semantics
+
+`sceKernelMunmap` follows FreeBSD `munmap`: a range may span several registered mappings and unregistered gaps. `GuestAllocations::Mutation::Unmap` walks the registered fragments that overlap the request (not the allocation extents, so a hole left by an earlier partial unmap is skipped), checks every piece for releasability and pins before the first host unmap, then reports each piece to the callback as `(piece, pieceBytes, allocationBase, last)` and commits it to the registry. If the host unmap of a later piece fails, earlier pieces are already gone from both sides. A request with no registered byte still fails with `SCE_KERNEL_ERROR_EINVAL` (this tree's existing contract; whether the console returns success for an entirely unmapped range is unverified on hardware). Upstream AnyPS5 `962fc34e` derived pieces from the allocation extent and failed on holes and on requests that end inside an allocation; that part was not ported.
+
 ## Interfaces
 
 | Consumer | Contract |

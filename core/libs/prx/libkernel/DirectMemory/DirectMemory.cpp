@@ -299,8 +299,10 @@ int DoMunmap(void* addr, size_t len) {
     if (len == 0 || (len & (PS5_PAGE_SIZE - 1)) != 0 || !addr) return SCE_KERNEL_ERROR_EINVAL;
     try {
         GuestAllocations::Mutation mutation;
-        mutation.Unmap(addr, len, [&](const void*, bool) {
-            Unmap(addr, len);
+        // The range may span several registered mappings and unregistered gaps (FreeBSD munmap
+        // semantics): the registry reports each registered piece and only those are host-unmapped.
+        mutation.Unmap(addr, len, [&](const void* piece, std::size_t pieceBytes, const void*, bool) {
+            Unmap(const_cast<void*>(piece), pieceBytes);
         });
         PoolPurgeCommittedRange(reinterpret_cast<uintptr_t>(addr), len);
         return 0;
