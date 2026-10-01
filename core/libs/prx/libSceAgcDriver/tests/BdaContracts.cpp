@@ -1,3 +1,9 @@
+// core/libs/prx/libSceAgcDriver/tests/BdaContracts.cpp
+// Host-only contract tests for the buffer-device-address (BDA) shader ABI: the SPIR-V emitter's BDA
+// target validation and the recompile-request serializer must reject malformed targets with a clear
+// error instead of emitting modules the driver would mis-bind. Runs without a Vulkan device.
+// Targets mirror VulkanDevice::Target: Vulkan 1.3 with SPIR-V 1.3 (docs/spec/gpu-driver.md).
+
 #include "BdaShader.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
@@ -21,7 +27,7 @@ void RunBdaContractTests() {
     using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
-    SpirvTargetOptions target{0x00401000u, 0x00010300u, 32, BdaAbi::Version, capabilities, extensions};
+    SpirvTargetOptions target{0x00403000u, 0x00010300u, 32, BdaAbi::Version, capabilities, extensions};
     IrProgram program;
     program.Resources().stage = IrShaderStage::Compute;
     program.Info().usesDma = true;

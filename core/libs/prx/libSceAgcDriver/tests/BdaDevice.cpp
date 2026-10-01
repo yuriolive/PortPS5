@@ -1,3 +1,8 @@
+// core/libs/prx/libSceAgcDriver/tests/BdaDevice.cpp
+// Device-level BDA test: creates a Vulkan 1.3 instance/device through the loader (SDL_LoadObject, same
+// path as the driver), queries the BDA feature chain and runs the BDA execution and colour-transfer
+// checks. Needs a Vulkan 1.3 device or lavapipe (ctest label 'lavapipe'); never game data.
+
 #include "BdaShader.hpp"
 #include "ColorTransferTests.hpp"
 #include <fstream>
@@ -25,7 +30,7 @@ public:
             instanceProc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_LoadFunction(library, "vkGetInstanceProcAddr"));
             Require(instanceProc != nullptr, "missing Vulkan instance resolver");
             VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-            application.apiVersion = VK_API_VERSION_1_1;
+            application.apiVersion = VK_API_VERSION_1_3;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
@@ -35,7 +40,19 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            // The instance apiVersion does not gate physical devices: a Vulkan 1.1/1.2 device (or a software
+            // rasterizer) can still be enumerated. Pick the first device that reports >= 1.3, matching the
+            // driver's own selection, and fail loudly instead of silently testing a lower-version device.
+            const auto getProperties = function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties");
+            for (const auto candidate : devices) {
+                VkPhysicalDeviceProperties candidateProperties{};
+                getProperties(candidate, &candidateProperties);
+                if (candidateProperties.apiVersion >= VK_API_VERSION_1_3) {
+                    context.physical = candidate;
+                    break;
+                }
+            }
+            Require(context.physical != VK_NULL_HANDLE, "no Vulkan 1.3 device");
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
