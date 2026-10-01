@@ -1,13 +1,14 @@
 ---
 # portps5-z797
-title: Verify glslang/SPIRV-Tools artifact checks claimed for the policy step
+title: 'Policy step: report SPIRV-Tools presence in release artifacts (glslang check confirmed)'
 status: todo
 type: task
 priority: normal
 created_at: 2026-10-01T18:53:43Z
-updated_at: 2026-10-01T18:53:44Z
+updated_at: 2026-10-01T21:10:39Z
 parent: portps5-s1kj
 ---
+
 
 ## Context
 
@@ -19,7 +20,8 @@ Licence risk R1 controls are real, not just documented.
 
 ## Acceptance Criteria
 
-- [ ] Confirm the check in .github/workflows/ci.yml, or add it (symbol check on shipped binaries)
+- [x] Confirmed: the policy step runs `nm -D` on libSceAgcDriver.prx and fails on glslang symbols (ci.yml:171-179)
+- [ ] Add a SPIRV-Tools presence report (informational, not failing) so the R1 status can be recorded
 - [ ] build-toolchain.md matches
 
 ## Out of Scope
