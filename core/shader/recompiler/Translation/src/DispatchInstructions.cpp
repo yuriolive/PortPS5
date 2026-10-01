@@ -1,3 +1,6 @@
+// core/shader/recompiler/Translation/src/DispatchInstructions.cpp
+// Entry point of the per-instruction translation: TranslateInstruction routes one decoded RdnaInstruction to the
+// scalar, vector, memory or export translators. Single-threaded; one TranslationContext per compiler thread.
 #include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
@@ -9,7 +12,12 @@ void DispatchInstruction(IrBuilder& builder, const RdnaInstruction& instruction,
     throw std::runtime_error("DispatchInstruction not implemented");
 }
 
-void TranslationContext::TranslateInstruction(const RdnaInstruction& instruction) {
+void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
+    // A DPP instruction's row/bank masks (and, without bound_ctrl, an invalid source lane) gate its VGPR write, not
+    // only its source read. The decoder puts the DPP fields on the source operand; writeRawU32 only emits
+    // DppUpdateU32 for a destination that carries them, so copy them over once here (RDNA2 ISA, DPP).
+    RdnaInstruction instruction = decoded;
+    instruction.destination = destinationOperand(decoded);
     currentOpcode = instruction.op;
     currentProgramCounter = instruction.programCounter;
     if (instruction.op == RdnaOpcode::Unknown || instruction.op == RdnaOpcode::Count) {

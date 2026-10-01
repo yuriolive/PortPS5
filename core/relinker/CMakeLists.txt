@@ -119,6 +119,8 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_load_alignment.py $<TARGET_FILE:relinker>)
     add_test(NAME windows_gui COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_gui.py $<TARGET_FILE:relinker>)
+    add_test(NAME guest_intel_trampolines COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_intel_trampolines.py $<TARGET_FILE:relinker>)
 
     add_executable(amd64_only_converter_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/Amd64OnlyConverterTests.cpp
@@ -246,8 +248,54 @@ if(BUILD_TESTING)
             ${RELINKER_DIR}/elfpatcher/include
             ${RELINKER_DIR}/relinker/include
             ${RELINKER_DIR}/domain/include
+            ${RELINKER_DIR}/codegen/include
             ${RELINKER_DIR}/io/include
     )
+    portps5_add_gtest(relinker_sse4a_lowering_tests
+        SOURCES
+            ${RELINKER_DIR}/codegen/tests/Sse4aRegisterFormTests.cpp
+            ${RELINKER_DIR}/codegen/tests/Sse4aImmediateFormTests.cpp
+            ${RELINKER_DIR}/codegen/tests/Sse4aExecutionHarness.hpp
+            ${RELINKER_DIR}/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp
+            ${RELINKER_DIR}/codegen/src/x86/DecodedInstruction.cpp
+            ${RELINKER_DIR}/codegen/src/x86/Sse4aOperands.cpp
+            ${RELINKER_DIR}/codegen/src/x86/Sse4aLowering.cpp
+        INCLUDES ${RELINKER_DIR}/codegen/include ${RELINKER_DIR}/domain/include
+    )
+    portps5_add_gtest(relinker_amd64_only_short_site_tests
+        SOURCES
+            ${RELINKER_DIR}/codegen/tests/Amd64OnlyShortSiteTests.cpp
+            ${RELINKER_DIR}/codegen/src/Amd64OnlyConverter.cpp
+            ${RELINKER_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
+            ${RELINKER_DIR}/codegen/src/x86/DecodedInstruction.cpp
+            ${RELINKER_DIR}/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp
+            ${RELINKER_DIR}/codegen/src/x86/Sse4aOperands.cpp
+            ${RELINKER_DIR}/codegen/src/x86/Sse4aLowering.cpp
+        INCLUDES ${RELINKER_DIR}/codegen/include ${RELINKER_DIR}/domain/include
+    )
+    if(WIN32)
+        portps5_add_gtest(relinker_windows_short_site_tests
+            SOURCES
+                ${RELINKER_DIR}/elfpatcher/tests/WindowsShortSiteTests.cpp
+                ${RELINKER_DIR}/elfpatcher/src/windows/WindowsTrampolineBuilder.cpp
+                ${RELINKER_DIR}/elfpatcher/src/windows/WindowsLoadImage.cpp
+                ${RELINKER_DIR}/elfpatcher/src/windows/WindowsStubEmitter.cpp
+                ${RELINKER_DIR}/elfpatcher/src/windows/WindowsPeFormat.cpp
+                ${RELINKER_DIR}/io/src/BufferUtils.cpp
+                ${RELINKER_DIR}/codegen/src/Amd64OnlyConverter.cpp
+                ${RELINKER_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
+                ${RELINKER_DIR}/codegen/src/x86/DecodedInstruction.cpp
+                ${RELINKER_DIR}/codegen/src/x86/Amd64OnlyInstructionMatcher.cpp
+                ${RELINKER_DIR}/codegen/src/x86/Sse4aOperands.cpp
+                ${RELINKER_DIR}/codegen/src/x86/Sse4aLowering.cpp
+            INCLUDES
+                ${RELINKER_DIR}/elfpatcher/include
+                ${RELINKER_DIR}/domain/include
+                ${RELINKER_DIR}/io/include
+                ${RELINKER_DIR}/codegen/include
+                ${RELINKER_DIR}/relinker/include
+        )
+    endif()
     add_test(NAME windows_lazy_got COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_windows_lazy_got.py $<TARGET_FILE:relinker>)
 

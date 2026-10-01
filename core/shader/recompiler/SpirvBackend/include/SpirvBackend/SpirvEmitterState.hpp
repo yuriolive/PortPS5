@@ -1,3 +1,6 @@
+// core/shader/recompiler/SpirvBackend/include/SpirvBackend/SpirvEmitterState.hpp
+// SpirvEmitterState: the mutable state of one SPIR-V module emission (module builder, descriptor variables,
+// per-resource access descriptors). One instance per emission; not thread-safe.
 #ifndef CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVEMITTERSTATE_HPP
 #define CORE_SHADER_RECOMPILIER_SPIRVBACKEND_INCLUDE_SPIRVBACKEND_SPIRVEMITTERSTATE_HPP
 
@@ -63,6 +66,8 @@ struct MemoryResourceAccess {
     std::uint32_t indexOffset = 0;
     std::uint32_t byteOffset = 0;
     bool addIndexOffset = false;
+    // Memory-access operands of the loads and stores through this resource: Volatile for a coherent access.
+    std::uint32_t memoryAccess = 0;
 };
 
 struct SpirvEmitterState {
@@ -84,6 +89,10 @@ struct SpirvEmitterState {
     std::uint32_t bdaPagetableVariable = 0;
     std::uint32_t faultBufferVariable = 0;
     std::uint32_t bdaPointerFunction = 0;
+    // Whether a failed guest-memory (BDA) lookup returns from the invocation (StopBdaInvocationIf). It is cleared while a
+    // loop's continue target is emitted: SPIR-V wants the back-edge block to post-dominate the continue target, so an
+    // early return there makes the module invalid. The fault is recorded all the same and the BDA reads then read zero.
+    bool bdaStopsInvocations = true;
     std::uint32_t gdsVariable = 0;
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;

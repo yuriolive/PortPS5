@@ -222,8 +222,24 @@ bool TranslationContext::vXor3B32(const RdnaInstruction& inst) {
     return true;
 }
 
-bool TranslationContext::sFf1I32B64(const RdnaInstruction& inst) {
+// s_bcnt0_i32_b64: D = number of zero bits of the 64-bit source, SCC = (D != 0).
+bool TranslationContext::sBcnt0I32B64(const RdnaInstruction& inst) {
     const std::array<IrU32, 2> source = extractU64(readU64(sourceAt(inst, 0u)));
+    const IrU32 lowZeros(ir.Emit(IrOpcode::BitCount32, IrType::U32, {&ir.BitwiseNot(source[0].Value())}));
+    const IrU32 highZeros(ir.Emit(IrOpcode::BitCount32, IrType::U32, {&ir.BitwiseNot(source[1].Value())}));
+    const IrU32 result(ir.IAdd(lowZeros.Value(), highZeros.Value()));
+    writeOperand(inst.destination, &result.Value());
+    ir.SetScc(ir.INotEqual(result.Value(), ir.Constant(0u)));
+    return true;
+}
+
+// s_ff1_i32_b64 (findZero = false) and s_ff0_i32_b64 (findZero = true): D = index of the lowest one (zero) bit of
+// the 64-bit source, or -1 when there is none. SCC is untouched. The zero search is the ones search of ~S0.
+bool TranslationContext::sFf1I32B64(const RdnaInstruction& inst, bool findZero) {
+    std::array<IrU32, 2> source = extractU64(readU64(sourceAt(inst, 0u)));
+    if (findZero) {
+        source = {IrU32(ir.BitwiseNot(source[0].Value())), IrU32(ir.BitwiseNot(source[1].Value()))};
+    }
     const IrU32 lowLsb(ir.Emit(IrOpcode::FindILsb32, IrType::U32, {&source[0].Value()}));
     const IrU32 highLsb(ir.Emit(IrOpcode::FindILsb32, IrType::U32, {&source[1].Value()}));
     const IrU32 highPosition(ir.IAdd(highLsb.Value(), ir.Constant(32u)));

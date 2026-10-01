@@ -1,3 +1,6 @@
+// core/shader/recompiler/SpirvBackend/src/SpirvMemory/SpirvEmitterHelpers.cpp
+// Defines the SPIR-V global descriptor variables (buffers, images, samplers, shader data, BDA page table) and
+// their decorations for one emitted module. Single-threaded emission.
 #include "BdaAbi.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
@@ -355,6 +358,14 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 state.storageBufferU64Variable = Define(ArrayType(StorageBufferU64BlockType(state)), "buffers_u64");
                 state.module.AddAnnotation(spv::OpDecorate, state.storageBufferVariable, spv::DecorationAliased);
                 state.module.AddAnnotation(spv::OpDecorate, state.storageBufferU64Variable, spv::DecorationAliased);
+            }
+            if (state.requirements.coherentBuffers) {
+                // A coherent load polls what other workgroups store: every alias of the guest buffers takes part in
+                // device-scope visibility (an access made Volatile alone would still be cacheable across invocations).
+                state.module.AddAnnotation(spv::OpDecorate, state.storageBufferVariable, spv::DecorationCoherent);
+                if (state.storageBufferU64Variable != 0u) {
+                    state.module.AddAnnotation(spv::OpDecorate, state.storageBufferU64Variable, spv::DecorationCoherent);
+                }
             }
             break;
         case DescriptorBindingKind::BdaPagetable:
