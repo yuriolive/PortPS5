@@ -266,3 +266,36 @@ portps5_add_gtest(pad_controller_input_tests
     LABELS
         unit
 )
+
+# DualSense output and motion: pure encoders, hot-plug slot table, export-level
+# contracts and the SDL HIDAPI build guard (docs/spec/input.md). None needs a
+# device; the pure suites link only GoogleTest.
+portps5_add_gtest(pad_output_mapping_tests
+    SOURCES
+        input/PadOutputMappingTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+portps5_add_gtest(pad_motion_tests
+    SOURCES
+        input/PadMotionTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
+
+portps5_add_gtest(pad_slot_table_tests
+    SOURCES
+        input/PadSlotTableTests.cpp
+    INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/core/libs
+    LABELS
+        unit
+)
