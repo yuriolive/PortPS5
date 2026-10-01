@@ -478,3 +478,18 @@ def test_results_json_is_strict_standard_json(tmp_path):
     # allow_nan=False is the last line of defence: a non-finite value must fail loudly.
     with pytest.raises(ValueError):
         regress.write_results({"x": float("inf")}, tmp_path / "o.json")
+
+
+def test_infinite_integer_fields_are_clean_line_errors(tmp_path):
+    # Regression (review): int(float("inf")) raises OverflowError, which is not a ValueError,
+    # so Infinity or 1e309 in an integer field used to escape as a traceback.
+    log = tmp_path / "t.jsonl"
+    for bad in (
+        '{"ev": "audio.underrun", "n": 1e309}',
+        '{"ev": "warmup.end", "warmup_ms": Infinity}',
+        '{"ev": "run.end", "capture_split": Infinity}',
+        '{"ev": "run.end", "write_faults": -Infinity}',
+    ):
+        log.write_text(json.dumps(HEADER) + "\n" + bad + "\n", encoding="utf-8")
+        with pytest.raises(regress.RegressError, match="line 2"):
+            regress.parse_telemetry(log)

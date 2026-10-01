@@ -132,7 +132,7 @@ def parse_telemetry(path):
                 val = event_value(ev, rec)
                 if ev == "frame" and val[1] is not None:
                     val = (val[0], float(val[1]))
-            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
                 raise RegressError(f"telemetry line {n} is not a valid record") from exc
             if not header:
                 if ev != "run.start" or rec.get("schema") != TELEMETRY_SCHEMA:
