@@ -1,12 +1,14 @@
 ---
 # portps5-f9a3
 title: 'M1: Runtime telemetry (frame-time log, watchdog, structured logs)'
-status: in-progress
+status: completed
 type: feature
 priority: high
 created_at: 2026-09-30T23:49:46Z
-updated_at: 2026-09-30T23:49:46Z
+updated_at: 2026-10-01T17:59:26Z
+parent: portps5-r8mh
 ---
+
 
 ## Context
 
@@ -30,4 +32,4 @@ tools/regress upload script, results JSON schema changes.
 
 ## Summary of Changes
 
-Core, runtime, mixer counters, tests, spec 4.3. Open (new work, see spec): Start at process start-up, presenter NotePresent/SetVideoLatencyMs, guest-thread NoteGuestProgress. Bean stays open.
+Landed in PR #78: telemetry core, runtime exports, watchdog, mixer counters, telemetry_core_tests and telemetry_runtime_tests, spec verification.md 4.3. The call-site wiring (Start at process start-up, presenter NotePresent/SetVideoLatencyMs, guest-thread NoteGuestProgress) is new work tracked in portps5-w1re.
