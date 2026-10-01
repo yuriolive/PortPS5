@@ -120,7 +120,7 @@ An unknown operation returns `EINVAL` and is logged once per operation.
 
 - Real POSIX and SCE conditions return codes: null pointer → `EINVAL`, plus `EBUSY`, `ETIMEDOUT`, `EDEADLK`, `EPERM`, `EAGAIN`, `ESRCH`.
 - A state that is truly unimplemented calls `[[noreturn]] Unsupported(const char* what)`. It logs the NID, caller offset and thread name, then calls `abort()`. It replaces the `throw` in `NotImplemented_nid_no_patch`, which the shared unwinder lets a guest `catch(...)` swallow.
-- Host exceptions never cross an `APS5_VABI` boundary. Target: every export body is `noexcept`, enforced by `APS5_EXPORT_FN`. Today the macro exists but has no call sites: `libSceAgc` registers through the raw `APS5_EXPORT`, and `libSceSysmodule/Export.cpp` still throws (see [TechnicalDebt.md](../TechnicalDebt.md) "Host exceptions").
+- Target (not yet true): host exceptions never cross an `APS5_VABI` boundary, because every export body is `noexcept`, enforced by `APS5_EXPORT_FN`. Today the macro exists but has no call sites: `libSceAgc` registers through the raw `APS5_EXPORT`, and `libSceSysmodule/Export.cpp` still throws (see [TechnicalDebt.md](../TechnicalDebt.md) "Host exceptions").
 
 ## Interfaces
 

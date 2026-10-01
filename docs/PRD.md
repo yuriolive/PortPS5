@@ -47,7 +47,7 @@ A title is replaced only by one of the same tier. For example, if a title's dump
 
 ### 4.2 Functional requirements
 
-Status as of 2026-09-30: a requirement is ticked only when a gate-title run proves it, so none is ticked yet. Code that moves each one is on `main` for F1 (relinker, `--to-intel`), F2 (per-title saves, crash safety, scripted dialogs), F3 (AudioOut2, ATRAC9), F5 (SDL controllers in `scePadRead`), F6 (config schema and validation, not yet wired at startup) and F8 (offline NP, trophies, dialogs). F4 has the recompiler saveexec fix and an offline AvPlayer state machine only. F7 (disk pipeline cache) and F9 (frame-time log, watchdog, structured logs) have no runtime code yet. The per-milestone detail and open items are in [ROADMAP.md](ROADMAP.md).
+Status as of 2026-09-30: a requirement is ticked only when a gate-title run proves it, so none is ticked yet. Code that moves each one is on `main` for F1 (relinker, `--to-intel`), F2 (per-title saves, crash safety, scripted dialogs), F3 (AudioOut2, ATRAC9), F5 (SDL controllers in `scePadRead`), F6 (config schema and validation; loaded and validated at startup before guest code since PR #71; still open: copying `config/` at conversion and wiring the display keys) and F8 (offline NP, trophies, dialogs). F4 has the recompiler saveexec fix and an offline AvPlayer state machine only. F7 (disk pipeline cache) and F9 (frame-time log, watchdog, structured logs) have no runtime code yet. The per-milestone detail and open items are in [ROADMAP.md](ROADMAP.md).
 
 | ID | Requirement |
 |---|---|

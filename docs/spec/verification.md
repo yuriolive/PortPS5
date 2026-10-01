@@ -105,7 +105,7 @@ Results are uploaded by a local script as a PR to `compat/results/`, or as a rel
 }
 ```
 
-- **Pass rule:** `debug_keys_set` is empty, `crashes` = 0, `softlocks` = 0, every `checkpoints` and `fmv` entry is `pass`, `save_roundtrip` is not `fail`, and in warm-cache runs `spirv_compilations` = 0 and `pipeline_creations_after_warmup` = 0 (`tools/regress_metrics.py` `fail_reasons`). A run that fails any of these reports `result: "fail"`. Full runs add the bar in §4.2.
+- **Pass rule:** `debug_keys_set` is empty, `crashes` = 0, `softlocks` = 0, every `checkpoints` and `fmv` entry is `pass`, `save_roundtrip` is not `fail`, and in warm-cache runs `spirv_compilations` = 0 and `pipeline_creations_after_warmup` = 0 (`tools/regress_metrics.py` `fail_reasons`). A run that fails any of these reports `result: "fail"`. Full runs add the bar in §4.2. Not enforced yet: PRD F3's limit of at most 1 audio underrun per 10 minutes; `fail_reasons` records `audio_underruns_per_10min` but never fails on it (bean `portps5-2udb`).
 - **Derived fields:** `audio_underruns_per_10min` = `n * 600 / max(duration_s, 60)` over the summed `audio.underrun` counts. `fps.min` = 1000 / the slowest non-stall frame time.
 - **Check inputs:** `checkpoints`, `fmv` and `save_roundtrip` come only from `--checks-file`, which no step writes yet. Until the frame-check and save steps exist, `save_roundtrip` defaults to `not_run`, so every `full_run` fails on it (bean `portps5-3m3u`).
 - The results JSON carries no personally identifying hardware detail beyond GPU vendor, driver and tier.
