@@ -120,6 +120,31 @@ class ProgressRootTests(unittest.TestCase):
             self.assertEqual(data["libraries"]["done"], 1)
 
 
+class OneToManyAliasTests(unittest.TestCase):
+    """A decoder opcode that covers several ISA encodings counts for each."""
+
+    def test_cdbg_alias_covers_all_four_encodings(self):
+        # Invariant: SCbranchCdbg decodes SOPP 0x17-0x1a (RdnaScalarOpDecoder.cpp),
+        # so all four S_CBRANCH_CDBG* entries count as decoded. A one-to-one
+        # alias reported them missing.
+        isa = dict.fromkeys(
+            (
+                "S_CBRANCH_CDBGSYS",
+                "S_CBRANCH_CDBGUSER",
+                "S_CBRANCH_CDBGSYS_OR_USER",
+                "S_CBRANCH_CDBGSYS_AND_USER",
+                "S_NOP",
+            ),
+            "SOPP",
+        )
+        by_camel = {progress.camel(n): n for n in isa}
+        self.assertEqual(
+            progress._isa_names("SCbranchCdbg", isa, by_camel),
+            set(isa) - {"S_NOP"},
+        )
+        self.assertEqual(progress._isa_names("SNop", isa, by_camel), {"S_NOP"})
+
+
 class TranslatedCountTests(unittest.TestCase):
     """The translated count: decoded entries the translator references."""
 

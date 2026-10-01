@@ -70,6 +70,7 @@ Everything derived from a title (caches, profiles, autotuning results, patch fil
   - a memo that silently skips a failing dispatch.
 - A per-title workaround is allowed only as a documented key in that title's per-game TOML ([configuration.md](configuration.md)). The key names the mechanism it toggles, not the game.
 - The `APS5_*` environment switches that merged PR #5 adds (310 unique strings on `main@75a8668`, 121 of them `APS5_NO_*`; 307 at commit `29b4601`) are removed. Tracing, dumps and profiling survive only as a typed `[debug]` config.
+- **Survey mode is the one exception to "abort on unsupported state", and it is diagnostic only.** `[debug] survey_unsupported = true` ([configuration.md](configuration.md)) changes what happens at an unsupported draw, dispatch, shader or export. Normally that aborts through `Unsupported()`. In survey mode it is logged once per distinct site, skipped, and counted, and the process writes one summary at exit. A run with any `[debug]` key can never pass (verification.md §4.2), so a survey never counts as working. Its only job is to list every missing piece in one run instead of one per run. It is not AnyPS5's silent skip memo: every skip is logged and summarised, and the mode is off unless asked for. Bean `portps5-huyy`.
 - The hosted CI `policy` job enforces this ([verification.md](verification.md)).
 
 ## Subsystem specs
