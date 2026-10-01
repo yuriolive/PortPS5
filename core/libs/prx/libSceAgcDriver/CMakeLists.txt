@@ -414,6 +414,9 @@ if(BUILD_TESTING)
                  Graphics/src/ResidentImagePool.cpp
         INCLUDES ${LIBS_INCLUDE_DIR}
                  ${CMAKE_SOURCE_DIR}/3rdparty/Vulkan-Headers/include
+        # libc supplies __gxx_personality_v0, which the project's Windows unwind configuration
+        # references from every test executable (see core/libs/CMakeLists.txt, config_tests).
+        LIBRARIES libc
         LABELS   unit
     )
 
