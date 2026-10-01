@@ -6,11 +6,14 @@ type: task
 priority: normal
 created_at: 2026-10-01T03:30:00Z
 updated_at: 2026-10-01T03:30:00Z
+parent: portps5-7fqk
+blocked_by:
+    - portps5-421p
 ---
 
 ## Context
 
-`TextureCache::Get` and `GuestBufferMemory::AddSnapshot` compare live guest memory with a snapshot while guest threads may write that memory. This is a data race and was already true with the `memcmp` calls that `BytesEqual` replaced (found in review of the `portps5-pdc1` slice 1 PR). A multi-block compare can also observe different moments, so "equal" does not prove the range was ever equal at one instant, and a missed write is only caught by a later revalidation.
+Blocked by: `portps5-421p` (the runtime write tracker decides the contract). `TextureCache::Get` and `GuestBufferMemory::AddSnapshot` compare live guest memory with a snapshot while guest threads may write that memory. This is a data race and was already true with the `memcmp` calls that `BytesEqual` replaced (found in review of the `portps5-pdc1` slice 1 PR). A multi-block compare can also observe different moments, so "equal" does not prove the range was ever equal at one instant, and a missed write is only caught by a later revalidation.
 
 ## Higher Goal
 

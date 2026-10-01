@@ -6,11 +6,12 @@ type: task
 priority: high
 created_at: 2026-10-01T03:00:00Z
 updated_at: 2026-10-01T03:00:00Z
+parent: portps5-7fqk
 ---
 
 ## Context
 
-Converted titles miss the 60 Hz flip rate in draw-heavy scenes. Slow frames carry about 53 draws against about 16 in light frames, and `Driver.Draw.total` is about 30 ms per slow frame (`ShaderResources.bindings` about 12 ms, fence waits 6 to 7 ms, uploads about 3 ms each, `TextureCache::Get` about 0.15 ms per lookup including hits because it compares the whole guest texture every draw). Measure on the `release` preset only. See `docs/spec/gpu-driver.md` "Per-draw CPU cost".
+Blocked by: none (slice 2 wiring waits on `portps5-421p`, tracked in its own acceptance box). Converted titles miss the 60 Hz flip rate in draw-heavy scenes. Slow frames carry about 53 draws against about 16 in light frames, and `Driver.Draw.total` is about 30 ms per slow frame (`ShaderResources.bindings` about 12 ms, fence waits 6 to 7 ms, uploads about 3 ms each, `TextureCache::Get` about 0.15 ms per lookup including hits because it compares the whole guest texture every draw). Measure on the `release` preset only. See `docs/spec/gpu-driver.md` "Per-draw CPU cost".
 
 ## Higher Goal
 
