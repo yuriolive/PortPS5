@@ -119,6 +119,36 @@ The harness gained a wave-wide VGPR file with an independent DPP model, a SPIR-V
 Reviewed, not ported, outside this task's list: `33f91099` (NGG to mesh shader translation: new feature, needs mesh pipeline support in the driver),
 `bbf430e2` (16-bit depth integer reads, depth/stencil lane), `cf721a27`/`bb60336a` (shader disk cache, M2), `f98b28d0` and `3dec6ced` (AGC driver).
 
+### Decode coverage versus reference projects
+
+Measured on 2026-10-01 with `tools/compare_isa.py`, against AnyPS5 `709d7fe`, KytyPS5 `4428640` and SharpEmu `e007d43`. The tool maps each project's decoder opcode names onto `tools/rdna_isa.txt`. It compares names only and copies no code, so read the results as an estimate.
+
+PortPS5 decodes 591/1166. References: AnyPS5 604 (18 not in PortPS5), KytyPS5 590 (46 not in PortPS5), SharpEmu 683 (184 not in PortPS5).
+Decoded by at least one reference but not PortPS5: 202 (38 by two or more).
+
+| Encoding | Missing | Agreed by 2+ | Examples |
+|---|---|---|---|
+| VOPC | 64 | 20 | `V_CMPX_EQ_I16`, `V_CMPX_EQ_I64`, `V_CMPX_EQ_U16`, `V_CMPX_EQ_U64` |
+| MIMG | 52 | 5 | `IMAGE_ATOMIC_CMPSWAP`, `IMAGE_ATOMIC_DEC`, `IMAGE_ATOMIC_FCMPSWAP`, `IMAGE_ATOMIC_FMAX` |
+| VOP3 | 17 | 2 | `V_ADD_CO_U32`, `V_ADD_F64`, `V_FMA_F64`, `V_MAD_I16` |
+| SOPK | 13 | 0 | `S_ADDK_I32`, `S_CMPK_EQ_I32`, `S_CMPK_EQ_U32`, `S_CMPK_GE_I32` |
+| MUBUF | 11 | 0 | `BUFFER_ATOMIC_AND_X2`, `BUFFER_ATOMIC_DEC`, `BUFFER_ATOMIC_INC`, `BUFFER_LOAD_SBYTE_D16` |
+| GLOBAL | 9 | 0 | `GLOBAL_ATOMIC_ADD`, `GLOBAL_LOAD_SBYTE_D16`, `GLOBAL_LOAD_SBYTE_D16_HI`, `GLOBAL_LOAD_SHORT_D16` |
+| SOP1 | 9 | 0 | `S_NAND_SAVEEXEC_B32`, `S_NAND_SAVEEXEC_B64`, `S_NOR_SAVEEXEC_B32`, `S_NOR_SAVEEXEC_B64` |
+| VOP1 | 9 | 4 | `V_CVT_F32_F64`, `V_CVT_F64_F32`, `V_CVT_F64_I32`, `V_CVT_F64_U32` |
+| DS | 8 | 4 | `DS_ADD_U64`, `DS_CMPST_B32`, `DS_CMPST_RTN_B32`, `DS_DEC_U32` |
+| SOPP | 4 | 2 | `S_CBRANCH_CDBGSYS`, `S_CBRANCH_CDBGSYS_AND_USER`, `S_CBRANCH_CDBGSYS_OR_USER`, `S_CBRANCH_CDBGUSER` |
+| VOP2 | 3 | 1 | `V_FMAC_F32`, `V_MUL_HI_I32_I24`, `V_MUL_HI_U32_U24` |
+| SMEM | 1 | 0 | `S_MEMREALTIME` |
+| SOP2 | 1 | 0 | `S_BFE_I64` |
+| VOP3P | 1 | 0 | `V_FMA_MIX_F32` |
+
+Group beans, with the agreed names first: `portps5-gzgk` (VOPC), `portps5-a2u2` (MIMG), `portps5-dpay` (SOPK), `portps5-naoi` (D16), `portps5-p22g` (SAVEEXEC), `portps5-j0i5` (F64), `portps5-kc2b` (DS), `portps5-3fi7` (MISC). The BVH ray ops are 2.0 work (`portps5-jehk`). Re-run with:
+
+```bash
+python tools/compare_isa.py --anyps5 <path> --kyty <path> --sharpemu <path>
+```
+
 ## Decision
 
 - **Keep** the pipeline shape.

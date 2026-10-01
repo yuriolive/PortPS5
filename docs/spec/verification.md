@@ -113,6 +113,10 @@ The runtime writes `<install>/logs/telemetry.jsonl`, one JSON object per line, a
 
 `run.start` and `run.end` are written by `Start` and `Shutdown`, which no real run calls yet (§4.3), so `capture_split` and `write_faults` stay 0 in real results until that wiring lands.
 
+### Survey runs
+
+A survey run (`[debug] survey_unsupported`) lists everything missing in one pass. Its exit summary is grouped by kind: unsupported exports by library and NID, shader failures by opcode or construct, and rejected draws and dispatches by reason. Each entry carries a count and its first site. The summary is local only. A metrics-only version (counts per kind, the NID or opcode names, which are project data, and no game strings) may go into an issue or a bean. The results JSON of a survey run is always `fail`, because a `[debug]` key is set. Use it after the static checks, which are cheaper: the import inventory (`portps5-zadg`) and the local shader corpus replay (§2, step 4).
+
 ### 4.2 Runner rules (`tools/regress.py`)
 
 - **Statistics:** stalls (`dt_ms` > 1000) are excluded from `fps` and counted in `fps.stalls`. `p1_low` = 1000 / mean of the slowest 1% (rounded up, at least one frame) of the remaining frame times. `duration_s` is the span of presented frames, the quantity the 30 minute rule uses.

@@ -69,6 +69,7 @@ This follows the decision table in [README.md](README.md#subsystem-specs) §Conf
 | `debug.profile` | array of enum | `[]` | `gpu`: write the per-frame `[FrameTiming]` report (about 20 KB of text and an `fflush(stdout)` per flip) to stdout. Off by default because that write dominates frame time on a console. Per-draw shader profiling uses `debug.recompiler.profile`. |
 | `debug.validate` | array of enum | `[]` | `recipes`, `barriers`, `copies`, `shadows`, `indirect_args`. Validation only logs mismatches. It never changes what the runtime produces. |
 | `debug.watch` | array of `{addr: u64, write: bool}` | `[]` | Replaces `WATCH_ADDR` and `WATCH_WRITE`. |
+| `debug.survey_unsupported` | bool | false | Diagnostic survey ([README.md](README.md) global policy): an unsupported draw, dispatch, shader or export is logged once per distinct site (no title strings, guest addresses as module-relative offsets), skipped and counted instead of aborting; a capped summary (per-kind counts plus the first N sites) is written in one call at exit. The run is always `fail` (§4.2 debug-key rule). Bean `portps5-huyy`. |
 | `debug.ignore_host_input` | bool | false | For recorded-input replay. Replaces `NO_PAD_INPUT`. It filters host input and does not change the guest path. |
 | `debug.gpu.host_import_mib` | int | auto | Override of the host-import budget ([gpu-driver.md](gpu-driver.md)). Replaces `HOST_IMPORT_MIB`. |
 | `debug.gpu.trace` | bool | false | GPU command tracing ([gpu-driver.md](gpu-driver.md)). |
