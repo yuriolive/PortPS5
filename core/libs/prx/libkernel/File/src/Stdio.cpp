@@ -362,6 +362,7 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
  */
 int APS5_VABI sceKernelFsync(int fd) {
     // Flush to stable storage; save files rely on this for crash-safe writes.
+    EnsureCrtReturnsOnBadFd();
 #ifdef _WIN32
     if (::_commit(fd) != 0) return HostErrnoToSce(errno);
 #else
@@ -450,9 +451,7 @@ int APS5_VABI sceKernelRename(const char* from, const char* to) {
  * Returns: 0, or SCE error (ENOENT, ENOTEMPTY, EACCES).
  */
 int APS5_VABI sceKernelRmdir(const char* path) {
-    if (path == nullptr) {
-        throw std::invalid_argument(std::string(__func__) + ": path is null");
-    }
+    if (path == nullptr) return SceKernelErrno(EFAULT);
     std::filesystem::path native;
     if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
     // A real console returns ENOENT/ENOTEMPTY/EACCES as codes; do not throw across the ABI.

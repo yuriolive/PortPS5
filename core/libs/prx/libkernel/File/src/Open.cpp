@@ -102,6 +102,19 @@ static bool MapFlags(int sceFlags, int& out) {
 // (MinGW: EDEADLK 36, ENAMETOOLONG 38, ENOLCK 39, ENOSYS 40, ENOTEMPTY 41; glibc:
 // EAGAIN 11, ENAMETOOLONG 36, ENOSYS 38, ELOOP 40), so they are mapped by name.
 // EAGAIN/EDEADLK cannot collide as switch labels on any supported libc.
+#ifdef _WIN32
+// Handler that returns: the CRT then reports -1 / EBADF for the offending call.
+static void IgnoreInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, uintptr_t) {}
+#endif
+
+void EnsureCrtReturnsOnBadFd() {
+#ifdef _WIN32
+    // Function-local static: initialised exactly once, thread-safely, on first use.
+    static const bool installed = (_set_invalid_parameter_handler(&IgnoreInvalidParameter), true);
+    (void)installed;
+#endif
+}
+
 int HostErrnoToSce(int hostErrno) {
     switch (hostErrno) {
     case EAGAIN: hostErrno = 35; break;
@@ -157,6 +170,7 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
  * Returns: 0, or SCE error (EBADF).
  */
 int APS5_VABI sceKernelClose(int d) {
+    EnsureCrtReturnsOnBadFd();
     if (NativeClose(d) != 0) return HostErrnoToSce(errno);
     return 0;
 }
@@ -167,6 +181,7 @@ int APS5_VABI sceKernelClose(int d) {
  */
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (buf == nullptr) return SceKernelErrno(EFAULT);
+    EnsureCrtReturnsOnBadFd();
     auto n = NativeRead(d, buf, nbytes);
     if (n < 0) return HostErrnoToSce(errno);
     return static_cast<std::int64_t>(n);
@@ -178,6 +193,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
  */
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (buf == nullptr) return SceKernelErrno(EFAULT);
+    EnsureCrtReturnsOnBadFd();
     auto n = NativeWrite(d, buf, nbytes);
     if (n < 0) return HostErrnoToSce(errno);
     return static_cast<std::int64_t>(n);
@@ -189,6 +205,7 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
  */
 int APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
     if (whence < 0 || whence > 2) return SceKernelErrno(EINVAL);
+    EnsureCrtReturnsOnBadFd();
     std::int64_t result = NativeLseek(d, offset, whence);
     if (result < 0) return HostErrnoToSce(errno);
     // The int return type cannot carry offsets >= 2 GiB; report EOVERFLOW (FreeBSD 84).
@@ -201,12 +218,8 @@ int APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
  * Returns: 0, or SCE error (ENOENT, EACCES for a /savedata0 escape); a null path or buffer is an invalid-argument exception.
  */
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
-    if (path == nullptr) {
-        throw std::invalid_argument(std::string(__func__) + ": path is null");
-    }
-    if (sb == nullptr) {
-        throw std::invalid_argument(std::string(__func__) + ": sb is null");
-    }
+    // Guest pointers are untrusted: a null is EFAULT as a code, never an exception.
+    if (path == nullptr || sb == nullptr) return SceKernelErrno(EFAULT);
     std::filesystem::path native;
     if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
     // A missing file is ENOENT as a code, not an exception (guests probe with stat).
@@ -219,9 +232,7 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
  * Returns: 0, or SCE error (ENOENT, EACCES).
  */
 int APS5_VABI sceKernelUnlink(const char* path) {
-    if (path == nullptr) {
-        throw std::invalid_argument(std::string(__func__) + ": path is null");
-    }
+    if (path == nullptr) return SceKernelErrno(EFAULT);
     std::filesystem::path native;
     if (const int error = ResolveKernelPath(path, native)) return HostErrnoToSce(error);
     if (NativeUnlink(native) != 0) return HostErrnoToSce(errno);

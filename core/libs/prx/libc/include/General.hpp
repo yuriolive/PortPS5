@@ -80,12 +80,12 @@ void UnmountGuestDirectory(const char* name);
 
 /**
  * @brief Default save root per docs/spec/save-data.md.
- * @return <LocalAppData>/PortPS5/saves, with XDG/HOME and ./savedata fallbacks on other hosts.
+ * @return LocalAppData/PortPS5/saves (the Windows known folder), with XDG/HOME and ./savedata fallbacks on other hosts.
  */
 std::filesystem::path DefaultSaveDataRoot();
 
 /**
- * @brief Creates <saveRoot>/<titleId>/ and mounts it at /savedata0.
+ * @brief Creates saveRoot/titleId/ and mounts it at /savedata0.
  * @param titleId Title id; it becomes a path component, so only [A-Za-z0-9_-] (<= 32 chars).
  * @param saveRoot Parent directory of the per-title containers.
  * @return false for an unsafe titleId or a filesystem error.

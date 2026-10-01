@@ -22,6 +22,15 @@ int HostErrnoToSce(int hostErrno);
 // ENOENT when /savedata0 is used before any title (param.json) mounted it.
 int ResolveKernelPath(const char* path, std::filesystem::path& host);
 
+/**
+ * @brief Makes bad descriptors fail with EBADF instead of terminating the process.
+ *
+ * On Windows the UCRT calls its invalid-parameter handler for a bad descriptor and the default
+ * handler terminates. Installs (once, process-wide) a handler that returns, so the CRT takes its
+ * documented path (-1, errno = EBADF). No-op on POSIX hosts. Idempotent and thread-safe.
+ */
+void EnsureCrtReturnsOnBadFd();
+
 extern "C" {
 
 /** @brief Opens or creates a file; /savedata0 paths resolve into the per-title save container.

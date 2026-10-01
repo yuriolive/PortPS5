@@ -188,6 +188,11 @@ TEST_F(SaveDataMountTest, ResolverScopedToMountPoint) {
 TEST_F(SaveDataMountTest, NullPathsReturnEfault) {
     EXPECT_EQ(sceKernelOpen(nullptr, SCE_KERNEL_O_RDONLY, 0), Sce(EFAULT));
     EXPECT_EQ(sceKernelMkdir(nullptr, 0777), Sce(EFAULT));
+    FileStat fs{};
+    EXPECT_EQ(sceKernelStat(nullptr, &fs), Sce(EFAULT));
+    EXPECT_EQ(sceKernelStat("/savedata0/x", nullptr), Sce(EFAULT));
+    EXPECT_EQ(sceKernelUnlink(nullptr), Sce(EFAULT));
+    EXPECT_EQ(sceKernelRmdir(nullptr), Sce(EFAULT));
     EXPECT_EQ(sceKernelRead(0, nullptr, 4), Sce(EFAULT));
     EXPECT_EQ(sceKernelWrite(0, nullptr, 4), Sce(EFAULT));
 }
@@ -196,18 +201,12 @@ TEST_F(SaveDataMountTest, NullPathsReturnEfault) {
  * Invariant: invalid descriptors / whence / access mode are error codes, not exceptions.
  */
 TEST_F(SaveDataMountTest, InvalidArgumentsReturnCodes) {
-#ifdef _WIN32
-    // UCRT calls its invalid-parameter handler for a bad descriptor and the default handler
-    // terminates the process, so the test must not depend on which fd values the CRT treats
-    // as "merely closed". Install a returning handler (MinGW exposes only the process-wide setter; the test is single-threaded here); the CRT then takes its
-    // documented path (return -1, errno = EBADF). Restored on scope exit.
-    struct InvalidParameterGuard {
-        _invalid_parameter_handler previous;
-        static void Ignore(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, uintptr_t) {}
-        InvalidParameterGuard() : previous(_set_invalid_parameter_handler(&Ignore)) {}
-        ~InvalidParameterGuard() { _set_invalid_parameter_handler(previous); }
-    } invalidParameterGuard;
-#endif
+    char st = 0;
+    // No test-side handler: the runtime itself (EnsureCrtReturnsOnBadFd, called by the file
+    // APIs) must turn a bad descriptor into EBADF instead of letting UCRT terminate the process.
+    EXPECT_EQ(sceKernelFsync(99999), Sce(EBADF));
+    EXPECT_EQ(sceKernelRead(99999, &st, 1), Sce(EBADF));
+    EXPECT_EQ(sceKernelWrite(99999, &st, 1), Sce(EBADF));
     EXPECT_EQ(sceKernelClose(-1), Sce(EBADF));
     EXPECT_EQ(sceKernelClose(99999), Sce(EBADF));
     EXPECT_EQ(sceKernelLseek(99999, 0, 0), Sce(EBADF));
