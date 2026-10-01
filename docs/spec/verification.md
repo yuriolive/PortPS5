@@ -97,6 +97,7 @@ The runtime writes `<install>/logs/telemetry.jsonl`, one JSON object per line, a
 |---|---|---|
 | `run.start` | `schema`, `resolution` (`WxH`), `pipeline_cache` (`warm`/`cold`), `audio_device` | header fields |
 | `frame` | `dt_ms` (time since the previous present), `t_ms` (monotonic ms since `run.start`, optional for older runtimes) | `fps`, stalls, softlock gaps, tail hang check |
+| `heartbeat` | `t_ms` (runtime clock, written about once per second by the watchdog thread) | tail hang check |
 | `softlock` | `idle_ms` | watchdog report (no present, or no guest thread progress, over 30 s) |
 | `crash` | none | `crashes` |
 | `audio.underrun` | `n` (default 1) | `audio_underruns_per_10min` |
@@ -108,7 +109,7 @@ The runtime writes `<install>/logs/telemetry.jsonl`, one JSON object per line, a
 ### 4.2 Runner rules (`tools/regress.py`)
 
 - **Statistics:** stalls (`dt_ms` > 1000) are excluded from `fps` and counted in `fps.stalls`. `p1_low` = 1000 / mean of the slowest 1% (rounded up, at least one frame) of the remaining frame times. `duration_s` is the span of presented frames, the quantity the 30 minute rule uses.
-- **Softlocks:** `softlocks` is the larger of the watchdog's `softlock` events and the count of present gaps over 30 s, so a silent watchdog cannot hide one. For a run the runner ended at its time limit, silence from the last present (`t_ms`) to the kill above 30 s is one more softlock, because no later `frame` record carries that gap.
+- **Softlocks:** `softlocks` is the larger of the watchdog's `softlock` events and the count of present gaps over 30 s, so a silent watchdog cannot hide one. For a run the runner ended at its time limit, more than 30 s between the last present and the last `heartbeat`, both on the runtime's clock (never the runner's wall clock), is one more softlock, because no later `frame` record carries that gap. A title that never presented is measured from `t_ms` 0, with no loading exemption. Without heartbeats (older runtime) the check is skipped.
 - **Crashes:** `crash` events, plus one if the title ended by itself without `run.end` or with a non-zero exit code. A run the runner ends at its time limit is not a crash. `run` persists `{killed, exit_code, wall_ms}` to `logs/runner.json`, and `report` reuses it, so re-reporting a timed run gives the same verdict.
 - **Config:** `config_sha256` hashes the canonical JSON of `global.toml` overlaid by `games/<titleId>.toml`; `workarounds_set` lists enabled `[workarounds]` keys and `debug_keys_set` every `[debug]` key present. The runner refuses to run with `PORTPS5_DEBUG` set, so the hash reproduces from files. Enabling `[debug] profile` for a run therefore makes it `fail`, by the pass rule above.
 - **Additive fields:** `fail_reasons` (names of failed rule fields only), `fmv` (per-FMV `pass`/`fail` from the "FMV played" rule in [video-fmv.md](video-fmv.md)). `save_roundtrip` may be `not_run`, which fails a `full_run`. `checkpoints`, `fmv` entries and `save_roundtrip` come from `--checks-file`, written by the frame-check and save steps.

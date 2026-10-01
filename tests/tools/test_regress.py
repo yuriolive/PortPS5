@@ -375,14 +375,33 @@ def test_malformed_known_event_fields_are_clean_errors_with_line_number(tmp_path
 
 
 def test_hang_before_the_timeout_kill_is_a_softlock(tmp_path):
-    # Regression: no frame record follows the last present, so only the wall time
-    # since the last present (t_ms) reveals a hang that the watchdog missed.
+    # Regression: no frame record follows the last present, so only the runtime's own
+    # heartbeat clock reveals a hang the watchdog missed. Runner wall time is ignored.
     frames = [{"ev": "frame", "dt_ms": 16, "t_ms": 5000}]
-    inst = make_install(tmp_path, [HEADER, *frames])
-    hung = regress.report(args_for(inst), {"killed": True, "exit_code": None, "wall_ms": 36000.0})
-    assert hung["softlocks"] == 1 and hung["crashes"] == 0 and "softlocks" in hung["fail_reasons"]
-    ok = regress.report(args_for(inst), {"killed": True, "exit_code": None, "wall_ms": 35000.0})
-    assert ok["softlocks"] == 0  # exactly 30 s of silence is not a softlock
+    killed = {"killed": True, "exit_code": None, "wall_ms": 999999.0}
+    hung = make_install(tmp_path / "a", [HEADER, *frames, {"ev": "heartbeat", "t_ms": 35001}])
+    res = regress.report(args_for(hung), killed)
+    assert res["softlocks"] == 1 and res["crashes"] == 0 and "softlocks" in res["fail_reasons"]
+    ok = make_install(tmp_path / "b", [HEADER, *frames, {"ev": "heartbeat", "t_ms": 35000}])
+    assert regress.report(args_for(ok), killed)["softlocks"] == 0  # exactly 30 s is fine
+
+
+def test_tail_check_ignores_runner_clock_and_missing_heartbeats(tmp_path):
+    # Regression (review): start-up delay and shutdown grace in wall time must not create a
+    # softlock, and an older runtime without heartbeats gets no tail check at all.
+    frames = [{"ev": "frame", "dt_ms": 16, "t_ms": 5000}]
+    killed = {"killed": True, "exit_code": None, "wall_ms": 999999.0}
+    inst = make_install(tmp_path, [HEADER, *frames, {"ev": "heartbeat", "t_ms": 6000}])
+    assert regress.report(args_for(inst), killed)["softlocks"] == 0
+    old = make_install(tmp_path / "old", [HEADER, *frames])
+    assert regress.report(args_for(old), killed)["softlocks"] == 0
+
+
+def test_title_that_never_presents_is_a_softlock_when_killed(tmp_path):
+    # No loading-screen exemption (PRD 4.3): 31 s of heartbeats and no present is a softlock.
+    inst = make_install(tmp_path, [HEADER, {"ev": "heartbeat", "t_ms": 31000}])
+    killed = {"killed": True, "exit_code": None, "wall_ms": 1.0}
+    assert regress.report(args_for(inst), killed)["softlocks"] == 1
 
 
 def test_report_reuses_the_persisted_runner_outcome(tmp_path):
