@@ -1,3 +1,8 @@
+/*
+ * BDA (buffer device address) target and request-serialization contract tests, run before the
+ * device checks in BdaDevice.cpp. Verifies each contract violation is rejected with its own
+ * message; no Vulkan device needed.
+ */
 #include "BdaShader.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
@@ -48,7 +53,12 @@ void RunBdaContractTests() {
     const auto encoded = serializer.Serialize(request);
     const auto decoded = serializer.Deserialize(encoded);
     AgcDriver::Graphics::Require(decoded.request.target.bdaAbiVersion == BdaAbi::Version && decoded.request.target.supportedCapabilities.size() == capabilities.size() && decoded.request.target.supportedExtensions[1] == extensions[1], "BDA request serialization changed target contract");
-    auto invalid = encoded;
-    invalid[0] = invalid[0] == 'A' ? 'B' : 'A';
-    reject([&] { static_cast<void>(serializer.Deserialize(invalid)); }, "serialization version");
+    // Deserialize checks the 'APS5' signature (0x41505335) before the version, so each rejection
+    // needs its own blob. Little-endian u32 pairs, base64-encoded:
+    //   signature 0x41505336 (wrong) + version 2  -> "invalid ... signature"
+    //   signature 0x41505335 (right) + version 99 -> "unsupported ... serialization version"
+    const std::string badSignature = "NlNQQQIAAAA=";
+    const std::string badVersion = "NVNQQWMAAAA=";
+    reject([&] { static_cast<void>(serializer.Deserialize(badSignature)); }, "signature");
+    reject([&] { static_cast<void>(serializer.Deserialize(badVersion)); }, "serialization version");
 }

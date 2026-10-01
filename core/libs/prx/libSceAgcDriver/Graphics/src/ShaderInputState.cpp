@@ -1,8 +1,14 @@
+/*
+ * Decodes guest shader-stage registers (compute thread counts, pixel input control, colour format)
+ * into the recompiler's stage-info structs. Missing or inconsistent registers are reported as
+ * errors rather than defaulted, so a bad submission fails visibly. Stateless, thread-safe.
+ */
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -25,7 +31,9 @@ constexpr std::uint32_t spiShaderColFormat = 0x1C5;
 std::uint32_t read(const Registers& registers, std::uint32_t offset) {
     const auto it = registers.find(offset);
     if (it == registers.end()) {
-        throw std::runtime_error("AGC graphics: missing register at DWORD 0x" + std::to_string(offset));
+        char hex[16];
+        std::snprintf(hex, sizeof(hex), "0x%X", offset);  // the message says DWORD 0x..., so format as hex, not decimal
+        throw std::runtime_error(std::string("AGC graphics: missing register at DWORD ") + hex);
     }
     return it->second;
 }

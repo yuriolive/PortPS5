@@ -1,100 +1,79 @@
+/**
+ * Compute dispatch through the real shader recompiler and Vulkan device.
+ *
+ * Each TEST runs in its own process (gtest_discover_tests), which matters here: the driver owns a
+ * process-wide Vulkan device and a latched asynchronous error that LibcRunShutdown re-throws, so
+ * tests must not share a process. Needs a Vulkan device (lavapipe on hosted CI), hence the
+ * 'lavapipe' label rather than 'unit'.
+ */
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include <array>
-#include <cstdio>
 #include <stdexcept>
-#include <string>
 #include <vector>
 
-int main(int argc, char** argv) {
-    try {
-        alignas(256) const std::array<std::uint32_t, 1> code{0xbf810000};
-        Shader shader{};
-        shader.file_header = 0x34333231;
-        shader.version = 0x18;
-        shader.header_size = sizeof(Shader);
-        shader.shader_size = sizeof(code);
-        shader.code = code.data();
-        AgcDriverRegisterShader_nid_postfix(&shader);
-        const auto address = reinterpret_cast<std::uintptr_t>(code.data());
-        std::vector<std::uint32_t> commands{
-            0xc0027600, 0x20c, static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>(address >> 40u),
-            0xc0017600, 0x213, 0,
-            0xc0031500, 1, 1, 1, 0x8041
-        };
-        Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-        const std::array<std::uint32_t, 3> arguments{1, 1, 1};
-        alignas(256) const std::array<std::uint32_t, 65> vertexCode{0xbf810000};
-        Shader vertexShader = shader;
-        const std::array<std::uint16_t, 4> indices{0, 1, 2, 0};
-        std::uint32_t destination = 0;
-        const bool graphics = argc == 2 && (std::string(argv[1]) == "draw" || std::string(argv[1]) == "vertex");
-        if (graphics) {
-            shader.type = 1;
-            AgcDriverRegisterShader_nid_postfix(&shader);
-            vertexShader.type = 2;
-            vertexShader.shader_size = sizeof(vertexCode);
-            vertexShader.code = vertexCode.data();
-            AgcDriverRegisterShader_nid_postfix(&vertexShader);
-            const auto vertexAddress = reinterpret_cast<std::uintptr_t>(vertexCode.data()) + 256;
-            const auto indexAddress = reinterpret_cast<std::uintptr_t>(indices.data());
-            const auto pixelAddress = std::string(argv[1]) == "vertex" ? 0 : address;
-            commands = {
-                0xc0027600, 0x0c8, static_cast<std::uint32_t>(vertexAddress >> 8u), static_cast<std::uint32_t>(vertexAddress >> 40u),
-                0xc0017600, 0x08b, 0,
-                0xc0027600, 0x008, static_cast<std::uint32_t>(pixelAddress >> 8u), static_cast<std::uint32_t>(pixelAddress >> 40u),
-                0xc0017600, 0x00b, 0x08000002,
-                0xc0217600, 0x00c
-            };
-            for (std::uint32_t i = 0; i < 33; ++i) commands.push_back(100 + i);
-            const auto destinationAddress = reinterpret_cast<std::uintptr_t>(&destination);
-            const std::array<std::uint32_t, 13> draw{
-                0xc0012600, static_cast<std::uint32_t>(indexAddress), static_cast<std::uint32_t>(indexAddress >> 32u),
-                0xc0033500, 3, 1, 3, 0x20,
-                0xc0033700, 0x100, static_cast<std::uint32_t>(destinationAddress), static_cast<std::uint32_t>(destinationAddress >> 32u), 7
-            };
-            commands.insert(commands.end(), draw.begin(), draw.end());
-            packet = Packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-        }
-        if (argc == 2 && std::string(argv[1]) == "indirect") {
-            const auto argumentAddress = reinterpret_cast<std::uintptr_t>(arguments.data());
-            commands[7] = 0xc0021600;
-            commands[8] = static_cast<std::uint32_t>(argumentAddress);
-            commands[9] = static_cast<std::uint32_t>(argumentAddress >> 32u);
-            commands[10] = 0x8041;
-            packet.dw_num = 11;
-        }
-        if (graphics) sceAgcDriverSubmitDcb(&packet);
-        else sceAgcDriverSubmitAcb(0x20, &packet);
-        try {
-            AgcDriverWaitIdle_nid_postfix();
-        } catch (const std::runtime_error& error) {
-            if (std::string(error.what()) != "ShaderRecompiler::Recompile not implemented") {
-                throw;
-            }
-            if (destination != 0) throw std::runtime_error("failed draw executed a later memory write");
-            std::puts("Vulkan device initialized; real recompiler exception propagated");
-            try {
-                AgcDriverWaitIdle_nid_postfix();
-                throw std::runtime_error("idle lost recompiler failure");
-            } catch (const std::runtime_error& idle) {
-                if (std::string(idle.what()) != "ShaderRecompiler::Recompile not implemented") throw;
-            }
-            try {
-                LibcRunShutdown_nid_postfix();
-                throw std::runtime_error("shutdown lost recompiler failure");
-            } catch (const std::runtime_error& shutdown) {
-                if (std::string(shutdown.what()) != "ShaderRecompiler::Recompile not implemented") throw;
-            }
-            return 0;
-        }
-        throw std::runtime_error("dispatch unexpectedly completed without a recompiler");
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "%s\n", error.what());
-        try { LibcRunShutdown_nid_postfix(); }
-        catch (const std::exception& shutdown) { std::fprintf(stderr, "shutdown: %s\n", shutdown.what()); }
-        return 1;
+namespace {
+
+// COMPUTE_NUM_THREAD_X/Y/Z and COMPUTE_PGM_RSRC2 as SH register DWORD offsets (see ShaderInputState.cpp).
+constexpr std::uint32_t kComputeNumThreadX = 0x207;
+constexpr std::uint32_t kComputePgmRsrc2 = 0x213;
+
+/**
+ * Registers a one-instruction compute shader (s_endpgm) and submits a 1x1x1 dispatch on ACB queue 0x20.
+ * @param programThreadCounts when true, emits SET_SH_REG for COMPUTE_NUM_THREAD_X/Y/Z = 1 before the
+ *        dispatch, the way a real title does; when false the dispatch is submitted without them.
+ */
+void SubmitEmptyComputeDispatch(bool programThreadCounts) {
+    alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000};
+    static Shader shader{};
+    shader = Shader{};
+    shader.file_header = 0x34333231;
+    shader.version = 0x18;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = sizeof(code);
+    shader.code = code.data();
+    AgcDriverRegisterShader_nid_postfix(&shader);
+
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    static std::vector<std::uint32_t> commands;
+    commands = {
+        // SET_SH_REG COMPUTE_PGM_LO/HI: program address in 256-byte units, split across two registers.
+        0xc0027600, 0x20c, static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>(address >> 40u),
+        // SET_SH_REG COMPUTE_PGM_RSRC2 = 0 (no user data, no scratch).
+        0xc0017600, kComputePgmRsrc2, 0,
+    };
+    if (programThreadCounts) {
+        commands.insert(commands.end(), {0xc0037600, kComputeNumThreadX, 1, 1, 1});
     }
+    // DISPATCH_DIRECT 1x1x1.
+    commands.insert(commands.end(), {0xc0031500, 1, 1, 1, 0x8041});
+    static Packet packet;
+    packet = Packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
+    sceAgcDriverSubmitAcb(0x20, &packet);
+}
+
+}  // namespace
+
+// Invariant: a compute dispatch with programmed thread counts goes through the real recompiler and
+// the Vulkan device and completes; neither WaitIdle nor shutdown reports an error.
+TEST(AgcDriverRecompiler, ProgrammedComputeDispatchCompletes) {
+    SubmitEmptyComputeDispatch(true);
+    EXPECT_NO_THROW(AgcDriverWaitIdle_nid_postfix());
+    EXPECT_NO_THROW(LibcRunShutdown_nid_postfix());
+}
+
+// Invariant: a dispatch without COMPUTE_NUM_THREAD_X/Y/Z is rejected with the register named in hex
+// (0x207), not silently skipped, and the failure stays latched: a second WaitIdle and shutdown
+// both re-report it instead of losing it. Expected failure mode if the latch regresses: one of the
+// later calls returns normally.
+TEST(AgcDriverRecompiler, MissingThreadCountRegistersFailAndStayLatched) {
+    SubmitEmptyComputeDispatch(false);
+    constexpr const char* kExpected = "missing register at DWORD 0x207";
+    EXPECT_THAT([] { AgcDriverWaitIdle_nid_postfix(); }, ::testing::ThrowsMessage<std::runtime_error>(::testing::HasSubstr(kExpected)));
+    EXPECT_THAT([] { AgcDriverWaitIdle_nid_postfix(); }, ::testing::ThrowsMessage<std::runtime_error>(::testing::HasSubstr(kExpected)));
+    EXPECT_THAT([] { LibcRunShutdown_nid_postfix(); }, ::testing::ThrowsMessage<std::runtime_error>(::testing::HasSubstr(kExpected)));
 }
