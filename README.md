@@ -84,6 +84,8 @@ For complete rules, see [.agents/rules/legal-boundary.md](.agents/rules/legal-bo
 
 ## Documentation & Architecture
 
+- **[User Guide](docs/USER_GUIDE.md):** Build PortPS5, convert a decrypted dump, run a game, configure it, and troubleshoot.
+- **[Supported Games](docs/COMPATIBILITY.md):** Titles reported as working, with status and performance.
 - **[PRD (Product Requirements Document)](docs/PRD.md):** 1.0 product goals, gate titles, performance bar, and reference hardware tier.
 - **[Roadmap to 1.0](docs/ROADMAP.md):** Phased milestones (M0–M6) with measurable exit criteria.
 - **[Subsystem Specifications](docs/spec/README.md):** Technical specs for relinker, shader recompiler, GPU driver, memory, threading, audio, input, and verification.
