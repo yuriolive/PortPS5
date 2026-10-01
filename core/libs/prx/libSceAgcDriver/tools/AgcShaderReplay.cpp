@@ -107,7 +107,7 @@ std::string TrimTrailingSpace(std::string text) {
 // Disassembles validated SPIR-V for golden diffing. No header: the magic/version/ids are
 // covered by validation, and omitting them keeps diffs focused on emitted code.
 std::string DisassembleSpirv(const std::vector<std::uint32_t>& spirv) {
-    spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_1);
+    spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_3);
     if (!tools.IsValid()) {
         throw std::runtime_error("agc_shader_replay: cannot create SPIR-V disassembler");
     }
