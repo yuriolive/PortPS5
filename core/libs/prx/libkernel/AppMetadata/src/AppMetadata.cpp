@@ -1,3 +1,6 @@
+// AppMetadata: lazily loads /app0/sce_sys/param.json (title, title id) and icon0.png.
+// Loading the title also mounts the per-title save container at /savedata0; the load and mount
+// are serialized by one mutex so no thread observes the title as loaded before the mount exists.
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include "prx/libc/include/General.hpp"

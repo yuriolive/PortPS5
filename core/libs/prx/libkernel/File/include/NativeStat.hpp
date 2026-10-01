@@ -1,3 +1,5 @@
+// Host stat -> guest FileStat conversion helpers for libkernel.
+// Host-only (no guest ABI): called from sceKernelStat/Fstat; thread-safe, no shared state.
 #ifndef CORE_LIBS_PRX_LIBKERNEL_FILE_NATIVESTAT_HPP
 #define CORE_LIBS_PRX_LIBKERNEL_FILE_NATIVESTAT_HPP
 

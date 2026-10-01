@@ -1,3 +1,5 @@
+// Host stat -> guest FileStat conversion (Windows _wstat64 / POSIX stat).
+// TryFillFileStat is the non-throwing form used by guest-facing calls; FillFileStat throws on failure.
 #include "prx/libkernel/File/include/NativeStat.hpp"
 
 #include <cerrno>

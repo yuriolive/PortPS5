@@ -208,6 +208,7 @@ TEST(SaveDataUnmounted, ReservedMountFailsWithoutMount) {
 // accepted; traversal, separators, drive syntax and empty ids never mount.
 class SaveDataTitleIdTest : public TempDirectoryFixture {};
 
+// Invariant: titleId is a host path component; empty, dotted, separator, drive and over-long ids never mount.
 TEST_F(SaveDataTitleIdTest, UnsafeTitleIdsAreRejected) {
     const char* bad[] = {"", "..", "../evil", "a/b", "a\\b", "C:", "PPSA 1", "x.y",
                          "0123456789012345678901234567890123"};
@@ -247,6 +248,7 @@ TEST_F(SaveDataMountTest, RmdirUsesCheckedResolver) {
     EXPECT_EQ(sceKernelRmdir("/savedata0/../x"), Sce(EACCES));
 }
 
+// Invariant: rmdir on the reserved /savedata0 name with no title mounted is ENOENT, not a fall-through to the cwd.
 TEST(SaveDataUnmounted, RmdirUnmountedReturnsEnoent) {
     UnmountGuestDirectory(SaveDataMountName);
     EXPECT_EQ(sceKernelRmdir("/savedata0/x"), Sce(ENOENT));

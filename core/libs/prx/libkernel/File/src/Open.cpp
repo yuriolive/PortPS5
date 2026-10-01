@@ -1,3 +1,6 @@
+// libkernel core file calls (open/close/read/write/lseek/stat/unlink) over the host CRT.
+// Exports are APS5_VABI and return SCE codes (0x80020000 | errno); paths are resolved through the
+// checked guest resolver so /savedata0 is confined to its per-title container (docs/spec/save-data.md).
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libc/include/General.hpp"
@@ -133,6 +136,10 @@ int ResolveKernelPath(const char* path, std::filesystem::path& host) {
 
 extern "C" {
 
+/**
+ * Opens or creates a file; /savedata0 paths resolve into the per-title save container.
+ * Returns: fd >= 0, or -(0x80020000|errno): EACCES (escapes /savedata0), ENOENT, EEXIST, EINVAL (bad access mode), EFAULT (null path).
+ */
 int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     if (path == nullptr) return SceKernelErrno(EFAULT);
     int nativeFlags = 0;
@@ -145,11 +152,19 @@ int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode) {
     return fd;
 }
 
+/**
+ * Closes a descriptor.
+ * Returns: 0, or SCE error (EBADF).
+ */
 int APS5_VABI sceKernelClose(int d) {
     if (NativeClose(d) != 0) return HostErrnoToSce(errno);
     return 0;
 }
 
+/**
+ * Reads up to nbytes from a descriptor.
+ * Returns: bytes read (0 at EOF), or SCE error (EBADF, EFAULT for a null buffer, EINVAL).
+ */
 std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     if (buf == nullptr) return SceKernelErrno(EFAULT);
     auto n = NativeRead(d, buf, nbytes);
@@ -157,6 +172,10 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     return static_cast<std::int64_t>(n);
 }
 
+/**
+ * Writes nbytes to a descriptor.
+ * Returns: bytes written, or SCE error (EBADF, EFAULT, ENOSPC, EINVAL).
+ */
 std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes) {
     if (buf == nullptr) return SceKernelErrno(EFAULT);
     auto n = NativeWrite(d, buf, nbytes);
@@ -164,6 +183,10 @@ std::int64_t APS5_VABI sceKernelWrite(int d, const void* buf, std::size_t nbytes
     return static_cast<std::int64_t>(n);
 }
 
+/**
+ * Repositions the file offset (whence 0=SET, 1=CUR, 2=END).
+ * Returns: new offset, or SCE error (EINVAL bad whence, EBADF, EOVERFLOW above INT_MAX).
+ */
 int APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
     if (whence < 0 || whence > 2) return SceKernelErrno(EINVAL);
     std::int64_t result = NativeLseek(d, offset, whence);
@@ -173,6 +196,10 @@ int APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence) {
     return static_cast<int>(result);
 }
 
+/**
+ * Fills FileStat for a path.
+ * Returns: 0, or SCE error (ENOENT, EACCES for a /savedata0 escape); a null path or buffer is an invalid-argument exception.
+ */
 int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     if (path == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": path is null");
@@ -187,6 +214,10 @@ int APS5_VABI sceKernelStat(const char* path, FileStat* sb) {
     return 0;
 }
 
+/**
+ * Removes a file.
+ * Returns: 0, or SCE error (ENOENT, EACCES).
+ */
 int APS5_VABI sceKernelUnlink(const char* path) {
     if (path == nullptr) {
         throw std::invalid_argument(std::string(__func__) + ": path is null");
