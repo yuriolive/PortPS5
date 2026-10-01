@@ -68,10 +68,18 @@ function(portps5_setup_ffmpeg)
         set(asm_args "--x86asmexe=${PORTPS5_NASM}")
     endif()
 
+    # Git for Windows' sh reports an MSYS uname, which makes FFmpeg's configure refuse ("Native MSYS builds
+    # are discouraged"). The compiler is MinGW-w64, so name the target explicitly instead of probing uname.
+    set(target_args "")
+    if(CMAKE_HOST_WIN32)
+        set(target_args --target-os=mingw32 --arch=x86_64)
+    endif()
+
     set(bin "${CMAKE_BINARY_DIR}/ffmpeg")
     set(options
         --prefix=${bin}/install
         --cc=${CMAKE_C_COMPILER}
+        ${target_args}
         --enable-static --disable-shared
         --disable-autodetect --disable-everything
         --disable-programs --disable-doc --disable-debug --disable-network

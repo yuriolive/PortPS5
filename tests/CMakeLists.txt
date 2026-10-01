@@ -282,10 +282,10 @@ portps5_add_gtest(videodec2_tests
 
 foreach(case
         "lgpl_accepted;lgpl;lgpl;PASS"
-        "gpl_rejected;gpl;lgpl;FAIL"
-        "lgplv3_rejected;lgplv3;lgpl;FAIL"
-        "gpl_header_rejected;lgpl;gpl;FAIL"
-        "nonfree_rejected;lgpl;nonfree;FAIL")
+        "gpl_rejected;gpl;lgpl;FAIL;GPL"
+        "lgplv3_rejected;lgplv3;lgpl;FAIL;LGPLV3"
+        "gpl_header_rejected;lgpl;gpl;FAIL;GPL"
+        "nonfree_rejected;lgpl;nonfree;FAIL;NONFREE")
     list(GET case 0 name)
     list(GET case 1 mak)
     list(GET case 2 hdr)
@@ -297,7 +297,10 @@ foreach(case
             -P ${CMAKE_SOURCE_DIR}/cmake/PortPS5FFmpegLicenseCheck.cmake)
     set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES LABELS unit)
     if(expect STREQUAL "FAIL")
-        set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES WILL_FAIL TRUE)
+        # Match the specific rejection so a missing fixture or unrelated CMake error cannot pass.
+        list(GET case 4 reject_flag)
+        set_tests_properties(ffmpeg_license_gate_${name} PROPERTIES
+            PASS_REGULAR_EXPRESSION "FFmpeg configure enabled CONFIG_${reject_flag};")
     endif()
 endforeach()
 
