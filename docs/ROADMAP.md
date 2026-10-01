@@ -65,7 +65,7 @@ This roadmap is phased, with no calendar dates. Capacity is a solo maintainer pl
 - [x] Image codecs: shared stb-backed JPEG/PNG layer (`core/Decoder`), `libSceJpegEnc` and `libScePngDec` ([spec/image-codecs.md](spec/image-codecs.md)); `libScePngEnc` remains open.
 - [ ] Per-game TOML config, with `display.present_mode` and `display.resolution_scale` wired. Remove the `APS5_*` behaviour switches; keep a typed `[debug]` section.
   - [x] `Config` schema, validation and the typed `[debug]` section (`libc/src/Config.cpp`, `core/libs/tests/Config.cpp`); no `APS5_` string literals remain in `core/` and the `policy` job enforces it;
-  - [ ] startup loads config for the `param.json` title ID: `Loader::Initialize` has no production caller (bean `portps5-c06p`);
+  - [x] startup loads config for the `param.json` title ID before guest initializers (startup portion of bean `portps5-c06p`);
   - [ ] `display.present_mode` and `display.resolution_scale` reach the driver: the swapchain is hard-coded to FIFO (bean `portps5-dtwf`).
 - [ ] Runtime telemetry: frame-time log, watchdog, structured logs, audio underrun and latency counters, and the A/V offset skeleton (`video_latency_ms`). The telemetry core, watchdog and mixer counter integration exist (PR #78, bean `portps5-f9a3` completed; [spec/verification.md](spec/verification.md) 4.3); the start-up, presenter and guest-progress call sites are not wired, so this stays open (bean `portps5-w1re`).
 - [x] Hosted CI job `recompiler-golden` (synthetic corpus green in CI; merged into the `build_and_test` job by PR #38).
