@@ -1,5 +1,8 @@
+// Host stat -> guest FileStat conversion (Windows _wstat64 / POSIX stat).
+// TryFillFileStat is the non-throwing form used by guest-facing calls; FillFileStat throws on failure.
 #include "prx/libkernel/File/include/NativeStat.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 #include <string>
 
@@ -80,6 +83,13 @@ void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
         throw std::runtime_error(std::string("FillFileStat: stat failed for ") + nativePath.string());
     }
     CopyNativeStat(st, sb);
+}
+
+int TryFillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
+    NativeStat st{};
+    if (DoStat(nativePath, &st) != 0) return errno;
+    CopyNativeStat(st, sb);
+    return 0;
 }
 
 void FillFileStat(int nativeDescriptor, FileStat* sb) {

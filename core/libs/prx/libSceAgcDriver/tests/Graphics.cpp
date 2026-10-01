@@ -516,6 +516,10 @@ AgcDriver::Graphics::Context mockContext() {
     context.limits.maxPerStageDescriptorStorageBuffers = 16;
     context.limits.maxPerStageResources = 128;
     context.limits.maxDescriptorSetStorageBuffers = 32;
+    // Sampler limits must be nonzero so a sampler binding gets past the limit check and reaches its
+    // own contract checks (depth-compare metadata); left at zero every sampler binding fails on limits.
+    context.limits.maxPerStageDescriptorSamplers = 16;
+    context.limits.maxDescriptorSetSamplers = 16;
     return context;
 }
 
@@ -708,9 +712,12 @@ void resourceTests() {
         mutate(binding);
         return binding;
     };
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::SampledImage; }), "sampled and storage image resources are not implemented");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::StorageImage; }), "sampled and storage image resources are not implemented");
-    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestSamplers; binding.kind = Kind::Sampler; }), "sampled and storage image resources are not implemented");
+    // Image and sampler bindings are implemented, so each mutation of the 4-DWORD buffer descriptor is
+    // rejected for its own reason: a T# must be 8 DWORDs, storage images are unsupported, and a
+    // sampler binding must carry per-element depth-compare metadata.
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::SampledImage; }), "guest texture descriptor must contain 8 dwords");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestImages; binding.kind = Kind::StorageImage; }), "unsupported descriptor kind StorageImage for role GuestImages");
+    expectSingleFailure(changed([](auto& binding) { binding.role = Role::GuestSamplers; binding.kind = Kind::Sampler; }), "guest sampler binding is missing depth comparison metadata");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::Gds; binding.guestDescriptor.clear(); }), "unsupported descriptor role Gds");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::BdaPagetable; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
     expectSingleFailure(changed([](auto& binding) { binding.role = Role::FaultBuffer; binding.guestDescriptor.clear(); }), "BDA table and fault descriptors");
@@ -924,7 +931,10 @@ void rectListTests() {
     target.spirvVersion = 0x00010300u;
     target.supportedCapabilities = capabilities;
     target.tessellation = TessellationTargetLimits{32, 128, 128, 120, 4096, 128, 128};
-    for (const auto version : {0x00010300u, 0x00010400u, 0x00010600u}) {
+    // Only SPIR-V versions the production shader validator accepts (ShaderValidation.cpp caps at 1.4,
+    // which also matches VulkanDevice's mesh/non-mesh targets). RectListShaders can emit up to 1.6, but
+    // 1.6 modules fail ValidateShaders until that cap is raised (bean portps5-s16v).
+    for (const auto version : {0x00010300u, 0x00010400u}) {
         target.spirvVersion = version;
         auto auxiliary = BuildRectListShaders(vertex, fragment, target);
         const std::array<CompiledShader, 4> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::TessellationControl, &auxiliary.control, 0}, {ShaderStage::TessellationEvaluation, &auxiliary.evaluation, 0}, {ShaderStage::Fragment, &fragment, 0}}};

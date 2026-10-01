@@ -1,3 +1,8 @@
+// GuestAllocations.cpp: AGC driver test runner for the guest allocation registry
+// (protect/unmap splitting, pins, main-image memory). Runs on Windows, where the
+// main PE image is registered; the portable Unmap cases live in
+// tests/memory/GuestAllocationsUnmapTests.cpp.
+
 #include "BdaTests.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
@@ -57,21 +62,21 @@ void RunGuestAllocationTests() {
         const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         Require(lease.size() == 3 && lease[0]->bytes == 32 && !lease[1]->writable && lease[2]->bytes == 64, "partial protection did not split the mapping");
         GuestAllocations::Mutation mutation;
-        reject([&] { mutation.Unmap(mapping.data() + 32, 32, [](const void*, bool) {}); });
+        reject([&] { mutation.Unmap(mapping.data() + 32, 32, [](const void*, std::size_t, const void*, bool) {}); });
     }
     {
         GuestAllocations::Mutation mutation;
         bool applied = false;
-        mutation.Unmap(mapping.data() + 32, 32, [&](const void* allocation, bool last) {
+        mutation.Unmap(mapping.data() + 32, 32, [&](const void*, std::size_t, const void* allocation, bool last) {
             Require(allocation == mapping.data() && !last, "partial unmap released the allocation");
             applied = true;
         });
         Require(applied, "partial unmap callback was not called");
         reject([&] { mutation.Protect(mapping.data(), mapping.size(), true, true, [] {}); });
-        mutation.Unmap(mapping.data(), 32, [&](const void* allocation, bool last) {
+        mutation.Unmap(mapping.data(), 32, [&](const void*, std::size_t, const void* allocation, bool last) {
             Require(allocation == mapping.data() && !last, "first fragment released remaining mapping");
         });
-        mutation.Unmap(mapping.data() + 64, 64, [&](const void* allocation, bool last) {
+        mutation.Unmap(mapping.data() + 64, 64, [&](const void*, std::size_t, const void* allocation, bool last) {
             Require(allocation == mapping.data() && last, "last fragment did not release the original allocation");
         });
     }
@@ -102,7 +107,7 @@ void RunGuestAllocationTests() {
         reject([&] { mutation.Find(reinterpret_cast<void*>(allocationAddress)); });
         reject([&] { mutation.Remove(reinterpret_cast<void*>(allocationAddress)); });
         bool applied = false;
-        reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, bool) { applied = true; }); });
+        reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
         Require(!applied, "image memory was unmapped");
         reject([&] { mutation.Protect(&imageProbe, 1, true, false, [] { throw std::runtime_error("host protection failure"); }); });
     }
@@ -111,7 +116,7 @@ void RunGuestAllocationTests() {
         GuestAllocations::Mutation mutation;
         mutation.Protect(&imageProbe, 1, true, true, [] {});
         bool applied = false;
-        reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, bool) { applied = true; }); });
+        reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
         Require(!applied, "split image memory became releasable");
     }
 #endif

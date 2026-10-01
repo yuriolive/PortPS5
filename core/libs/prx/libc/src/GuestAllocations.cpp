@@ -14,6 +14,7 @@
 #include <iterator>
 #include <map>
 #include <stdexcept>
+#include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -223,21 +224,47 @@ void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, st
     registry().ranges.swap(replacement);
 }
 
-void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, bool)>& apply) {
-    GuestAllocationsRequireUnpinned_nid_postfix(mutation, pointer, bytes);
+/**
+ * Walks the registered fragments (not the allocation extents) that overlap the
+ * request, so a hole left inside an allocation by an earlier partial unmap, or
+ * a gap between allocations, is skipped instead of being treated as a
+ * registered range. All pieces are collected and checked for releasability
+ * before the first host unmap, so a request that touches image memory fails
+ * without unmapping anything. Each piece is then applied and committed to the
+ * registry separately: if the host unmap of piece N throws, pieces 0..N-1 are
+ * already gone from both the host and the registry.
+ */
+void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply) {
     const auto address = reinterpret_cast<std::uintptr_t>(pointer);
-    const auto found = registry().ranges.upper_bound(address);
-    require(found != registry().ranges.begin(), "unmap address is not registered");
-    const auto& range = *std::prev(found)->second;
-    require(range.releasable, "guest image memory cannot be unmapped");
-    require(address >= range.address && address - range.allocationAddress <= range.allocationBytes && bytes <= range.allocationBytes - (address - range.allocationAddress), "unmap crosses allocation boundaries");
-    auto replacement = replaceRange(pointer, bytes, true, false, false);
-    bool last = true;
-    for (const auto& [base, entry] : replacement) {
-        if (entry->allocationAddress == range.allocationAddress) last = false;
+    require(bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address, "invalid guest unmap range");
+    GuestAllocationsRequireUnpinned_nid_postfix(mutation, pointer, bytes);
+    const auto end = address + bytes;
+    struct Piece {
+        std::uint64_t first;
+        std::uint64_t last;
+        std::uint64_t allocation;
+    };
+    std::vector<Piece> pieces;
+    auto& ranges = registry().ranges;
+    auto it = ranges.upper_bound(address);
+    if (it != ranges.begin()) --it;  // the one fragment starting before `address` that may overlap it
+    for (; it != ranges.end() && it->first < end; ++it) {
+        const auto& range = *it->second;
+        const auto finish = range.address + range.bytes;
+        if (finish <= address) continue;
+        require(range.releasable, "guest image memory cannot be unmapped");
+        pieces.push_back({std::max<std::uint64_t>(range.address, address), std::min<std::uint64_t>(finish, end), range.allocationAddress});
     }
-    apply(reinterpret_cast<const void*>(range.allocationAddress), last);
-    registry().ranges.swap(replacement);
+    require(!pieces.empty(), "unmap address is not registered");
+    for (const auto& piece : pieces) {
+        auto replacement = replaceRange(reinterpret_cast<const void*>(piece.first), piece.last - piece.first, true, false, false);
+        bool last = true;
+        for (const auto& [base, entry] : replacement) {
+            if (entry->allocationAddress == piece.allocation) last = false;
+        }
+        apply(reinterpret_cast<const void*>(piece.first), static_cast<std::size_t>(piece.last - piece.first), reinterpret_cast<const void*>(piece.allocation), last);
+        ranges.swap(replacement);
+    }
 }
 
 Lease GuestAllocationsAcquire_nid_postfix() {

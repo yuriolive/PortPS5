@@ -96,6 +96,14 @@ struct DebugConfig {
     bool relinkerTraceSse4a = false;
 };
 
+/**
+ * @brief Reads a host environment variable; the only sanctioned environment access.
+ * @param name Variable name (case-insensitive on Windows, exact elsewhere).
+ * @return The value, or nullopt when unset or empty.
+ * Thread safety: reads the process environment block; do not race with setenv/putenv.
+ */
+std::optional<std::string> HostEnvironmentValue(const char* name);
+
 enum class WorkaroundType { Bool, Int, Double, String };
 using WorkaroundValue = std::variant<bool, std::int64_t, double, std::string>;
 

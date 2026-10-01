@@ -1,3 +1,6 @@
+// core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaInstruction.hpp
+// RdnaInstruction and RdnaOperand: the decoded form of one RDNA2 instruction (operands, modifiers, memory and image
+// fields, cache-policy bits). Plain data produced by the decoder and consumed by the translator.
 #ifndef CORE_SHADER_RECOMPILIER_RDNADECODER_INCLUDE_RDNADECODER_RDNAINSTRUCTION_HPP
 #define CORE_SHADER_RECOMPILIER_RDNADECODER_INCLUDE_RDNADECODER_RDNAINSTRUCTION_HPP
 
@@ -148,6 +151,7 @@ struct RdnaInstruction {
     bool formatted = false;
     bool gds = false;
     bool glc = false;
+    bool dlc = false;
     bool slc = false;
     bool idxen = false;
     bool offen = false;
